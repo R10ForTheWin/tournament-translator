@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+env/
+.venv/
+
+# Environment
+.env
+.env.local
+
+# App data (result locks — don't commit these)
+data/results/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Excel files (large binary files — upload via admin UI instead)
+Tournaments Excels/*.xlsx
+Tournaments Excels/*.html
+
+# Claude Code settings
+.claude/
