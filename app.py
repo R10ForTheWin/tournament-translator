@@ -15,6 +15,7 @@ RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "
 ADMIN_PW    = os.environ.get("ADMIN_PASSWORD", "trojan")  # override via Railway env var
 
 os.makedirs(RESULTS_DIR, exist_ok=True)
+os.makedirs(EXCEL_DIR, exist_ok=True)
 
 # ── Tournament registry ────────────────────────────────────────────────────────
 
