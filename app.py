@@ -80,24 +80,27 @@ def team_matches(slot: str, name: str) -> bool:
     return name.upper() in strip_prefix(slot).upper()
 
 def describe_slot(slot: str) -> str:
+    """Return just the team name, stripping any bracket/pool prefix.
+    Only shows bracket notation when no team name is known yet."""
     slot = slot.strip()
-    m = re.match(
-        r"^(?:(\d+(?:st|nd|rd|th))([A-Z])-(.+)"
-        r"|([A-Z]\d+)\(([^)]+)\)-(.+)"
-        r"|([WL])#([^-]+)-(.+)"
-        r"|([A-Z])(\d+)-(.+)"
-        r"|(.*))$",
-        slot, re.IGNORECASE,
-    )
-    if not m:
-        return slot
-    if m.group(1):  return f"{m.group(1)} place Pool {m.group(2)} → {m.group(3)}"
-    if m.group(4):  return f"{m.group(5)} from {m.group(4)} → {m.group(6)}"
-    if m.group(7):
-        wl = "Winner" if m.group(7).upper() == "W" else "Loser"
-        return f"{wl} of game #{m.group(8)} → {m.group(9)}"
-    if m.group(10): return m.group(12)
-    return m.group(13) or slot
+    # strip_prefix extracts the team name after any bracket prefix (A1-, W#12-, H3(2ndC)-, etc.)
+    name = strip_prefix(slot)
+    if name != slot and name:
+        # A prefix was stripped and a real team name remains — just show the team name
+        return name
+    # No prefix was matched (slot IS the name), or prefix matched but no team name yet
+    # For unresolved bracket slots, show something readable
+    m = re.match(r"^([WL])#([^-]+)-\s*$", slot, re.IGNORECASE)
+    if m:
+        wl = "Winner" if m.group(1).upper() == "W" else "Loser"
+        return f"{wl} of game #{m.group(2).strip()}"
+    m = re.match(r"^(\d+(?:st|nd|rd|th))([A-Z])-\s*$", slot, re.IGNORECASE)
+    if m:
+        return f"{m.group(1)} place Pool {m.group(2)}"
+    m = re.match(r"^([A-Z]\d+)\(([^)]+)\)-\s*$", slot, re.IGNORECASE)
+    if m:
+        return f"{m.group(2)} from {m.group(1)}"
+    return slot
 
 def _game_num(game_id: str):
     m = re.search(r"(\d+)$", game_id)
