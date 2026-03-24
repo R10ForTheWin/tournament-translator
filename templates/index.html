@@ -433,6 +433,42 @@ function makeTournamentCards(tournaments) {
 }
 
 // ── Teams ──────────────────────────────────────────────────────────────────────
+// Extract age-group label from a friendly name, stripping any tier suffix.
+// "Boys 16U Gold" → "Boys 16U"   "Boys 19U" → "Boys 19U"
+const TIER_WORDS = new Set(['gold','cardinal','silver','bronze','platinum']);
+function ageGroupOf(friendly) {
+  if (!friendly) return friendly;
+  const parts = friendly.split(' ');
+  const last = parts[parts.length - 1].toLowerCase();
+  return TIER_WORDS.has(last) ? parts.slice(0, -1).join(' ') : friendly;
+}
+
+function renderTeamList(el, tournament, teams, label) {
+  el.innerHTML = '';
+  const lbl = document.createElement('p');
+  lbl.className = 'section-label';
+  lbl.textContent = label;
+  el.appendChild(lbl);
+
+  const list = document.createElement('div');
+  list.className = 'card-list';
+  teams.forEach(t => {
+    const card = document.createElement('div');
+    card.className = 'list-card';
+    card.innerHTML = `
+      <div class="list-card-left">
+        <div class="list-card-dot dot-upcoming"></div>
+        <div class="list-card-info">
+          <div class="list-card-main">${t.label}</div>
+        </div>
+      </div>
+      <span class="list-arrow">›</span>`;
+    card.onclick = t.onclick;
+    list.appendChild(card);
+  });
+  el.appendChild(list);
+}
+
 async function loadTeams(tournament) {
   const el = document.getElementById('team-list-content');
   el.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
@@ -441,43 +477,59 @@ async function loadTeams(tournament) {
 
   const res   = await fetch(`/api/trojan-teams/${encodeURIComponent(tournament.id)}`);
   const teams = await res.json();
-  el.innerHTML = '';
 
   if (!teams.length) {
     el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted)">No Trojan teams found in this file.</div>`;
     return;
   }
 
-  const lbl = document.createElement('p');
-  lbl.className = 'section-label';
-  lbl.textContent = 'Select Your Team';
-  el.appendChild(lbl);
-
-  const list = document.createElement('div');
-  list.className = 'card-list';
+  // Group by age group
+  const groups = {};
   teams.forEach(t => {
-    const card = document.createElement('div');
-    card.className = 'list-card';
-    const displayName = t.friendly || t.name;
-    const subLabel = t.friendly ? t.name : t.sheet;
-    card.innerHTML = `
-      <div class="list-card-left">
-        <div class="list-card-dot dot-upcoming"></div>
-        <div class="list-card-info">
-          <div class="list-card-main">${displayName}</div>
-          <div class="list-card-sub">${subLabel}</div>
-        </div>
-      </div>
-      <span class="list-arrow">›</span>`;
-    card.onclick = () => {
-      state.team    = t.name;
-      state.sheet   = t.sheet;
-      state.friendly = t.friendly || t.name;
-      loadGames(tournament.id, t.name, t.sheet);
-    };
-    list.appendChild(card);
+    const ag = ageGroupOf(t.friendly || t.name);
+    if (!groups[ag]) groups[ag] = [];
+    groups[ag].push(t);
   });
-  el.appendChild(list);
+
+  const agKeys = Object.keys(groups);
+
+  // If only one age group with one team — skip straight to games
+  if (agKeys.length === 1 && groups[agKeys[0]].length === 1) {
+    const t = groups[agKeys[0]][0];
+    state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
+    loadGames(tournament.id, t.name, t.sheet);
+    return;
+  }
+
+  // Build age-group rows
+  const rows = agKeys.map(ag => ({
+    label: ag,
+    onclick: () => {
+      const members = groups[ag];
+      if (members.length === 1) {
+        const t = members[0];
+        state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
+        loadGames(tournament.id, t.name, t.sheet);
+      } else {
+        // Show tier picker
+        const tierRows = members.map(t => {
+          const parts = (t.friendly || t.name).split(' ');
+          const tierLabel = TIER_WORDS.has(parts[parts.length-1].toLowerCase())
+            ? parts[parts.length-1] : t.name;
+          return {
+            label: tierLabel,
+            onclick: () => {
+              state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
+              loadGames(tournament.id, t.name, t.sheet);
+            }
+          };
+        });
+        renderTeamList(el, tournament, tierRows, ag);
+      }
+    }
+  }));
+
+  renderTeamList(el, tournament, rows, 'Select Age Group');
 }
 
 // ── Games ──────────────────────────────────────────────────────────────────────
