@@ -47,11 +47,11 @@
     /* ── Hero (home view only) ── */
     #hero-wrap {
       background: var(--bg);
-      padding-top: env(safe-area-inset-top);
     }
+    .hero-safe-spacer { height: env(safe-area-inset-top); }
     .hero {
       text-align: center;
-      padding: 40px 24px 32px;
+      padding: 32px 24px 24px;
     }
     .hero-logo {
       width: 340px;
@@ -258,6 +258,9 @@
     .spinner-wrap { display: flex; justify-content: center; padding: 48px 0; }
     .spinner { width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--cardinal); border-radius: 50%; animation: spin 0.7s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Stripe bars ── */
+    .stripe-bar { line-height: 0; overflow: hidden; }
   </style>
 </head>
 <body>
@@ -271,10 +274,30 @@
 
 <!-- Hero — home view only -->
 <div id="hero-wrap">
+  <div class="hero-safe-spacer"></div>
+  <!-- Top stripe bar: flat left, curl upward right, dark → gold -->
+  <div class="stripe-bar">
+    <svg viewBox="0 0 1440 110" preserveAspectRatio="none" style="display:block;width:100%;height:70px">
+      <path d="M 0 0 C 792 0, 1180.8 -140, 1440 -140 L 1440 -118 C 1180.8 -118, 792 22, 0 22 Z" fill="#0d0507"/>
+      <path d="M 0 22 C 792 22, 1180.8 -118, 1440 -118 L 1440 -96 C 1180.8 -96, 792 44, 0 44 Z" fill="#7a1a28"/>
+      <path d="M 0 44 C 792 44, 1180.8 -96, 1440 -96 L 1440 -74 C 1180.8 -74, 792 66, 0 66 Z" fill="#9d2235"/>
+      <path d="M 0 66 C 792 66, 1180.8 -74, 1440 -74 L 1440 -52 C 1180.8 -52, 792 88, 0 88 Z" fill="#c8a400"/>
+      <path d="M 0 88 C 792 88, 1180.8 -52, 1440 -52 L 1440 -30 C 1180.8 -30, 792 110, 0 110 Z" fill="#ffd700"/>
+    </svg>
+  </div>
   <div class="hero">
     <img src="/static/logo.png" class="hero-logo" alt="Tournament Translator">
   </div>
-  <div class="gold-bar"></div>
+  <!-- Bottom stripe bar: flat right, curl downward left, gold → dark -->
+  <div class="stripe-bar">
+    <svg viewBox="0 0 1440 250" preserveAspectRatio="none" style="display:block;width:100%;height:70px">
+      <path d="M 0 140 C 259.2 140, 648 0, 1440 0 L 1440 22 C 648 22, 259.2 162, 0 162 Z" fill="#ffd700"/>
+      <path d="M 0 162 C 259.2 162, 648 22, 1440 22 L 1440 44 C 648 44, 259.2 184, 0 184 Z" fill="#c8a400"/>
+      <path d="M 0 184 C 259.2 184, 648 44, 1440 44 L 1440 66 C 648 66, 259.2 206, 0 206 Z" fill="#9d2235"/>
+      <path d="M 0 206 C 259.2 206, 648 66, 1440 66 L 1440 88 C 648 88, 259.2 228, 0 228 Z" fill="#7a1a28"/>
+      <path d="M 0 228 C 259.2 228, 648 88, 1440 88 L 1440 110 C 648 110, 259.2 250, 0 250 Z" fill="#0d0507"/>
+    </svg>
+  </div>
 </div>
 
 <!-- Subnav — sub-views only -->
@@ -405,9 +428,12 @@ function makeTournamentCards(tournaments) {
     const card = document.createElement('div');
     card.className = 'list-card';
     let badgeHtml = '', dotClass = '';
-    if (!t.has_excel) {
+    if (!t.has_file) {
       badgeHtml = `<span class="badge badge-upload">Upload Schedule</span>`;
       dotClass  = 'dot-upload';
+    } else if (!t.has_excel) {
+      badgeHtml = `<span class="badge badge-past">Coming Soon</span>`;
+      dotClass  = 'dot-upcoming';
     } else if (!t.past) {
       badgeHtml = `<span class="badge badge-scheduled">View Schedule</span>`;
       dotClass  = 'dot-upcoming';
@@ -425,7 +451,8 @@ function makeTournamentCards(tournaments) {
       </div>
       <div class="list-card-right">${badgeHtml}<span class="list-arrow">›</span></div>`;
     card.onclick = () => {
-      if (!t.has_excel) { openUpload(); return; }
+      if (!t.has_file) { openUpload(); return; }
+      if (!t.has_excel) return; // "Coming Soon" — no action
       state.tournament = t;
       loadTeams(t);
     };
