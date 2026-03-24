@@ -314,6 +314,20 @@
     <div id="tournament-list-content">
       <div class="spinner-wrap"><div class="spinner"></div></div>
     </div>
+    <div style="text-align:center; margin-top:32px; padding-bottom:8px;">
+      <button onclick="shareApp()" style="
+        background: none;
+        border: 1.5px solid rgba(255,255,255,0.15);
+        border-radius: 20px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 600;
+        font-family: inherit;
+        padding: 10px 22px;
+        cursor: pointer;
+        letter-spacing: 0.04em;
+      ">⬆ Share App with Teammate</button>
+    </div>
   </div>
   <div id="view-teams" class="view">
     <div id="team-list-content"></div>
@@ -359,6 +373,17 @@ let state = { tournament: null, team: null, sheet: null, friendly: null };
 let testMode    = false;
 let pendingFile = null;
 let pwCallback  = null;
+
+async function shareApp() {
+  const url  = location.origin;
+  const text = 'Track Trojan water polo schedules & results all season.';
+  if (navigator.share) {
+    try { await navigator.share({ title: 'Tournament Translator', text, url }); } catch(e) {}
+  } else {
+    await navigator.clipboard.writeText(url);
+    alert('Link copied to clipboard!');
+  }
+}
 
 function toggleTestMode() {
   testMode = !testMode;
