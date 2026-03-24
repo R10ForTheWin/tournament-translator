@@ -27,8 +27,7 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Excel files (large binary files — upload via admin UI instead)
-Tournaments Excels/*.xlsx
+# Stray HTML exports from Excel
 Tournaments Excels/*.html
 
 # Claude Code settings

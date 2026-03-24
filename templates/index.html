@@ -601,7 +601,6 @@
     <img src="/static/logo.png" alt="Tournament Translator">
     <div class="header-right">
       <div class="header-title">Tournament Translator</div>
-      <div class="header-subtitle">Trojan Water Polo</div>
     </div>
   </div>
   <div class="breadcrumb" id="breadcrumb">
@@ -754,7 +753,7 @@ function makeTournamentCards(tournaments) {
 
     let badgeHtml = '';
     if (!t.has_excel) {
-      badgeHtml = `<span class="badge badge-upload">Upload</span>`;
+      badgeHtml = `<span class="badge badge-upload">Upload Schedule</span>`;
     } else if (!t.past) {
       badgeHtml = `<span class="badge badge-live">Live</span>`;
     } else {
