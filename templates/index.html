@@ -335,7 +335,7 @@
 <main>
   <div id="view-tournaments" class="view active">
     <div id="tournament-list-content">
-      <div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="15" stroke-width="1.5"/><g class="wp-seams" stroke-width="1.3"><path d=""/><path d=""/><path d=""/><path d=""/></g></svg></div>
+      <div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="15" stroke-width="1.5"/><g class="wp-seams" stroke-width="1.3"><path d=""/><path d=""/><path d=""/><path d=""/><path d=""/></g></svg></div>
     </div>
     <div style="text-align:center; margin-top:32px; padding-bottom:8px;">
       <button onclick="shareApp()" style="
@@ -574,7 +574,7 @@ function renderTeamList(el, tournament, teams, label) {
 
 async function loadTeams(tournament) {
   const el = document.getElementById('team-list-content');
-  el.innerHTML = '<div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="15" stroke-width="1.5"/><g class="wp-seams" stroke-width="1.3"><path d=""/><path d=""/><path d=""/><path d=""/></g></svg></div>';
+  el.innerHTML = '<div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="15" stroke-width="1.5"/><g class="wp-seams" stroke-width="1.3"><path d=""/><path d=""/><path d=""/><path d=""/><path d=""/></g></svg></div>';
   showView('view-teams');
   updateSubnav();
 
@@ -686,7 +686,7 @@ function h2hSummary(h2h, opponentRaw) {
 // ── Games ──────────────────────────────────────────────────────────────────────
 async function loadGames(tournamentId, team, sheet) {
   const el = document.getElementById('games-content');
-  el.innerHTML = '<div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="15" stroke-width="1.5"/><g class="wp-seams" stroke-width="1.3"><path d=""/><path d=""/><path d=""/><path d=""/></g></svg></div>';
+  el.innerHTML = '<div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="15" stroke-width="1.5"/><g class="wp-seams" stroke-width="1.3"><path d=""/><path d=""/><path d=""/><path d=""/><path d=""/></g></svg></div>';
   showView('view-games');
   updateSubnav();
 
@@ -925,20 +925,27 @@ maybeShowA2HS();
 // ── Water polo ball 3D sphere spinner ──
 (function(){
   const R=15, CX=18, CY=18;
-  // 2 longitude seams (meridians) 90° apart + 2 latitude bands at ±30°
+  const P=2*Math.PI/3; // 120° — water polo ball has 3 longitude seams at 120° apart
+  // 3 longitude seams + 2 latitude bands at ±34° (6-panel ball pattern)
   const SEAMS=[
-    {t:'v', a:0},
-    {t:'v', a:Math.PI/2},
-    {t:'h', b:0.52},
-    {t:'h', b:-0.52},
+    {t:'v', a:0}, {t:'v', a:P}, {t:'v', a:2*P},
+    {t:'h', b:0.6}, {t:'h', b:-0.6},
   ];
+  const TILT=0.22; // ~13° axis tilt — looks more natural than pure vertical spin
+  const cosTilt=Math.cos(TILT), sinTilt=Math.sin(TILT);
   let phi=0;
   function pt(lat,lon){
     const a=lon-phi;
-    return {x:CX+R*Math.cos(lat)*Math.sin(a), y:CY-R*Math.sin(lat), f:Math.cos(lat)*Math.cos(a)>=0};
+    const x=R*Math.cos(lat)*Math.sin(a);
+    const y=R*Math.sin(lat);
+    const z=R*Math.cos(lat)*Math.cos(a);
+    // Apply tilt (rotate around X-axis)
+    const y2=y*cosTilt-z*sinTilt;
+    const z2=y*sinTilt+z*cosTilt;
+    return {x:CX+x, y:CY-y2, f:z2>=0};
   }
   function seamPath(s){
-    const N=40, pts=[];
+    const N=48, pts=[];
     if(s.t==='v') for(let i=0;i<=N;i++) pts.push(pt((i/N-0.5)*Math.PI, s.a));
     else          for(let i=0;i<=N;i++) pts.push(pt(s.b, i/N*2*Math.PI));
     let d='', on=false;
@@ -949,7 +956,7 @@ maybeShowA2HS();
     return d;
   }
   function tick(){
-    phi+=0.033;
+    phi+=0.03;
     document.querySelectorAll('.wp-spinner .wp-seams').forEach(function(g){
       var ps=g.querySelectorAll('path');
       SEAMS.forEach(function(s,i){ if(ps[i]) ps[i].setAttribute('d',seamPath(s)); });

@@ -16,11 +16,13 @@ RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "
 ADMIN_PW    = os.environ.get("ADMIN_PASSWORD", "trojan")  # override via Railway env var
 
 # ── Live URL sources ────────────────────────────────────────────────────────
-# OneDrive sharing URL for the WPL/Futures Excel (organizer updates the file in-place)
-WPL_URL = "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQBGJ01faI_8Rb24gRIV-VoDAQO0zhZw_eBDO4rxJ-5tASs?e=hHsWYP"
-WPL_TOURNAMENTS = {"futures-2", "futures-3", "futures-4", "futures-5", "futures-super"}
-_URL_CACHE: dict = {}   # {url: (fetched_at, bytes)}
-URL_CACHE_TTL = 300     # re-fetch at most every 5 minutes
+# Google Sheets (primary) and OneDrive (fallback) for WPL/Futures Excel
+FUTURES_SHEETS_ID = "1AkX3vwOU9CIc3cymacG2F-uXz-_Gi_A8yR40dEbDpMQ"
+FUTURES_SHEETS_URL = f"https://docs.google.com/spreadsheets/d/{FUTURES_SHEETS_ID}/export?format=xlsx"
+WPL_ONEDRIVE_URL  = "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQBGJ01faI_8Rb24gRIV-VoDAQO0zhZw_eBDO4rxJ-5tASs?e=hHsWYP"
+WPL_TOURNAMENTS   = {"futures-2", "futures-3", "futures-4", "futures-5", "futures-super"}
+_URL_CACHE: dict  = {}   # {url: (fetched_at, bytes)}
+URL_CACHE_TTL     = 300  # re-fetch at most every 5 minutes
 
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(EXCEL_DIR, exist_ok=True)
@@ -59,37 +61,38 @@ FILE_MAP = {
 }
 
 
-def _fetch_onedrive(url: str):
-    """Fetch an Excel from a OneDrive sharing URL using the Sharing API.
-    Returns BytesIO on success, None on failure. Caches for URL_CACHE_TTL seconds."""
+def _fetch_url(url: str, *, onedrive=False) -> bytes | None:
+    """Fetch Excel bytes from a URL with 5-min cache. Returns None on failure."""
     now = time.time()
     cached = _URL_CACHE.get(url)
     if cached and now - cached[0] < URL_CACHE_TTL:
-        return io.BytesIO(cached[1])
+        return cached[1]
     try:
-        token = base64.urlsafe_b64encode(url.encode()).rstrip(b"=").decode()
-        resp = requests.get(
-            f"https://api.onedrive.com/v1.0/shares/u!{token}/root/content",
-            allow_redirects=True, timeout=30,
-        )
+        if onedrive:
+            token = base64.urlsafe_b64encode(url.encode()).rstrip(b"=").decode()
+            fetch_url = f"https://api.onedrive.com/v1.0/shares/u!{token}/root/content"
+        else:
+            fetch_url = url
+        resp = requests.get(fetch_url, allow_redirects=True, timeout=30)
         resp.raise_for_status()
         _URL_CACHE[url] = (now, resp.content)
-        return io.BytesIO(resp.content)
+        return resp.content
     except Exception as exc:
-        app.logger.warning("OneDrive fetch failed: %s", exc)
-        return io.BytesIO(cached[1]) if cached else None
+        app.logger.warning("Fetch failed (%s): %s", url, exc)
+        return cached[1] if cached else None
 
 
 def find_excel(tournament_id: str):
-    """Return an Excel file path, a BytesIO from a live URL, or None."""
+    """Return an Excel file path, BytesIO from a live URL, or None."""
     keyword = FILE_MAP.get(tournament_id, "")
     if keyword:
         for f in os.listdir(EXCEL_DIR):
             if f.endswith(".xlsx") and keyword.lower() in f.lower():
                 return os.path.join(EXCEL_DIR, f)
-    # Fall back to live OneDrive URL for WPL tournaments
     if tournament_id in WPL_TOURNAMENTS:
-        return _fetch_onedrive(WPL_URL)
+        # Try Google Sheets first (simpler), fall back to OneDrive
+        data = _fetch_url(FUTURES_SHEETS_URL) or _fetch_url(WPL_ONEDRIVE_URL, onedrive=True)
+        return io.BytesIO(data) if data else None
     return None
 
 
