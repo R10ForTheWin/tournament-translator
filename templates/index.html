@@ -179,6 +179,7 @@
     .game-score { font-size: 28px; font-weight: 900; color: var(--gold); letter-spacing: -1px; margin-bottom: 8px; }
     .game-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
     .tag { font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; color: var(--muted); font-weight: 500; }
+    .h2h-line { font-size: 11px; color: var(--muted); margin: 2px 0 6px; letter-spacing: 0.02em; }
 
     /* ── Confidence ── */
     .conf-banner { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: var(--radius-sm); margin-top: 12px; font-size: 13px; }
@@ -533,6 +534,54 @@ async function loadTeams(tournament) {
   renderTeamList(el, tournament, rows, 'Select Age Group');
 }
 
+// ── H2H helpers ────────────────────────────────────────────────────────────────
+const _TROJAN_TIER_JS = {
+  cardinal:'A', red:'A', platinum:'A',
+  gold:'B', blue:'B',
+  silver:'C', white:'C', bronze:'C',
+};
+const _STRIP_PREFIX_JS = /^(?:\d+(?:st|nd|rd|th)[A-Z]-|[A-Z]\d+\([^)]+\)-|[WL]#[^-]+-|[A-Z]\d+-|\d+-)/i;
+const _STRIP_COLOR_JS  = /\s+(gold|silver|cardinal|red|blue|white|platinum|bronze|black|green|orange|purple|maroon|gray|grey)\s*$/i;
+
+function normalizeOpp(raw) {
+  let name = raw.trim().replace(_STRIP_PREFIX_JS, '').trim();
+  if (/TROJAN/i.test(name)) {
+    for (const [color, tier] of Object.entries(_TROJAN_TIER_JS)) {
+      if (new RegExp(`\\b${color}\\b`, 'i').test(name)) return [name.toUpperCase(), tier];
+    }
+    return ['TROJAN', 'A'];
+  }
+  let m = name.match(/^(.*?)\s+\(?([ABC])\)?\s*$/i);
+  if (m) return [m[1].trim().toUpperCase(), m[2].toUpperCase()];
+  m = name.match(/^(.*?)\s+([123])\s*$/);
+  if (m) return [m[1].trim().toUpperCase(), 'ABC'[parseInt(m[2])-1]];
+  const club = name.replace(_STRIP_COLOR_JS, '').trim();
+  return [club.toUpperCase(), null];
+}
+function h2hKey(raw) {
+  const [club, tier] = normalizeOpp(raw);
+  return `${club}|${tier||''}`;
+}
+function h2hSummary(h2h, opponentRaw) {
+  if (!h2h) return '';
+  const key = h2hKey(opponentRaw);
+  // Also try fuzzy: find any key whose club portion is a substring match
+  let rec = h2h[key];
+  if (!rec) {
+    const [club] = normalizeOpp(opponentRaw);
+    for (const [k, v] of Object.entries(h2h)) {
+      const kclub = k.split('|')[0];
+      if (kclub === club || kclub.includes(club) || club.includes(kclub)) { rec = v; break; }
+    }
+  }
+  if (!rec) return '';
+  const total = rec.wins + rec.losses + rec.ties;
+  if (total === 0) return '';
+  const tierLabel = rec.tier ? ` (${rec.tier})` : '';
+  const record = `${rec.wins}W–${rec.losses}L${rec.ties ? '–'+rec.ties+'T' : ''}`;
+  return `<div class="h2h-line">All-time${tierLabel}: ${record} in ${total} game${total>1?'s':''}</div>`;
+}
+
 // ── Games ──────────────────────────────────────────────────────────────────────
 async function loadGames(tournamentId, team, sheet) {
   const el = document.getElementById('games-content');
@@ -540,9 +589,12 @@ async function loadGames(tournamentId, team, sheet) {
   showView('view-games');
   updateSubnav();
 
-  const url = `/api/games/${encodeURIComponent(tournamentId)}/${encodeURIComponent(team)}?sheet=${encodeURIComponent(sheet)}`;
-  const res  = await fetch(url);
-  const data = await res.json();
+  const [gamesRes, h2hRes] = await Promise.all([
+    fetch(`/api/games/${encodeURIComponent(tournamentId)}/${encodeURIComponent(team)}?sheet=${encodeURIComponent(sheet)}`),
+    fetch(`/api/h2h/${encodeURIComponent(team)}`),
+  ]);
+  const data = await gamesRes.json();
+  const h2h  = h2hRes.ok ? await h2hRes.json() : null;
   el.innerHTML = '';
 
   if (!data.played.length && !data.upcoming.length) {
@@ -554,19 +606,19 @@ async function loadGames(tournamentId, team, sheet) {
     const grp = document.createElement('div');
     grp.className = 'games-group';
     grp.innerHTML = '<div class="games-group-title">Results</div>';
-    data.played.forEach(g => grp.appendChild(buildResultCard(g)));
+    data.played.forEach(g => grp.appendChild(buildResultCard(g, h2h)));
     el.appendChild(grp);
   }
   if (data.upcoming.length) {
     const grp = document.createElement('div');
     grp.className = 'games-group';
     grp.innerHTML = '<div class="games-group-title">Upcoming Games</div>';
-    data.upcoming.forEach(g => grp.appendChild(buildUpcomingCard(g, tournamentId, team)));
+    data.upcoming.forEach(g => grp.appendChild(buildUpcomingCard(g, tournamentId, team, h2h)));
     el.appendChild(grp);
   }
 }
 
-function buildResultCard(g) {
+function buildResultCard(g, h2h) {
   const card = document.createElement('div');
   card.className = 'game-card';
   const cls   = g.result === 'win' ? 'win' : g.result === 'loss' ? 'loss' : 'tie';
@@ -581,13 +633,14 @@ function buildResultCard(g) {
     </div>
     <div class="game-card-body">
       <div class="game-opponent"><span class="vs">vs</span><span class="opponent-name">${g.opponent}</span></div>
+      ${h2hSummary(h2h, g.opponent)}
       <div class="game-score">${g.score}</div>
       ${g.comments ? `<div class="game-tags"><span class="tag">${g.comments}</span></div>` : ''}
     </div>`;
   return card;
 }
 
-function buildUpcomingCard(g, tournamentId, team) {
+function buildUpcomingCard(g, tournamentId, team, h2h) {
   const card = document.createElement('div');
   card.className = 'game-card';
   let body = `
@@ -599,6 +652,7 @@ function buildUpcomingCard(g, tournamentId, team) {
     </div>
     <div class="game-card-body">
       <div class="game-opponent"><span class="vs">vs</span><span class="opponent-name">${g.opponent}</span></div>
+      ${h2hSummary(h2h, g.opponent)}
       ${g.comments ? `<div class="game-tags"><span class="tag">${g.comments}</span></div>` : ''}`;
 
   if (g.lock) {

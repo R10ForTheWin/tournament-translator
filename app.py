@@ -82,6 +82,64 @@ def all_excels():
     return [f for f in os.listdir(EXCEL_DIR) if f.endswith(".xlsx")]
 
 
+# ── Head-to-head normalization ──────────────────────────────────────────────────
+
+# Tier mapping for Trojan (known colors → A/B/C)
+_TROJAN_TIER = {
+    "cardinal": "A", "red": "A", "platinum": "A",
+    "gold": "B", "blue": "B",
+    "silver": "C", "white": "C", "bronze": "C",
+}
+# Colors to strip from end of non-Trojan names for club normalization
+_STRIP_COLOR = re.compile(
+    r"\s+(gold|silver|cardinal|red|blue|white|platinum|bronze|"
+    r"black|green|orange|purple|maroon|gray|grey)\s*$",
+    re.IGNORECASE,
+)
+_EXPLICIT_LETTER = re.compile(r"^(.*?)\s+\(?([ABC])\)?\s*$", re.IGNORECASE)
+_EXPLICIT_NUMBER = re.compile(r"^(.*?)\s+([123])\s*$")
+
+
+def normalize_opp(raw: str):
+    """Return (club_key, tier) for head-to-head matching.
+    club_key is uppercase, stripped of tier indicators.
+    tier is 'A', 'B', 'C', or None."""
+    name = strip_prefix(raw).strip()
+
+    # Trojan — use known color→tier mapping
+    if "TROJAN" in name.upper():
+        for color, tier in _TROJAN_TIER.items():
+            if re.search(rf"\b{re.escape(color)}\b", name, re.IGNORECASE):
+                return ("TROJAN", tier)
+        return ("TROJAN", "A")   # bare TROJAN = top team
+
+    # Explicit letter suffix: "Newport Beach A", "San Clemente C"
+    m = _EXPLICIT_LETTER.match(name)
+    if m:
+        return (m.group(1).strip().upper(), m.group(2).upper())
+
+    # Number suffix: "Newport 1", "Newport 2"
+    m = _EXPLICIT_NUMBER.match(name)
+    if m:
+        return (m.group(1).strip().upper(), "ABC"[int(m.group(2)) - 1])
+
+    # Strip trailing color word to normalize club name; tier unknown
+    club = _STRIP_COLOR.sub("", name).strip()
+    return (club.upper(), None)
+
+
+def clubs_match(a: str, b: str) -> bool:
+    """Fuzzy club match — handles minor spelling differences like
+    'NEWPORT' vs 'NEWPORT BEACH'."""
+    a, b = a.upper().strip(), b.upper().strip()
+    return a == b or a in b or b in a
+
+
+def h2h_key(raw: str) -> str:
+    club, tier = normalize_opp(raw)
+    return f"{club}|{tier or ''}"
+
+
 # ── Team friendly-name helpers ─────────────────────────────────────────────────
 
 _TIER_ORDER = {"gold": 0, "cardinal": 1, "platinum": 0, "silver": 2, "bronze": 3}
@@ -457,6 +515,71 @@ def api_upload():
     dest = os.path.join(EXCEL_DIR, safe_name)
     f.save(dest)
     return jsonify({"ok": True, "filename": safe_name})
+
+
+@app.route("/api/h2h/<path:team>")
+def api_h2h(team):
+    """Return head-to-head record for a Trojan team vs every opponent,
+    aggregated across all available Excel files."""
+    my_club, my_tier = normalize_opp(team)
+
+    records = {}   # h2h_key → {club, tier, wins, losses, ties, games}
+
+    for fname in all_excels():
+        fpath = os.path.join(EXCEL_DIR, fname)
+        try:
+            file_games = load_and_parse(fpath)
+        except Exception:
+            continue
+
+        # Find a friendly tournament name for this file
+        t_name = fname
+        for t in KNOWN_TOURNAMENTS:
+            if find_excel(t["id"]) == fpath:
+                t_name = t["name"]
+                break
+
+        for g in file_games:
+            if not g.get("played"):
+                continue
+
+            w_club, w_tier = normalize_opp(g["white_team"])
+            d_club, d_tier = normalize_opp(g["dark_team"])
+
+            if w_club == "TROJAN" and w_tier == my_tier:
+                opp_raw = g["dark_team"]
+            elif d_club == "TROJAN" and d_tier == my_tier:
+                opp_raw = g["white_team"]
+            else:
+                continue
+
+            opp_club, opp_tier = normalize_opp(opp_raw)
+            if opp_club == "TROJAN":
+                continue   # skip Trojan-vs-Trojan
+
+            key = h2h_key(opp_raw)
+            result = _result_str(g, team)
+            rec = records.setdefault(key, {
+                "club": opp_club.title(),
+                "tier": opp_tier,
+                "wins": 0, "losses": 0, "ties": 0,
+                "games": [],
+            })
+            if result == "win":    rec["wins"]   += 1
+            elif result == "loss": rec["losses"] += 1
+            else:                  rec["ties"]   += 1
+
+            rec["games"].append({
+                "tournament": t_name,
+                "date":       _fmt_date(g["date"]),
+                "score":      _fmt_score(g),
+                "result":     result,
+            })
+
+    for rec in records.values():
+        rec["games"].sort(key=lambda x: x["date"] or "")
+
+    return jsonify(records)
 
 
 if __name__ == "__main__":
