@@ -1,9 +1,10 @@
 """
 Tournament Translator — Flask app
 """
-import os, re, json, glob
+import os, re, json, glob, io, time, base64
 from datetime import datetime, date
 from functools import lru_cache
+import requests
 from flask import Flask, render_template, jsonify, request, abort
 
 from parsers.detect import load_and_parse
@@ -13,6 +14,13 @@ app = Flask(__name__)
 EXCEL_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Tournaments Excels")
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "results")
 ADMIN_PW    = os.environ.get("ADMIN_PASSWORD", "trojan")  # override via Railway env var
+
+# ── Live URL sources ────────────────────────────────────────────────────────
+# OneDrive sharing URL for the WPL/Futures Excel (organizer updates the file in-place)
+WPL_URL = "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQBGJ01faI_8Rb24gRIV-VoDAQO0zhZw_eBDO4rxJ-5tASs?e=hHsWYP"
+WPL_TOURNAMENTS = {"futures-2", "futures-3", "futures-4", "futures-5", "futures-super"}
+_URL_CACHE: dict = {}   # {url: (fetched_at, bytes)}
+URL_CACHE_TTL = 300     # re-fetch at most every 5 minutes
 
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(EXCEL_DIR, exist_ok=True)
@@ -51,14 +59,37 @@ FILE_MAP = {
 }
 
 
+def _fetch_onedrive(url: str):
+    """Fetch an Excel from a OneDrive sharing URL using the Sharing API.
+    Returns BytesIO on success, None on failure. Caches for URL_CACHE_TTL seconds."""
+    now = time.time()
+    cached = _URL_CACHE.get(url)
+    if cached and now - cached[0] < URL_CACHE_TTL:
+        return io.BytesIO(cached[1])
+    try:
+        token = base64.urlsafe_b64encode(url.encode()).rstrip(b"=").decode()
+        resp = requests.get(
+            f"https://api.onedrive.com/v1.0/shares/u!{token}/root/content",
+            allow_redirects=True, timeout=30,
+        )
+        resp.raise_for_status()
+        _URL_CACHE[url] = (now, resp.content)
+        return io.BytesIO(resp.content)
+    except Exception as exc:
+        app.logger.warning("OneDrive fetch failed: %s", exc)
+        return io.BytesIO(cached[1]) if cached else None
+
+
 def find_excel(tournament_id: str):
-    """Find the Excel file for a tournament id. Returns path or None."""
+    """Return an Excel file path, a BytesIO from a live URL, or None."""
     keyword = FILE_MAP.get(tournament_id, "")
-    if not keyword:
-        return None
-    for f in os.listdir(EXCEL_DIR):
-        if f.endswith(".xlsx") and keyword.lower() in f.lower():
-            return os.path.join(EXCEL_DIR, f)
+    if keyword:
+        for f in os.listdir(EXCEL_DIR):
+            if f.endswith(".xlsx") and keyword.lower() in f.lower():
+                return os.path.join(EXCEL_DIR, f)
+    # Fall back to live OneDrive URL for WPL tournaments
+    if tournament_id in WPL_TOURNAMENTS:
+        return _fetch_onedrive(WPL_URL)
     return None
 
 

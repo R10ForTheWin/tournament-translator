@@ -500,12 +500,9 @@ function makeTournamentCards(tournaments) {
     const card = document.createElement('div');
     card.className = 'list-card';
     let badgeHtml = '', dotClass = '';
-    if (!t.has_file) {
+    if (!t.has_excel) {
       badgeHtml = `<span class="badge badge-upload">Upload Schedule</span>`;
       dotClass  = 'dot-upload';
-    } else if (!t.has_excel) {
-      badgeHtml = `<span class="badge badge-past">Coming Soon</span>`;
-      dotClass  = 'dot-upcoming';
     } else if (!t.past) {
       badgeHtml = `<span class="badge badge-scheduled">View Schedule</span>`;
       dotClass  = 'dot-upcoming';
@@ -523,8 +520,7 @@ function makeTournamentCards(tournaments) {
       </div>
       <div class="list-card-right">${badgeHtml}<span class="list-arrow">›</span></div>`;
     card.onclick = () => {
-      if (!t.has_file) { openUpload(); return; }
-      if (!t.has_excel) return; // "Coming Soon" — no action
+      if (!t.has_excel) { openUpload(); return; }
       state.tournament = t;
       loadTeams(t);
     };
