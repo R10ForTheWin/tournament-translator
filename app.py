@@ -20,13 +20,14 @@ os.makedirs(EXCEL_DIR, exist_ok=True)
 # ── Tournament registry ────────────────────────────────────────────────────────
 
 KNOWN_TOURNAMENTS = [
+    {"id": "kap7-intl",       "name": "Kap7 International",     "dates": "Jan 31–Feb 1, 2026"},
     {"id": "futures-2",       "name": "Futures Weekend 2",      "dates": "Feb 21–22, 2026",
      "date_start": date(2026, 2, 21), "date_end": date(2026, 2, 22)},
     {"id": "turbo-cup",       "name": "Turbo OC Cup",           "dates": "Mar 7–8, 2026"},
     {"id": "newport-invite",  "name": "Newport Spring Invite",  "dates": "Mar 14–15, 2026"},
     {"id": "futures-3",       "name": "Futures Weekend 3",      "dates": "Mar 21–22, 2026",
      "date_start": date(2026, 3, 21), "date_end": date(2026, 3, 22)},
-    {"id": "kap7-intl",       "name": "Kap7 International",     "dates": "Apr 18–19, 2026"},
+    {"id": "kap7-cup",        "name": "Kap7 Cup",               "dates": "Apr 18–19, 2026"},
     {"id": "futures-4",       "name": "Futures Weekend 4",      "dates": "May 2–3, 2026",
      "date_start": date(2026, 5, 2),  "date_end": date(2026, 5, 3)},
     {"id": "futures-5",       "name": "Futures Weekend 5",      "dates": "May 16–17, 2026",
