@@ -111,7 +111,7 @@ def _team_sort_key(team: dict):
 # ── Game helpers ───────────────────────────────────────────────────────────────
 
 _PREFIX_RE = re.compile(
-    r"^(?:\d+(?:st|nd|rd|th)[A-Z]-|[A-Z]\d+\([^)]+\)-|[WL]#[^-]+-|[A-Z]\d+-)(.*)",
+    r"^(?:\d+(?:st|nd|rd|th)[A-Z]-|[A-Z]\d+\([^)]+\)-|[WL]#[^-]+-|[A-Z]\d+-|\d+-)(.*)",
     re.IGNORECASE,
 )
 
@@ -287,13 +287,31 @@ def api_trojan_teams(tournament_id):
     if not excel:
         return jsonify([])
     games = load_and_parse(excel)
-    seen = {}  # name → sheet
+    # Count games per (name, sheet) so we can pick the best sheet when duplicates exist
+    counts = {}
     for g in games:
         for slot in (g["white_team"], g["dark_team"]):
             name = strip_prefix(slot)
-            if "TROJAN" in name.upper() and name not in seen:
-                seen[name] = g["sheet"]
-    teams = [{"name": t, "sheet": seen[t], "friendly": friendly_team_name(t, seen[t])} for t in seen]
+            if "TROJAN" in name.upper():
+                key = (name, g["sheet"])
+                counts[key] = counts.get(key, 0) + 1
+
+    # Build candidate list
+    candidates = []
+    for (name, sheet), count in counts.items():
+        candidates.append({"name": name, "sheet": sheet,
+                           "friendly": friendly_team_name(name, sheet), "_count": count})
+
+    # Deduplicate by friendly name — same team may appear in multiple bracket splits
+    # Keep the sheet with the most games for that team
+    deduped = {}
+    for t in candidates:
+        key = t["friendly"] or f"{t['name']}|{t['sheet']}"
+        if key not in deduped or t["_count"] > deduped[key]["_count"]:
+            deduped[key] = t
+
+    teams = [{"name": t["name"], "sheet": t["sheet"], "friendly": t["friendly"]}
+             for t in deduped.values()]
     teams.sort(key=_team_sort_key)
     return jsonify(teams)
 
