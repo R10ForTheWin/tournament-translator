@@ -5,7 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="TT Scheduler">
   <meta name="theme-color" content="#111111">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="/static/apple-touch-icon.png">
   <title>Tournament Translator</title>
   <style>
     :root {
@@ -277,6 +280,12 @@
     <img src="/static/logo.png" class="hero-logo" alt="Tournament Translator">
     <div class="hero-title">Tournament Translator</div>
     <div class="hero-sub">2026 Season</div>
+    <div style="margin-top:16px">
+      <button id="test-mode-btn" onclick="toggleTestMode()"
+        style="background:none;border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.3);
+               font-size:10px;letter-spacing:0.15em;text-transform:uppercase;padding:4px 10px;
+               border-radius:4px;cursor:pointer">TEST MODE: OFF</button>
+    </div>
   </div>
   <div class="gold-bar"></div>
 </div>
@@ -336,9 +345,18 @@
 </div>
 
 <script>
-let state = { tournament: null, team: null, sheet: null };
+let state = { tournament: null, team: null, sheet: null, friendly: null };
+let testMode    = false;
 let pendingFile = null;
 let pwCallback  = null;
+
+function toggleTestMode() {
+  testMode = !testMode;
+  const btn = document.getElementById('test-mode-btn');
+  btn.textContent = testMode ? 'TEST MODE: ON' : 'TEST MODE: OFF';
+  btn.style.color  = testMode ? 'rgba(255,200,0,0.7)' : 'rgba(255,255,255,0.3)';
+  btn.style.borderColor = testMode ? 'rgba(255,200,0,0.4)' : 'rgba(255,255,255,0.15)';
+}
 
 // ── Views ──────────────────────────────────────────────────────────────────────
 function showView(id) {
@@ -604,6 +622,12 @@ function buildUpcomingCard(g, tournamentId, team) {
 
 // ── Result locking ─────────────────────────────────────────────────────────────
 async function lockResult(tournamentId, gameId, won, team, btn) {
+  if (testMode) {
+    // Test mode: just reload games as if the result was locked, without saving
+    btn.closest('.yn-box').innerHTML =
+      `<div style="text-align:center;padding:8px;font-size:13px;color:var(--muted)">🧪 Test — not saved</div>`;
+    return;
+  }
   btn.disabled = true;
   const res = await fetch(`/api/result/${tournamentId}/${gameId}`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
