@@ -358,7 +358,7 @@ function updateSubnav() {
     titleEl.textContent = state.tournament?.name || '';
     backBtn.onclick = goHome;
   } else if (view === 'view-games') {
-    titleEl.textContent = state.team || '';
+    titleEl.textContent = state.friendly || state.team || '';
     backBtn.onclick = goTournament;
   }
 }
@@ -455,18 +455,21 @@ async function loadTeams(tournament) {
   teams.forEach(t => {
     const card = document.createElement('div');
     card.className = 'list-card';
+    const displayName = t.friendly || t.name;
+    const subLabel = t.friendly ? t.name : t.sheet;
     card.innerHTML = `
       <div class="list-card-left">
         <div class="list-card-dot dot-upcoming"></div>
         <div class="list-card-info">
-          <div class="list-card-main">${t.name}</div>
-          <div class="list-card-sub">${t.sheet}</div>
+          <div class="list-card-main">${displayName}</div>
+          <div class="list-card-sub">${subLabel}</div>
         </div>
       </div>
       <span class="list-arrow">›</span>`;
     card.onclick = () => {
-      state.team  = t.name;
-      state.sheet = t.sheet;
+      state.team    = t.name;
+      state.sheet   = t.sheet;
+      state.friendly = t.friendly || t.name;
       loadGames(tournament.id, t.name, t.sheet);
     };
     list.appendChild(card);

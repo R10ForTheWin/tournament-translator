@@ -62,6 +62,52 @@ def all_excels():
     return [f for f in os.listdir(EXCEL_DIR) if f.endswith(".xlsx")]
 
 
+# ── Team friendly-name helpers ─────────────────────────────────────────────────
+
+_TIER_ORDER = {"gold": 0, "cardinal": 1, "platinum": 0, "silver": 2, "bronze": 3}
+_AGE_WORDS   = re.compile(r"(\d{1,2})U", re.IGNORECASE)
+_GENDER_BOYS = re.compile(r"\bBOYS?\b", re.IGNORECASE)
+_GENDER_GIRLS = re.compile(r"\bGIRLS?\b", re.IGNORECASE)
+_GENDER_COED  = re.compile(r"\bCOED\b", re.IGNORECASE)
+
+def _parse_sheet(sheet: str):
+    """Return (gender, age_str) from an Excel sheet name, e.g. '16U BOYS GOLD-11 TEAMS' → ('Boys', '16U')."""
+    s = sheet.upper()
+    age_m = _AGE_WORDS.search(s)
+    age = f"{age_m.group(1)}U" if age_m else None
+    if _GENDER_GIRLS.search(s):   gender = "Girls"
+    elif _GENDER_BOYS.search(s):  gender = "Boys"
+    elif _GENDER_COED.search(s):  gender = "Coed"
+    else:                          gender = None
+    return gender, age
+
+def _parse_tier(team_name: str):
+    """Return display tier from team name: Gold, Cardinal, Silver, etc."""
+    t = team_name.upper()
+    for keyword, label in [("GOLD","Gold"),("CARDINAL","Cardinal"),("PLATINUM","Platinum"),
+                            ("SILVER","Silver"),("BRONZE","Bronze"),("NORTH","North"),("SOUTH","South")]:
+        if keyword in t:
+            return label
+    return None
+
+def friendly_team_name(team_name: str, sheet: str) -> str | None:
+    """'TROJAN GOLD' + '16U BOYS PLATINUM GOLD-11 TEAMS' → 'Boys 16U Gold'."""
+    gender, age = _parse_sheet(sheet)
+    tier = _parse_tier(team_name)
+    parts = [p for p in [gender, age, tier] if p]
+    return " ".join(parts) if len(parts) >= 2 else None
+
+def _team_sort_key(team: dict):
+    """Sort: Boys before Girls, age desc (18U→10U), tier Gold→Cardinal→Silver."""
+    friendly = team.get("friendly") or ""
+    gender_ord = 0 if "Boys" in friendly else (1 if "Girls" in friendly else 2)
+    age_m = _AGE_WORDS.search(friendly)
+    age_ord = -(int(age_m.group(1))) if age_m else 0   # negate for descending
+    tier = _parse_tier(team["name"]) or ""
+    tier_ord = _TIER_ORDER.get(tier.lower(), 9)
+    return (gender_ord, age_ord, tier_ord)
+
+
 # ── Game helpers ───────────────────────────────────────────────────────────────
 
 _PREFIX_RE = re.compile(
@@ -247,8 +293,9 @@ def api_trojan_teams(tournament_id):
             name = strip_prefix(slot)
             if "TROJAN" in name.upper() and name not in seen:
                 seen[name] = g["sheet"]
-    teams = sorted(seen.keys())
-    return jsonify([{"name": t, "sheet": seen[t]} for t in teams])
+    teams = [{"name": t, "sheet": seen[t], "friendly": friendly_team_name(t, seen[t])} for t in seen]
+    teams.sort(key=_team_sort_key)
+    return jsonify(teams)
 
 
 @app.route("/api/games/<tournament_id>/<path:team>")
