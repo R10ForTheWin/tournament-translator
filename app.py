@@ -342,7 +342,7 @@ def api_tournaments():
     out = []
     for t in KNOWN_TOURNAMENTS:
         excel = find_excel(t["id"])
-        # If a file exists but date-filtering yields no games, treat as no file yet
+        # has_file: Excel exists; has_excel: Excel has games in this tournament's date range
         has_file  = excel is not None
         has_excel = False
         if excel:
