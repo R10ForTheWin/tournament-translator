@@ -225,9 +225,10 @@ def api_tournaments():
         yr = int(year_match.group(1)) if year_match else today.year
         mo = _MMAP.get(month_match.group(1).lower(), 1) if month_match else 1
         t_date = date(yr, mo, 1)
-        out.append({**t, "has_excel": excel is not None, "past": t_date < today})
-    # Sort: upcoming first, past last
-    out.sort(key=lambda x: (x["past"], x["dates"]))
+        out.append({**t, "has_excel": excel is not None, "past": t_date < today, "_sort_date": t_date})
+    # Sort: upcoming first (chronological), past last (reverse chronological)
+    out.sort(key=lambda x: (x["past"], x["_sort_date"] if not x["past"] else -x["_sort_date"].toordinal()))
+    for x in out: del x["_sort_date"]
     return jsonify(out)
 
 
