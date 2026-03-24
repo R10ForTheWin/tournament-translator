@@ -16,13 +16,17 @@ RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "
 ADMIN_PW    = os.environ.get("ADMIN_PASSWORD", "trojan")  # override via Railway env var
 
 # ── Live URL sources ────────────────────────────────────────────────────────
-# Google Sheets (primary) and OneDrive (fallback) for WPL/Futures Excel
-FUTURES_SHEETS_ID = "1AkX3vwOU9CIc3cymacG2F-uXz-_Gi_A8yR40dEbDpMQ"
+# Futures/WPL → Google Sheets (organizer keeps this updated throughout the season)
+FUTURES_SHEETS_ID  = "1AkX3vwOU9CIc3cymacG2F-uXz-_Gi_A8yR40dEbDpMQ"
 FUTURES_SHEETS_URL = f"https://docs.google.com/spreadsheets/d/{FUTURES_SHEETS_ID}/export?format=xlsx"
-WPL_ONEDRIVE_URL  = "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQBGJ01faI_8Rb24gRIV-VoDAQO0zhZw_eBDO4rxJ-5tASs?e=hHsWYP"
-WPL_TOURNAMENTS   = {"futures-2", "futures-3", "futures-4", "futures-5", "futures-super"}
-_URL_CACHE: dict  = {}   # {url: (fetched_at, bytes)}
-URL_CACHE_TTL     = 300  # re-fetch at most every 5 minutes
+WPL_TOURNAMENTS    = {"futures-2", "futures-3", "futures-4", "futures-5", "futures-super"}
+
+# Kap7 → OneDrive (organizer keeps this updated throughout each Kap7 event)
+KAP7_ONEDRIVE_URL  = "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQBGJ01faI_8Rb24gRIV-VoDAQO0zhZw_eBDO4rxJ-5tASs?e=hHsWYP"
+KAP7_TOURNAMENTS   = {"kap7-intl", "kap7-cup"}
+
+_URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
+URL_CACHE_TTL      = 300  # re-fetch at most every 5 minutes
 
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(EXCEL_DIR, exist_ok=True)
@@ -90,8 +94,10 @@ def find_excel(tournament_id: str):
             if f.endswith(".xlsx") and keyword.lower() in f.lower():
                 return os.path.join(EXCEL_DIR, f)
     if tournament_id in WPL_TOURNAMENTS:
-        # Try Google Sheets first (simpler), fall back to OneDrive
-        data = _fetch_url(FUTURES_SHEETS_URL) or _fetch_url(WPL_ONEDRIVE_URL, onedrive=True)
+        data = _fetch_url(FUTURES_SHEETS_URL)
+        return io.BytesIO(data) if data else None
+    if tournament_id in KAP7_TOURNAMENTS:
+        data = _fetch_url(KAP7_ONEDRIVE_URL, onedrive=True)
         return io.BytesIO(data) if data else None
     return None
 
