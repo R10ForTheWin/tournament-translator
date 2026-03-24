@@ -20,15 +20,20 @@ os.makedirs(EXCEL_DIR, exist_ok=True)
 # ── Tournament registry ────────────────────────────────────────────────────────
 
 KNOWN_TOURNAMENTS = [
-    {"id": "futures-2",       "name": "Futures Weekend 2",      "dates": "Feb 21–22, 2026"},
+    {"id": "futures-2",       "name": "Futures Weekend 2",      "dates": "Feb 21–22, 2026",
+     "date_start": date(2026, 2, 21), "date_end": date(2026, 2, 22)},
     {"id": "turbo-cup",       "name": "Turbo OC Cup",           "dates": "Mar 7–8, 2026"},
     {"id": "newport-invite",  "name": "Newport Spring Invite",  "dates": "Mar 14–15, 2026"},
-    {"id": "futures-3",       "name": "Futures Weekend 3",      "dates": "Mar 21–22, 2026"},
+    {"id": "futures-3",       "name": "Futures Weekend 3",      "dates": "Mar 21–22, 2026",
+     "date_start": date(2026, 3, 21), "date_end": date(2026, 3, 22)},
     {"id": "kap7-intl",       "name": "Kap7 International",     "dates": "Apr 18–19, 2026"},
-    {"id": "futures-4",       "name": "Futures Weekend 4",      "dates": "May 2–3, 2026"},
-    {"id": "futures-5",       "name": "Futures Weekend 5",      "dates": "May 16–17, 2026"},
+    {"id": "futures-4",       "name": "Futures Weekend 4",      "dates": "May 2–3, 2026",
+     "date_start": date(2026, 5, 2),  "date_end": date(2026, 5, 3)},
+    {"id": "futures-5",       "name": "Futures Weekend 5",      "dates": "May 16–17, 2026",
+     "date_start": date(2026, 5, 16), "date_end": date(2026, 5, 17)},
     {"id": "jo-quals",        "name": "JO Qualifications",      "dates": "May 29–31, 2026"},
-    {"id": "futures-super",   "name": "Futures Superfinal",     "dates": "Jun 26–28, 2026"},
+    {"id": "futures-super",   "name": "Futures Superfinal",     "dates": "Jun 26–28, 2026",
+     "date_start": date(2026, 6, 26), "date_end": date(2026, 6, 28)},
     {"id": "junior-olympics", "name": "Junior Olympics",        "dates": "Jul 23–26, 2026"},
 ]
 
@@ -37,12 +42,11 @@ FILE_MAP = {
     "turbo-cup":      "TURBO OC CUP",
     "kap7-intl":      "KAP7 INTERNATIONAL",
     "newport-invite": "NEWPORT",
-    "futures-2":      "Futures WPL",   # placeholder — update when file arrives
-    "futures-3":      "Futures WPL",
-    "futures-4":      "Futures WPL",
-    "futures-5":      "Futures WPL",
-    "futures-super":  "Futures WPL",
-    "kap7-intl-futures": "KAP7 Futures WPL",
+    "futures-2":      "KAP7 Futures WPL",
+    "futures-3":      "KAP7 Futures WPL",
+    "futures-4":      "KAP7 Futures WPL",
+    "futures-5":      "KAP7 Futures WPL",
+    "futures-super":  "KAP7 Futures WPL",
 }
 
 
@@ -55,6 +59,21 @@ def find_excel(tournament_id: str):
         if f.endswith(".xlsx") and keyword.lower() in f.lower():
             return os.path.join(EXCEL_DIR, f)
     return None
+
+
+def _tournament_meta(tournament_id: str):
+    """Return the KNOWN_TOURNAMENTS entry for this id, or None."""
+    return next((t for t in KNOWN_TOURNAMENTS if t["id"] == tournament_id), None)
+
+
+def _filter_by_dates(games, tournament_id: str):
+    """If the tournament has a date range, filter games to that range.
+    Games with date=None are kept only when no date range is set."""
+    meta = _tournament_meta(tournament_id)
+    if not meta or "date_start" not in meta:
+        return games
+    d0, d1 = meta["date_start"], meta["date_end"]
+    return [g for g in games if g.get("date") and d0 <= g["date"] <= d1]
 
 
 def all_excels():
@@ -90,7 +109,7 @@ def _parse_tier(team_name: str):
             return label
     return None
 
-def friendly_team_name(team_name: str, sheet: str) -> str | None:
+def friendly_team_name(team_name: str, sheet: str):
     """'TROJAN GOLD' + '16U BOYS PLATINUM GOLD-11 TEAMS' → 'Boys 16U Gold'."""
     gender, age = _parse_sheet(sheet)
     tier = _parse_tier(team_name)
@@ -286,7 +305,7 @@ def api_trojan_teams(tournament_id):
     excel = find_excel(tournament_id)
     if not excel:
         return jsonify([])
-    games = load_and_parse(excel)
+    games = _filter_by_dates(load_and_parse(excel), tournament_id)
     # Count games per (name, sheet) so we can pick the best sheet when duplicates exist
     counts = {}
     for g in games:
@@ -322,7 +341,7 @@ def api_games(tournament_id, team):
     if not excel:
         abort(404)
 
-    games    = load_and_parse(excel)
+    games    = _filter_by_dates(load_and_parse(excel), tournament_id)
     locked   = load_results(tournament_id)
 
     sheet    = request.args.get("sheet")
