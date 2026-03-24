@@ -342,6 +342,14 @@ def api_tournaments():
     out = []
     for t in KNOWN_TOURNAMENTS:
         excel = find_excel(t["id"])
+        # If a file exists but date-filtering yields no games, treat as no file yet
+        has_excel = False
+        if excel:
+            try:
+                games = _filter_by_dates(load_and_parse(excel), t["id"])
+                has_excel = len(games) > 0
+            except Exception:
+                has_excel = False
         # Rough "past" detection from dates string
         year_match = re.search(r"(\d{4})", t["dates"])
         month_match = re.search(
@@ -352,7 +360,7 @@ def api_tournaments():
         yr = int(year_match.group(1)) if year_match else today.year
         mo = _MMAP.get(month_match.group(1).lower(), 1) if month_match else 1
         t_date = date(yr, mo, 1)
-        out.append({**t, "has_excel": excel is not None, "past": t_date < today, "_sort_date": t_date})
+        out.append({**t, "has_excel": has_excel, "past": t_date < today, "_sort_date": t_date})
     # Sort: upcoming first (chronological), past last (reverse chronological)
     out.sort(key=lambda x: (x["past"], x["_sort_date"] if not x["past"] else -x["_sort_date"].toordinal()))
     for x in out: del x["_sort_date"]
