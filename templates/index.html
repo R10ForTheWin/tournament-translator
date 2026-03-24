@@ -54,10 +54,10 @@
       padding: 40px 24px 32px;
     }
     .hero-logo {
-      width: 280px;
+      width: 340px;
       height: auto;
       display: block;
-      margin: 0 auto 20px;
+      margin: 0 auto;
     }
     .gold-bar { height: 3px; background: var(--gold); }
 
@@ -261,16 +261,17 @@
 </head>
 <body>
 
+<!-- Test mode button — fixed bottom-right corner, inconspicuous -->
+<button id="test-mode-btn" onclick="toggleTestMode()"
+  style="position:fixed;bottom:calc(12px + env(safe-area-inset-bottom));right:14px;
+         background:none;border:none;color:rgba(255,255,255,0.12);
+         font-size:9px;letter-spacing:0.12em;text-transform:uppercase;padding:6px 4px;
+         cursor:pointer;z-index:50;font-family:inherit">TEST</button>
+
 <!-- Hero — home view only -->
 <div id="hero-wrap">
   <div class="hero">
     <img src="/static/logo.png" class="hero-logo" alt="Tournament Translator">
-    <div style="margin-top:16px">
-      <button id="test-mode-btn" onclick="toggleTestMode()"
-        style="background:none;border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.3);
-               font-size:10px;letter-spacing:0.15em;text-transform:uppercase;padding:4px 10px;
-               border-radius:4px;cursor:pointer">TEST MODE: OFF</button>
-    </div>
   </div>
   <div class="gold-bar"></div>
 </div>
