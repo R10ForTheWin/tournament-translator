@@ -349,7 +349,8 @@
       <div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round"><circle cx="18" cy="18" r="15" stroke-width="2" stroke-dasharray="60 35" /></svg></div>
     </div>
     <div style="text-align:center; margin-top:32px; padding-bottom:8px;">
-      <button onclick="shareApp()" style="
+      <button onclick="shareApp()" id="share-btn" style="
+        display: none;
         background: none;
         border: 1.5px solid rgba(255,255,255,0.15);
         border-radius: 20px;
@@ -360,7 +361,7 @@
         padding: 10px 22px;
         cursor: pointer;
         letter-spacing: 0.04em;
-      " id="share-btn" style="display:none">⬆ Share App with Teammate</button>
+      ">⬆ Share App with Teammate</button>
     </div>
   </div>
   <div id="view-teams" class="view">
