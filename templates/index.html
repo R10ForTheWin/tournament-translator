@@ -437,11 +437,11 @@ function isStandalone() {
 }
 function dismissA2HS() {
   document.getElementById('a2hs-banner').style.display = 'none';
-  localStorage.setItem('a2hs_dismissed', '1');
+  sessionStorage.setItem('a2hs_dismissed', '1');
 }
 function maybeShowA2HS() {
-  if (!isIosSafari() || isStandalone()) return;
-  if (localStorage.getItem('a2hs_dismissed')) return;
+  if (isStandalone()) return;
+  if (sessionStorage.getItem('a2hs_dismissed')) return;
   setTimeout(() => {
     document.getElementById('a2hs-banner').style.display = 'flex';
   }, 2000);
