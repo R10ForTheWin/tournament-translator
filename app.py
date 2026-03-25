@@ -33,6 +33,8 @@ NEWPORT_ONEDRIVE_URL = "https://onedrive.live.com/download?resid=6F253EF3AFCFE1C
 
 # Tournaments with no preset URL — user pastes one via the app
 URL_ONLY_TOURNAMENTS = {"jo-quals", "junior-olympics"}
+# Tournaments with a preset auto-fetch URL (schedule appears automatically when posted)
+PRESET_URL_TOURNAMENTS = WPL_TOURNAMENTS | KAP7_TOURNAMENTS | {"turbo-cup", "newport-invite"}
 USER_URLS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "user_urls.json")
 
 _URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
@@ -437,6 +439,7 @@ def api_tournaments():
         mo = _MMAP.get(month_match.group(1).lower(), 1) if month_match else 1
         t_date = date(yr, mo, 1)
         out.append({**t, "has_excel": has_excel, "has_file": has_file,
+                    "has_preset_url": t["id"] in PRESET_URL_TOURNAMENTS,
                     "past": t_date < today, "_sort_date": t_date})
     # Sort: upcoming first (chronological), past last (reverse chronological)
     out.sort(key=lambda x: (x["past"], x["_sort_date"] if not x["past"] else -x["_sort_date"].toordinal()))

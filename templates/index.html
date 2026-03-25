@@ -149,6 +149,7 @@
     }
     .badge-past      { background: rgba(255,255,255,0.08); color: var(--muted); }
     .badge-upload    { background: var(--gold); color: #3a2800; }
+    .badge-pending   { background: rgba(255,255,255,0.08); color: var(--muted); }
     .badge-scheduled { background: var(--cardinal); color: var(--white); }
 
     .list-arrow { font-size: 18px; color: rgba(255,255,255,0.2); font-weight: 300; }
@@ -501,7 +502,10 @@ function makeTournamentCards(tournaments) {
     const card = document.createElement('div');
     card.className = 'list-card';
     let badgeHtml = '', dotClass = '';
-    if (!t.has_excel) {
+    if (!t.has_excel && t.has_preset_url) {
+      badgeHtml = `<span class="badge badge-pending">Not Available</span>`;
+      dotClass  = 'dot-upload';
+    } else if (!t.has_excel) {
       badgeHtml = `<span class="badge badge-upload">Paste URL</span>`;
       dotClass  = 'dot-upload';
     } else if (!t.past) {
@@ -521,6 +525,7 @@ function makeTournamentCards(tournaments) {
       </div>
       <div class="list-card-right">${badgeHtml}<span class="list-arrow">›</span></div>`;
     card.onclick = () => {
+      if (!t.has_excel && t.has_preset_url) return;
       if (!t.has_excel) { openUrlModal(t.id); return; }
       state.tournament = t;
       loadTeams(t);
