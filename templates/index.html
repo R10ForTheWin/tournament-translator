@@ -844,13 +844,17 @@ async function loadGames(tournamentId, team, sheet) {
       s.shootout_losses  ? `${s.shootout_losses}SL` : null,
       s.reg_losses       ? `${s.reg_losses}L`  : null,
     ].filter(Boolean).join('–');
-    const mkRow = s => `<div class="standings-row${s.is_mine ? ' mine' : ''}">
+    const DIV_NAMES = { D1:'Platinum', D2:'Gold', D3:'Silver', D4:'Bronze', D5:'Copper' };
+    const mkRow = s => {
+      const divLabel = s.division ? (DIV_NAMES[s.division] || s.division) : '';
+      return `<div class="standings-row${s.is_mine ? ' mine' : ''}">
         <div class="standings-rank">${s.rank}</div>
         <div class="standings-name">${s.name}${s.is_mine ? ' ★' : ''}</div>
-        ${s.division ? `<div class="standings-div">${s.division}</div>` : ''}
+        ${divLabel ? `<div class="standings-div">${divLabel}</div>` : ''}
         <div class="standings-pts">${s.points}</div>
         <div class="standings-record">${recStr(s)}</div>
       </div>`;
+    };
     const rowsHtml = all.slice(0, TOP_N).map(mkRow).join('')
       + (mine && mine.rank > TOP_N ? `<div class="standings-gap">· · ·</div>${mkRow(mine)}` : '');
     const grp = document.createElement('div');
