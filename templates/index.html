@@ -360,23 +360,6 @@
   </div>
 </main>
 
-<!-- Upload sheet -->
-<div class="upload-overlay" id="upload-overlay" onclick="closeUpload(event)">
-  <div class="upload-sheet" onclick="event.stopPropagation()">
-    <div class="upload-handle"></div>
-    <div class="upload-title">Upload Schedule</div>
-    <input type="password" class="pw-input" id="upload-pw" placeholder="Password" autocomplete="current-password">
-    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
-      <input type="file" id="file-input" accept=".xlsx" onchange="handleFileSelect(this)">
-      <div class="drop-icon">📂</div>
-      <div class="drop-text" id="drop-text">Tap to select Excel file</div>
-      <div class="drop-sub">.xlsx files only</div>
-    </div>
-    <button class="upload-btn" id="upload-btn" onclick="doUpload()" disabled>Upload Schedule</button>
-    <button class="cancel-btn" onclick="closeUpload()">Cancel</button>
-    <div class="upload-msg" id="upload-msg" style="display:none"></div>
-  </div>
-</div>
 
 <!-- URL paste sheet -->
 <div class="upload-overlay" id="url-overlay" onclick="closeUrlModal(event)">
@@ -416,9 +399,8 @@
 
 <script>
 let state = { tournament: null, team: null, sheet: null, friendly: null };
-let testMode    = false;
-let pendingFile = null;
-let pwCallback  = null;
+let testMode   = false;
+let pwCallback = null;
 
 // ── Add to Home Screen prompt ───────────────────────────────────────────────────
 function isIosSafari() {
@@ -519,11 +501,8 @@ function makeTournamentCards(tournaments) {
     const card = document.createElement('div');
     card.className = 'list-card';
     let badgeHtml = '', dotClass = '';
-    if (!t.has_excel && t.url_only) {
+    if (!t.has_excel) {
       badgeHtml = `<span class="badge badge-upload">Paste URL</span>`;
-      dotClass  = 'dot-upload';
-    } else if (!t.has_excel) {
-      badgeHtml = `<span class="badge badge-upload">Upload Schedule</span>`;
       dotClass  = 'dot-upload';
     } else if (!t.past) {
       badgeHtml = `<span class="badge badge-scheduled">View Schedule</span>`;
@@ -542,8 +521,7 @@ function makeTournamentCards(tournaments) {
       </div>
       <div class="list-card-right">${badgeHtml}<span class="list-arrow">›</span></div>`;
     card.onclick = () => {
-      if (!t.has_excel && t.url_only) { openUrlModal(t.id, t.name); return; }
-      if (!t.has_excel) { openUpload(); return; }
+      if (!t.has_excel) { openUrlModal(t.id); return; }
       state.tournament = t;
       loadTeams(t);
     };
@@ -806,7 +784,7 @@ function buildUpcomingCard(g, tournamentId, team, h2h) {
           <div class="conf-text">
             <strong>${msgs[g.confidence]}</strong>
             ${g.conf_msg ? `<br><span style="font-size:12px">${g.conf_msg}</span>` : ''}
-            <br><span class="conf-upload-link" onclick="openUpload()">Upload latest schedule to improve this →</span>
+            <br><span class="conf-upload-link" onclick="openUrlModal('${tournamentId}')">Paste updated URL to improve this →</span>
           </div>
         </div>`;
     }
@@ -857,59 +835,6 @@ function unlockResult(tournamentId, gameId) {
   });
 }
 
-// ── Upload ─────────────────────────────────────────────────────────────────────
-function openUpload() {
-  pendingFile = null;
-  document.getElementById('upload-pw').value = '';
-  document.getElementById('drop-text').textContent = 'Tap to select Excel file';
-  document.getElementById('upload-btn').disabled = true;
-  document.getElementById('upload-msg').style.display = 'none';
-  document.getElementById('upload-overlay').classList.add('visible');
-}
-function closeUpload(e) {
-  if (e && e.target !== document.getElementById('upload-overlay')) return;
-  document.getElementById('upload-overlay').classList.remove('visible');
-}
-function handleFileSelect(input) {
-  if (input.files.length) {
-    pendingFile = input.files[0];
-    document.getElementById('drop-text').textContent = pendingFile.name;
-    document.getElementById('upload-btn').disabled = false;
-  }
-}
-const dz = document.getElementById('drop-zone');
-dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
-dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
-dz.addEventListener('drop', e => {
-  e.preventDefault(); dz.classList.remove('drag-over');
-  const f = e.dataTransfer.files[0];
-  if (f && f.name.endsWith('.xlsx')) {
-    pendingFile = f;
-    document.getElementById('drop-text').textContent = f.name;
-    document.getElementById('upload-btn').disabled = false;
-  }
-});
-async function doUpload() {
-  const pw = document.getElementById('upload-pw').value;
-  const msg = document.getElementById('upload-msg');
-  if (!pendingFile || !pw) return;
-  const btn = document.getElementById('upload-btn');
-  btn.disabled = true; btn.textContent = 'Uploading…';
-  const fd = new FormData();
-  fd.append('password', pw); fd.append('file', pendingFile);
-  const res = await fetch('/api/upload', { method: 'POST', body: fd });
-  msg.style.display = 'block';
-  if (res.ok) {
-    msg.className = 'upload-msg success'; msg.textContent = '✅ Schedule uploaded successfully!';
-    setTimeout(() => { document.getElementById('upload-overlay').classList.remove('visible'); loadTournaments(); }, 1500);
-  } else if (res.status === 403) {
-    msg.className = 'upload-msg error'; msg.textContent = '❌ Incorrect password.';
-    btn.disabled = false; btn.textContent = 'Upload Schedule';
-  } else {
-    msg.className = 'upload-msg error'; msg.textContent = "❌ Upload failed. Make sure it's a valid .xlsx file.";
-    btn.disabled = false; btn.textContent = 'Upload Schedule';
-  }
-}
 
 // ── Password modal ─────────────────────────────────────────────────────────────
 function openPwModal(msg, callback) {

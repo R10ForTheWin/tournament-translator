@@ -110,7 +110,13 @@ def _fetch_url(url: str, *, onedrive=False) -> bytes | None:
 
 
 def find_excel(tournament_id: str):
-    """Return an Excel file path, BytesIO from a live URL, or None."""
+    """Return an Excel file path, BytesIO from a live URL, or None.
+    User-pasted URL (stored in user_urls.json) takes priority over all presets."""
+    user_url = _load_user_urls().get(tournament_id)
+    if user_url:
+        data = _fetch_url(user_url)
+        if data:
+            return io.BytesIO(data)
     keyword = FILE_MAP.get(tournament_id, "")
     if keyword:
         for f in os.listdir(EXCEL_DIR):
@@ -126,14 +132,8 @@ def find_excel(tournament_id: str):
         data = _fetch_url(TURBO_ONEDRIVE_URL, onedrive=True)
         return io.BytesIO(data) if data else None
     if tournament_id == "newport-invite":
-        data = _fetch_url(NEWPORT_ONEDRIVE_URL)  # direct download URL, no API needed
+        data = _fetch_url(NEWPORT_ONEDRIVE_URL)
         return io.BytesIO(data) if data else None
-    if tournament_id in URL_ONLY_TOURNAMENTS:
-        url = _load_user_urls().get(tournament_id)
-        if url:
-            data = _fetch_url(url)
-            return io.BytesIO(data) if data else None
-        return None
     return None
 
 
@@ -437,7 +437,6 @@ def api_tournaments():
         mo = _MMAP.get(month_match.group(1).lower(), 1) if month_match else 1
         t_date = date(yr, mo, 1)
         out.append({**t, "has_excel": has_excel, "has_file": has_file,
-                    "url_only": t["id"] in URL_ONLY_TOURNAMENTS,
                     "past": t_date < today, "_sort_date": t_date})
     # Sort: upcoming first (chronological), past last (reverse chronological)
     out.sort(key=lambda x: (x["past"], x["_sort_date"] if not x["past"] else -x["_sort_date"].toordinal()))
@@ -605,9 +604,9 @@ def api_upload():
 
 @app.route("/api/tournaments/<tournament_id>/url", methods=["POST"])
 def api_set_url(tournament_id):
-    """Store a user-provided URL for a URL-only tournament (password required)."""
-    if tournament_id not in URL_ONLY_TOURNAMENTS:
-        abort(400)
+    """Store a user-provided URL for any tournament (password required)."""
+    if not any(t["id"] == tournament_id for t in KNOWN_TOURNAMENTS):
+        abort(404)
     data = request.get_json(force=True)
     if data.get("password") != ADMIN_PW:
         abort(403)
