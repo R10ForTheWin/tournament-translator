@@ -186,6 +186,7 @@
     .standings-row.mine .standings-name { font-weight: 700; color: var(--white); }
     .standings-pts { font-weight: 700; width: 36px; text-align: right; flex-shrink: 0; }
     .standings-record { font-size: 11px; color: var(--muted); width: 54px; text-align: right; flex-shrink: 0; }
+    .standings-div { font-size: 10px; font-weight: 700; color: var(--muted); background: rgba(255,255,255,0.07); border-radius: 4px; padding: 1px 5px; flex-shrink: 0; }
     .standings-gap { text-align: center; color: var(--muted); font-size: 12px; padding: 4px; border-top: 1px solid var(--border); }
 
     .game-card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; margin-bottom: 12px; border: 1px solid var(--border); }
@@ -843,21 +844,15 @@ async function loadGames(tournamentId, team, sheet) {
       s.shootout_losses  ? `${s.shootout_losses}SL` : null,
       s.reg_losses       ? `${s.reg_losses}L`  : null,
     ].filter(Boolean).join('–');
-    const rowsHtml = all.slice(0, TOP_N).map(s =>
-      `<div class="standings-row${s.is_mine ? ' mine' : ''}">
+    const mkRow = s => `<div class="standings-row${s.is_mine ? ' mine' : ''}">
         <div class="standings-rank">${s.rank}</div>
         <div class="standings-name">${s.name}${s.is_mine ? ' ★' : ''}</div>
+        ${s.division ? `<div class="standings-div">${s.division}</div>` : ''}
         <div class="standings-pts">${s.points}</div>
         <div class="standings-record">${recStr(s)}</div>
-      </div>`
-    ).join('') + (mine && mine.rank > TOP_N ? `
-      <div class="standings-gap">· · ·</div>
-      <div class="standings-row mine">
-        <div class="standings-rank">${mine.rank}</div>
-        <div class="standings-name">${mine.name} ★</div>
-        <div class="standings-pts">${mine.points}</div>
-        <div class="standings-record">${recStr(mine)}</div>
-      </div>` : '');
+      </div>`;
+    const rowsHtml = all.slice(0, TOP_N).map(mkRow).join('')
+      + (mine && mine.rank > TOP_N ? `<div class="standings-gap">· · ·</div>${mkRow(mine)}` : '');
     const grp = document.createElement('div');
     grp.className = 'games-group';
     grp.innerHTML = `<div class="standings-wrap">

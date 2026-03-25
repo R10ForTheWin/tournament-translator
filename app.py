@@ -531,15 +531,23 @@ def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
     def _is_any_section(c):
         return bool(re.search(r'\d+U\s*(BOYS|GIRLS)', c, re.I) and re.search(r'Weekend', c, re.I))
 
+    def _div_num(c):
+        m = re.match(r'\d+u?\s*(boys|girls)\s*-\s*D(\d+)', c, re.I)
+        return int(m.group(2)) if m else None
+
     def _is_div_hdr(c):
-        return bool(re.match(r'\d+u?\s*(boys|girls)\s*-\s*D\d+', c, re.I))
+        return _div_num(c) is not None
 
     def _skip(c):
         return _is_any_section(c) or _is_div_hdr(c) or bool(re.search(r'Regulation|Shootout', c, re.I))
 
-    # Accumulate totals per team across all weekends (no division filter)
-    totals = {}   # clean_name → {name, points, reg_wins, shootout_wins, shootout_losses, reg_losses}
+    # Accumulate totals per team across all weekends (no division filter).
+    # Also track each team's division from their most recent weekend.
+    totals = {}        # clean_name → {name, points, reg_wins, …}
+    team_div = {}      # clean_name → (weekend_num, div_num) — most recent weekend's div
     in_section = False
+    current_weekend = None
+    current_div = None
 
     for row in rows:
         if not row:
@@ -550,10 +558,20 @@ def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
             if c0:
                 if _is_our_section(c0):
                     in_section = True
+                    m = re.search(r'Weekend\s*(\d+)', c0, re.I)
+                    current_weekend = int(m.group(1)) if m else None
+                    current_div = None
                     continue
                 elif _is_any_section(c0):
                     in_section = False
+                    current_weekend = None
+                    current_div = None
                     continue
+                elif in_section:
+                    dn = _div_num(c0)
+                    if dn is not None:
+                        current_div = dn
+                        continue
         if not in_section:
             continue
 
@@ -582,6 +600,11 @@ def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
             t['shootout_wins']   += int(sw)
             t['shootout_losses'] += int(sl)
             t['reg_losses']      += int(rl)
+            # Keep track of the most recent division this team appeared in
+            if current_div is not None and current_weekend is not None:
+                prev = team_div.get(clean)
+                if prev is None or current_weekend >= prev[0]:
+                    team_div[clean] = (current_weekend, current_div)
 
     if not totals:
         return None, None
@@ -595,7 +618,9 @@ def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
 
     standings = []
     for clean, t in totals.items():
-        row_out = dict(t, is_mine=(clean == my_clean))
+        div_num = team_div.get(clean, (None, None))[1]
+        row_out = dict(t, is_mine=(clean == my_clean),
+                       division=f"D{div_num}" if div_num else None)
         standings.append(row_out)
 
     standings.sort(key=lambda x: (-x['points'], -x['reg_wins']))
