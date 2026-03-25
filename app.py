@@ -21,9 +21,12 @@ FUTURES_SHEETS_ID  = "1AkX3vwOU9CIc3cymacG2F-uXz-_Gi_A8yR40dEbDpMQ"
 FUTURES_SHEETS_URL = f"https://docs.google.com/spreadsheets/d/{FUTURES_SHEETS_ID}/export?format=xlsx"
 WPL_TOURNAMENTS    = {"futures-2", "futures-3", "futures-4", "futures-5", "futures-super"}
 
-# Kap7 → OneDrive (organizer keeps this updated throughout each Kap7 event)
+# Kap7 → OneDrive
 KAP7_ONEDRIVE_URL  = "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQBGJ01faI_8Rb24gRIV-VoDAQO0zhZw_eBDO4rxJ-5tASs?e=hHsWYP"
 KAP7_TOURNAMENTS   = {"kap7-intl", "kap7-cup"}
+
+# Turbo Cup → OneDrive (separate organizer, separate file)
+TURBO_ONEDRIVE_URL = "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQB7PJXtfzNsT74lTYhWpOeXASFcmpB96L1OpYL_E6HBMM0?e=UsRrMb"
 
 _URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
 URL_CACHE_TTL      = 300  # re-fetch at most every 5 minutes
@@ -98,6 +101,9 @@ def find_excel(tournament_id: str):
         return io.BytesIO(data) if data else None
     if tournament_id in KAP7_TOURNAMENTS:
         data = _fetch_url(KAP7_ONEDRIVE_URL, onedrive=True)
+        return io.BytesIO(data) if data else None
+    if tournament_id == "turbo-cup":
+        data = _fetch_url(TURBO_ONEDRIVE_URL, onedrive=True)
         return io.BytesIO(data) if data else None
     return None
 
