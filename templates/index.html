@@ -362,6 +362,19 @@
 </main>
 
 
+<!-- Info sheet (not yet scheduled) -->
+<div class="upload-overlay" id="info-overlay" onclick="closeInfoSheet(event)">
+  <div class="upload-sheet" onclick="event.stopPropagation()">
+    <div class="upload-handle"></div>
+    <div id="info-name" style="font-size:20px;font-weight:800;color:var(--white);margin-bottom:4px"></div>
+    <div id="info-dates" style="font-size:14px;color:var(--muted);margin-bottom:20px"></div>
+    <div style="background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:16px">
+      <div style="font-size:13px;line-height:1.6;color:var(--muted)">The schedule hasn't been posted by the tournament organizer yet. Check back soon — this will update automatically once it's available.</div>
+    </div>
+    <button class="cancel-btn" onclick="closeInfoSheet()" style="margin-top:0">Got it</button>
+  </div>
+</div>
+
 <!-- URL paste sheet -->
 <div class="upload-overlay" id="url-overlay" onclick="closeUrlModal(event)">
   <div class="upload-sheet" onclick="event.stopPropagation()">
@@ -503,7 +516,7 @@ function makeTournamentCards(tournaments) {
     card.className = 'list-card';
     let badgeHtml = '', dotClass = '';
     if (!t.has_excel && t.has_preset_url) {
-      badgeHtml = `<span class="badge badge-pending">Not Available</span>`;
+      badgeHtml = `<span class="badge badge-pending">Not Yet Scheduled</span>`;
       dotClass  = 'dot-upload';
     } else if (!t.has_excel) {
       badgeHtml = `<span class="badge badge-upload">Paste URL</span>`;
@@ -525,7 +538,7 @@ function makeTournamentCards(tournaments) {
       </div>
       <div class="list-card-right">${badgeHtml}<span class="list-arrow">›</span></div>`;
     card.onclick = () => {
-      if (!t.has_excel && t.has_preset_url) return;
+      if (!t.has_excel && t.has_preset_url) { openInfoSheet(t); return; }
       if (!t.has_excel) { openUrlModal(t.id); return; }
       state.tournament = t;
       loadTeams(t);
@@ -864,6 +877,17 @@ async function submitPw() {
     document.getElementById('pw-modal-input').value = '';
     document.getElementById('pw-modal-input').focus();
   }
+}
+
+// ── Info sheet ─────────────────────────────────────────────────────────────────
+function openInfoSheet(t) {
+  document.getElementById('info-name').textContent  = t.name;
+  document.getElementById('info-dates').textContent = t.dates;
+  document.getElementById('info-overlay').classList.add('visible');
+}
+function closeInfoSheet(e) {
+  if (e && e.target !== document.getElementById('info-overlay')) return;
+  document.getElementById('info-overlay').classList.remove('visible');
 }
 
 // ── URL paste ──────────────────────────────────────────────────────────────────
