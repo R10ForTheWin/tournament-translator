@@ -186,6 +186,7 @@
     .standings-row.mine .standings-name { font-weight: 700; color: var(--white); }
     .standings-pts { font-weight: 700; width: 36px; text-align: right; flex-shrink: 0; }
     .standings-record { font-size: 11px; color: var(--muted); width: 54px; text-align: right; flex-shrink: 0; }
+    .standings-gap { text-align: center; color: var(--muted); font-size: 12px; padding: 4px; border-top: 1px solid var(--border); }
 
     .game-card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; margin-bottom: 12px; border: 1px solid var(--border); }
 
@@ -826,25 +827,42 @@ async function loadGames(tournamentId, team, sheet) {
 
   // Futures season standings table
   if (data.cumulative_standings && data.cumulative_standings.length) {
-    const grp = document.createElement('div');
-    grp.className = 'games-group';
-    const rows = data.cumulative_standings.map(s => {
-      const rec = [
-        s.reg_wins         ? `${s.reg_wins}W`   : null,
-        s.shootout_wins    ? `${s.shootout_wins}SW`  : null,
-        s.shootout_losses  ? `${s.shootout_losses}SL` : null,
-        s.reg_losses       ? `${s.reg_losses}L`  : null,
-      ].filter(Boolean).join('–');
-      return `<div class="standings-row${s.is_mine ? ' mine' : ''}">
+    const all = data.cumulative_standings;
+    const TOP_N = 10;
+    const mine = all.find(s => s.is_mine);
+    // Show top 10; if our team is outside top 10 add a gap + their row
+    let visible = all.slice(0, TOP_N);
+    let extraRow = '';
+    if (mine && mine.rank > TOP_N) {
+      extraRow = `<div class="standings-gap">···</div>`;
+      visible = [...visible, mine];
+    }
+    const recStr = s => [
+      s.reg_wins         ? `${s.reg_wins}W`   : null,
+      s.shootout_wins    ? `${s.shootout_wins}SW`  : null,
+      s.shootout_losses  ? `${s.shootout_losses}SL` : null,
+      s.reg_losses       ? `${s.reg_losses}L`  : null,
+    ].filter(Boolean).join('–');
+    const rowsHtml = all.slice(0, TOP_N).map(s =>
+      `<div class="standings-row${s.is_mine ? ' mine' : ''}">
         <div class="standings-rank">${s.rank}</div>
         <div class="standings-name">${s.name}${s.is_mine ? ' ★' : ''}</div>
         <div class="standings-pts">${s.points}</div>
-        <div class="standings-record">${rec}</div>
-      </div>`;
-    }).join('');
+        <div class="standings-record">${recStr(s)}</div>
+      </div>`
+    ).join('') + (mine && mine.rank > TOP_N ? `
+      <div class="standings-gap">· · ·</div>
+      <div class="standings-row mine">
+        <div class="standings-rank">${mine.rank}</div>
+        <div class="standings-name">${mine.name} ★</div>
+        <div class="standings-pts">${mine.points}</div>
+        <div class="standings-record">${recStr(mine)}</div>
+      </div>` : '');
+    const grp = document.createElement('div');
+    grp.className = 'games-group';
     grp.innerHTML = `<div class="standings-wrap">
-      <div class="standings-title">Season Standings · ${data.cumulative_division || 'Division'}</div>
-      ${rows}
+      <div class="standings-title">${data.cumulative_division || 'Season Standings'} · ${all.length} teams</div>
+      ${rowsHtml}
     </div>`;
     el.appendChild(grp);
   }

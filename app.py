@@ -497,10 +497,11 @@ def _read_futures_pool_standing(excel_src, weekend_num: int, team: str, sheet_na
 
 
 def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
-    """Aggregate season standings for the division containing `team` across all Futures weekends.
+    """Aggregate season standings for all teams in the same age/gender group across all Futures weekends.
 
-    Returns (division_label, standings_list) where standings_list is sorted by total points,
-    each entry: {name, points, reg_wins, shootout_wins, shootout_losses, reg_losses, weekends, rank, total, is_mine}.
+    Teams are grouped by age/gender only (not division) so promotion/relegation between
+    weekends doesn't drop any weekend's data. Returns (label, standings_list) where each
+    entry has: {name, points, reg_wins, shootout_wins, shootout_losses, reg_losses, rank, total, is_mine}.
     Returns (None, None) on failure.
     """
     try:
@@ -530,21 +531,15 @@ def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
     def _is_any_section(c):
         return bool(re.search(r'\d+U\s*(BOYS|GIRLS)', c, re.I) and re.search(r'Weekend', c, re.I))
 
-    def _div_num(c):
-        m = re.match(r'\d+u?\s*(boys|girls)\s*-\s*D(\d+)', c, re.I)
-        return int(m.group(2)) if m else None
+    def _is_div_hdr(c):
+        return bool(re.match(r'\d+u?\s*(boys|girls)\s*-\s*D\d+', c, re.I))
 
-    skip_pats = [
-        lambda c: _is_any_section(c),
-        lambda c: _div_num(c) is not None,
-        lambda c: bool(re.search(r'Regulation|Shootout', c, re.I)),
-    ]
+    def _skip(c):
+        return _is_any_section(c) or _is_div_hdr(c) or bool(re.search(r'Regulation|Shootout', c, re.I))
 
-    # Collect all team entries: {clean_name: [(weekend_num, div_num, display_name, rw, sw, sl, rl, pts)]}
-    team_data = {}
-    in_our_section = False
-    current_weekend = None
-    current_div = None
+    # Accumulate totals per team across all weekends (no division filter)
+    totals = {}   # clean_name → {name, points, reg_wins, shootout_wins, shootout_losses, reg_losses}
+    in_section = False
 
     for row in rows:
         if not row:
@@ -554,23 +549,12 @@ def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
             c0 = cell0.strip()
             if c0:
                 if _is_our_section(c0):
-                    in_our_section = True
-                    m = re.search(r'Weekend\s*(\d+)', c0, re.I)
-                    current_weekend = int(m.group(1)) if m else None
-                    current_div = None
+                    in_section = True
                     continue
                 elif _is_any_section(c0):
-                    in_our_section = False
-                    current_weekend = None
-                    current_div = None
+                    in_section = False
                     continue
-                elif in_our_section:
-                    dn = _div_num(c0)
-                    if dn is not None:
-                        current_div = dn
-                        continue
-
-        if not in_our_section or current_weekend is None:
+        if not in_section:
             continue
 
         for start_col in (0, 7):
@@ -580,7 +564,7 @@ def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
             if not isinstance(v, str):
                 continue
             c = v.strip()
-            if not c or any(p(c) for p in skip_pats):
+            if not c or _skip(c):
                 continue
             entry = _parse_standing_row(row, start_col)
             if not entry:
@@ -589,49 +573,30 @@ def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
             clean = strip_prefix(team_str).upper().strip()
             if not clean:
                 continue
-            if clean not in team_data:
-                team_data[clean] = []
-            team_data[clean].append((current_weekend, current_div, team_str, rw, sw, sl, rl, pts))
+            if clean not in totals:
+                totals[clean] = dict(name=strip_prefix(team_str), points=0,
+                                     reg_wins=0, shootout_wins=0, shootout_losses=0, reg_losses=0)
+            t = totals[clean]
+            t['points']          += int(pts)
+            t['reg_wins']        += int(rw)
+            t['shootout_wins']   += int(sw)
+            t['shootout_losses'] += int(sl)
+            t['reg_losses']      += int(rl)
 
-    if not team_data:
+    if not totals:
         return None, None
 
-    # Find our team
-    my_clean = None
-    for clean in team_data:
-        if team_upper in clean or clean in team_upper:
-            my_clean = clean
-            break
+    # Locate our team
+    my_clean = next((c for c in totals if team_upper in c or c in team_upper), None)
     if my_clean is None:
         return None, None
 
-    # Determine our division from the most recent weekend
-    div_entries = [e for e in team_data[my_clean] if e[1] is not None]
-    if not div_entries:
-        return None, None
-    my_div = max(div_entries, key=lambda e: e[0])[1]
-    division_label = f"{age} {gender.title()} D{my_div}"
+    label = f"{age} {gender.title()} · Season"
 
-    # Aggregate all teams in our division across all weekends
     standings = []
-    for clean, entries in team_data.items():
-        our = [e for e in entries if e[1] == my_div]
-        if not our:
-            continue
-        display = strip_prefix(max(our, key=lambda e: e[0])[2])
-        row_out = dict(name=display, points=0, reg_wins=0, shootout_wins=0,
-                       shootout_losses=0, reg_losses=0, weekends=0, is_mine=(clean == my_clean))
-        for (_, _, _, rw, sw, sl, rl, pts) in our:
-            row_out['points']          += int(pts)
-            row_out['reg_wins']        += int(rw)
-            row_out['shootout_wins']   += int(sw)
-            row_out['shootout_losses'] += int(sl)
-            row_out['reg_losses']      += int(rl)
-            row_out['weekends']        += 1
+    for clean, t in totals.items():
+        row_out = dict(t, is_mine=(clean == my_clean))
         standings.append(row_out)
-
-    if not standings:
-        return None, None
 
     standings.sort(key=lambda x: (-x['points'], -x['reg_wins']))
     total = len(standings)
@@ -639,7 +604,7 @@ def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
         s['rank'] = i + 1
         s['total'] = total
 
-    return division_label, standings
+    return label, standings
 
 
 def _infer_placement(played_out: list) -> str | None:
