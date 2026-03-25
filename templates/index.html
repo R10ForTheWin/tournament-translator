@@ -166,6 +166,15 @@
     /* ── Game cards ── */
     .games-group { margin-bottom: 24px; }
     .games-group-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); margin-bottom: 12px; padding-left: 2px; }
+    .record-banner { display: flex; align-items: center; justify-content: space-between; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px; }
+    .record-banner-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+    .record-banner-stats { display: flex; gap: 18px; }
+    .record-stat { text-align: center; }
+    .record-stat-num { font-size: 26px; font-weight: 900; line-height: 1; letter-spacing: -1px; }
+    .record-stat-lbl { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-top: 2px; }
+    .record-stat.wins  .record-stat-num { color: var(--win-text); }
+    .record-stat.losses .record-stat-num { color: var(--loss-text); }
+    .record-stat.ties  .record-stat-num { color: var(--muted); }
 
     .game-card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; margin-bottom: 12px; border: 1px solid var(--border); }
 
@@ -471,7 +480,7 @@ function updateSubnav() {
   const titleEl = document.getElementById('subnav-title');
   const backBtn = document.getElementById('back-btn');
   if (view === 'view-teams') {
-    titleEl.textContent = state.tournament?.name || '';
+    titleEl.textContent = state.tournament?.past ? 'Results' : (state.tournament?.name || '');
     backBtn.onclick = goHome;
   } else if (view === 'view-games') {
     titleEl.textContent = state.friendly || state.team || '';
@@ -721,7 +730,22 @@ async function loadGames(tournamentId, team, sheet) {
   if (data.played.length) {
     const grp = document.createElement('div');
     grp.className = 'games-group';
-    grp.innerHTML = '<div class="games-group-title">Results</div>';
+    if (state.tournament?.past) {
+      const wins   = data.played.filter(g => g.result === 'win').length;
+      const losses = data.played.filter(g => g.result === 'loss').length;
+      const ties   = data.played.filter(g => g.result === 'tie').length;
+      grp.innerHTML = `
+        <div class="record-banner">
+          <div class="record-banner-label">Tournament Record</div>
+          <div class="record-banner-stats">
+            <div class="record-stat wins"><div class="record-stat-num">${wins}</div><div class="record-stat-lbl">Wins</div></div>
+            <div class="record-stat losses"><div class="record-stat-num">${losses}</div><div class="record-stat-lbl">Losses</div></div>
+            ${ties ? `<div class="record-stat ties"><div class="record-stat-num">${ties}</div><div class="record-stat-lbl">Ties</div></div>` : ''}
+          </div>
+        </div>`;
+    } else {
+      grp.innerHTML = '<div class="games-group-title">Results</div>';
+    }
     data.played.forEach(g => grp.appendChild(buildResultCard(g, h2h)));
     el.appendChild(grp);
   }
