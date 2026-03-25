@@ -362,6 +362,140 @@ def _ordinal(n: int) -> str:
     suffix = 'th' if 11 <= n % 100 <= 13 else {1:'st', 2:'nd', 3:'rd'}.get(n % 10, 'th')
     return f"{n}{suffix}"
 
+def _futures_weekend_num(tournament_id: str) -> int | None:
+    """Return the weekend number for a Futures tournament ID (futures-2 → 2), or None."""
+    m = re.match(r'^futures-(\d+)$', tournament_id)
+    return int(m.group(1)) if m else None
+
+
+def _parse_standing_row(row, start_col: int):
+    """Parse one side of a DivisionsStandings team row.
+    Returns (team_str, reg_wins, sw, sl, reg_losses, points) or None."""
+    try:
+        team_str = str(row[start_col]).strip()
+        if not team_str:
+            return None
+        def _num(v):
+            try: return float(v) if v is not None else 0.0
+            except (TypeError, ValueError): return 0.0
+        rw  = _num(row[start_col + 1] if len(row) > start_col + 1 else None)
+        sw  = _num(row[start_col + 2] if len(row) > start_col + 2 else None)
+        sl  = _num(row[start_col + 3] if len(row) > start_col + 3 else None)
+        rl  = _num(row[start_col + 4] if len(row) > start_col + 4 else None)
+        pts = _num(row[start_col + 5] if len(row) > start_col + 5 else None)
+        return (team_str, rw, sw, sl, rl, pts)
+    except Exception:
+        return None
+
+
+def _read_futures_pool_standing(excel_src, weekend_num: int, team: str, sheet_name: str) -> dict | None:
+    """Read a team's pool standing from the DivisionsStandings tab for a specific Futures weekend.
+
+    Returns {pool, rank, total, reg_wins, shootout_wins, shootout_losses, reg_losses, points}
+    or None if not found.
+    """
+    try:
+        if hasattr(excel_src, 'seek'):
+            excel_src.seek(0)
+        import openpyxl
+        wb = openpyxl.load_workbook(excel_src, data_only=True, read_only=True)
+        if 'DivisionsStandings' not in wb.sheetnames:
+            return None
+        ws = wb['DivisionsStandings']
+        rows = list(ws.iter_rows(max_row=600, values_only=True))
+    except Exception:
+        return None
+
+    gender, age = _parse_sheet(sheet_name)
+    if not age or not gender:
+        return None
+    age_key    = age.upper()     # e.g. "16U"
+    gender_key = gender.upper()  # e.g. "BOYS"
+    weekend_pat = rf'Weekend\s*{weekend_num}\b'
+    team_upper  = team.upper().strip()
+
+    # Find the row-range for our section (age + gender + weekend)
+    section_start = section_end = None
+    for i, row in enumerate(rows):
+        if not row or not isinstance(row[0], str):
+            continue
+        cell0 = row[0].strip()
+        is_section_hdr = (
+            re.search(rf'\b{re.escape(age_key)}\b', cell0, re.I) and
+            re.search(rf'\b{re.escape(gender_key)}\b', cell0, re.I) and
+            re.search(weekend_pat, cell0, re.I)
+        )
+        if is_section_hdr:
+            section_start = i
+        elif section_start is not None and section_end is None:
+            # Stop at the next different top-level section header
+            if re.search(r'\d+U\s*(BOYS|GIRLS)', cell0, re.I) and re.search(r'Weekend', cell0, re.I):
+                section_end = i
+                break
+
+    if section_start is None:
+        return None
+    if section_end is None:
+        section_end = len(rows)
+
+    # Collect all team entries from both left (cols 0-5) and right (cols 7-12) sides
+    all_entries = []
+    skip_patterns = [
+        lambda c: re.search(r'\d+U\s*(BOYS|GIRLS)', c, re.I),        # section header
+        lambda c: re.match(r'\d+u?\s*(boys|girls)\s*-\s*D\d+', c, re.I),  # div header
+        lambda c: re.search(r'Regulation|Shootout', c, re.I),          # col header
+    ]
+
+    for row in rows[section_start:section_end]:
+        if not row:
+            continue
+        # Left side (col 0)
+        if isinstance(row[0], str):
+            c = row[0].strip()
+            if c and not any(p(c) for p in skip_patterns):
+                e = _parse_standing_row(row, 0)
+                if e:
+                    all_entries.append(e)
+        # Right side (col 7)
+        if len(row) > 7 and isinstance(row[7], str):
+            c = row[7].strip()
+            if c and not any(p(c) for p in skip_patterns):
+                e = _parse_standing_row(row, 7)
+                if e:
+                    all_entries.append(e)
+
+    # Find my team entry and its pool letter prefix
+    my_entry = my_pool = None
+    for entry in all_entries:
+        team_str = entry[0]
+        clean = strip_prefix(team_str).upper()
+        if team_upper in clean or clean in team_upper:
+            my_entry = entry
+            pm = re.match(r'^([A-Z])\d+', team_str.strip())
+            my_pool = pm.group(1) if pm else None
+            break
+
+    if my_entry is None or my_pool is None:
+        return None
+
+    # Collect all teams in the same pool (same letter prefix) and rank by points
+    pool_entries = [e for e in all_entries if re.match(rf'^{re.escape(my_pool)}\d+', e[0].strip())]
+    pool_entries.sort(key=lambda x: -x[5])
+    rank = next((i + 1 for i, e in enumerate(pool_entries) if e[0] == my_entry[0]), 1)
+
+    _, rw, sw, sl, rl, pts = my_entry
+    return {
+        'pool':            my_pool,
+        'rank':            rank,
+        'total':           len(pool_entries),
+        'reg_wins':        int(rw),
+        'shootout_wins':   int(sw),
+        'shootout_losses': int(sl),
+        'reg_losses':      int(rl),
+        'points':          int(pts),
+    }
+
+
 def _infer_placement(played_out: list) -> str | None:
     """Parse the last played game's comment for an ordinal (e.g. '3rd', '13th').
     Win → that place; Loss → that place + 1."""
@@ -666,11 +800,22 @@ def api_games(tournament_id, team):
                 team,
             )
 
+    # For Futures weekends: surface pool standing from DivisionsStandings tab
+    pool_standing = None
+    if tournament_id in WPL_TOURNAMENTS:
+        weekend_num = _futures_weekend_num(tournament_id)
+        if weekend_num is not None and my_games:
+            sheet = my_games[0]['sheet']
+            if hasattr(excel, 'seek'):
+                excel.seek(0)
+            pool_standing = _read_futures_pool_standing(excel, weekend_num, team, sheet)
+
     return jsonify({
-        "team":      team,
-        "played":    played_out,
-        "upcoming":  upcoming_out,
-        "placement": placement,
+        "team":          team,
+        "played":        played_out,
+        "upcoming":      upcoming_out,
+        "placement":     placement,
+        "pool_standing": pool_standing,
     })
 
 

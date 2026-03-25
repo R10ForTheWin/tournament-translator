@@ -175,6 +175,7 @@
     .record-stat.wins  .record-stat-num { color: var(--win-text); }
     .record-stat.losses .record-stat-num { color: var(--loss-text); }
     .record-stat.ties  .record-stat-num { color: var(--muted); }
+    .pool-standing-badge { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 14px; margin-bottom: 16px; margin-top: -12px; text-align: center; }
 
     .game-card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; margin-bottom: 12px; border: 1px solid var(--border); }
 
@@ -736,6 +737,17 @@ async function loadGames(tournamentId, team, sheet) {
       const losses = data.played.filter(g => g.result === 'loss').length;
       const ties   = data.played.filter(g => g.result === 'tie').length;
       const place  = data.placement;
+      const ps     = data.pool_standing;
+      const poolBadge = ps ? (() => {
+        const ord = n => { const s=['th','st','nd','rd']; const v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); };
+        const rec = [
+          ps.reg_wins    ? `${ps.reg_wins}W`  : null,
+          ps.shootout_wins  ? `${ps.shootout_wins}SW` : null,
+          ps.shootout_losses? `${ps.shootout_losses}SL` : null,
+          ps.reg_losses  ? `${ps.reg_losses}L`  : null,
+        ].filter(Boolean).join(' · ');
+        return `<div class="pool-standing-badge">Pool ${ps.pool} · ${ord(ps.rank)} of ${ps.total} · ${ps.points} pts${rec ? ` (${rec})` : ''}</div>`;
+      })() : '';
       grp.innerHTML = `
         <div class="record-banner">
           <div class="record-banner-label">${place ? (place.includes('(estimated)') ? `Finished ${place}` : `Finished ${place}!`) : 'Tournament Record'}</div>
@@ -744,7 +756,8 @@ async function loadGames(tournamentId, team, sheet) {
             <div class="record-stat losses"><div class="record-stat-num">${losses}</div><div class="record-stat-lbl">Losses</div></div>
             ${ties ? `<div class="record-stat ties"><div class="record-stat-num">${ties}</div><div class="record-stat-lbl">Ties</div></div>` : ''}
           </div>
-        </div>`;
+        </div>
+        ${poolBadge}`;
     } else {
       grp.innerHTML = '<div class="games-group-title">Results</div>';
     }
