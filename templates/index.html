@@ -182,7 +182,9 @@
     .game-card-header { padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); background: var(--card-header); }
     .game-card-meta { flex: 1; }
     .game-card-datetime { font-size: 13px; font-weight: 600; color: var(--white); }
-    .game-card-location { font-size: 12px; color: var(--muted); margin-top: 1px; }
+    .game-card-location { font-size: 12px; color: var(--muted); margin-top: 1px; display: block; text-decoration: none; }
+    .game-card-location:hover { color: var(--white); }
+    .venue-address { font-size: 11px; color: var(--muted); opacity: 0.7; margin-top: 2px; }
 
     .result-pill { font-size: 11px; font-weight: 800; padding: 4px 12px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.08em; flex-shrink: 0; }
     .result-pill.win  { background: var(--win-bg);  color: var(--win-text); }
@@ -427,6 +429,46 @@
 let state = { tournament: null, team: null, sheet: null, friendly: null };
 let testMode   = false;
 let pwCallback = null;
+
+// ── Venue address lookup ────────────────────────────────────────────────────────
+const VENUE_ADDRESSES = {
+  'ALISO NIGUEL HS':     '28000 Wolverine Way, Aliso Viejo, CA 92656',
+  'BECKMAN HS':          '3588 Bryan Ave, Irvine, CA 92602',
+  'COSTA MESA HS':       '2650 Fairview Rd, Costa Mesa, CA 92626',
+  'EDISON HS':           '21400 Magnolia St, Huntington Beach, CA 92646',
+  'EL TORO HS':          '25255 Toledo Way, Lake Forest, CA 92630',
+  'ESPERANZA HS':        '1830 N Kellogg Dr, Anaheim, CA 92807',
+  'ESTANCIA HS':         '2323 Newport Blvd, Costa Mesa, CA 92627',
+  'FULLERTON COLLEGE':   '321 E Chapman Ave, Fullerton, CA 92832',
+  'LAGUNA HILLS HS':     '25401 Paseo de Valencia, Laguna Hills, CA 92653',
+  'MARINA HS':           '15871 Springdale St, Huntington Beach, CA 92649',
+  'SADDLEBACK COLLEGE':  '28000 Marguerite Pkwy, Mission Viejo, CA 92692',
+  'SAN CLEMENTE HS':     '700 Avenida Pico, San Clemente, CA 92673',
+  'SAN JUAN HILLS HS':   '32760 Paseo Adelanto, San Juan Capistrano, CA 92675',
+  'SONORA HS':           '401 S Tempo Ave, La Habra, CA 90631',
+  'TUSTIN HS':           '1171 El Camino Real, Tustin, CA 92780',
+  'WESTMINSTER HS':      '14325 Goldenwest St, Westminster, CA 92683',
+  'WOOLLETT':            '4000 Racquet Club Dr, Irvine, CA 92618',
+  'YORBA LINDA HS':      '4485 Casa Loma Ave, Yorba Linda, CA 92886',
+};
+
+function venueAddress(rawLocation) {
+  if (!rawLocation || rawLocation === 'TBD') return null;
+  const loc = rawLocation.toUpperCase().trim();
+  // Exact match first
+  if (VENUE_ADDRESSES[loc]) return VENUE_ADDRESSES[loc];
+  // Strip trailing pool number/side (e.g. "BECKMAN HS 1" → "BECKMAN HS")
+  const stripped = loc.replace(/\s+\d+$/, '').replace(/\s+(FAR|NEAR)\s+(LEFT|RIGHT)$/, '').trim();
+  return VENUE_ADDRESSES[stripped] || null;
+}
+
+function locationHtml(rawLocation) {
+  const addr = venueAddress(rawLocation);
+  const query = encodeURIComponent(addr || (rawLocation + ', Orange County, CA'));
+  const mapsUrl = `https://maps.google.com/?q=${query}`;
+  const addrLine = addr ? `<div class="venue-address">${addr}</div>` : '';
+  return `<a class="game-card-location" href="${mapsUrl}" target="_blank" rel="noopener">📍 ${rawLocation}${addrLine}</a>`;
+}
 
 // ── Add to Home Screen prompt ───────────────────────────────────────────────────
 function isIosSafari() {
@@ -782,7 +824,7 @@ function buildResultCard(g, h2h) {
     <div class="game-card-header">
       <div class="game-card-meta">
         <div class="game-card-datetime">${g.date} · ${g.time}</div>
-        <div class="game-card-location">📍 ${g.location}</div>
+        ${locationHtml(g.location)}
       </div>
       <span class="result-pill ${cls}">${label}</span>
     </div>
@@ -802,7 +844,7 @@ function buildUpcomingCard(g, tournamentId, team, h2h) {
     <div class="game-card-header">
       <div class="game-card-meta">
         <div class="game-card-datetime">${g.date} · ${g.time}</div>
-        <div class="game-card-location">📍 ${g.location}</div>
+        ${locationHtml(g.location)}
       </div>
     </div>
     <div class="game-card-body">
@@ -814,7 +856,7 @@ function buildUpcomingCard(g, tournamentId, team, h2h) {
     const icon = g.lock.trojan_won ? '✅' : '❌';
     const txt  = g.lock.trojan_won ? `${g.lock.team} won this game` : `${g.lock.team} lost this game`;
     const nextHtml = g.lock.next
-      ? `<div class="next-game-box"><div class="next-game-label">Next Game</div><div class="next-game-opponent">vs ${g.lock.next.opponent}</div><div class="next-game-meta">${g.lock.next.date} · ${g.lock.next.time} · ${g.lock.next.location}</div></div>`
+      ? `<div class="next-game-box"><div class="next-game-label">Next Game</div><div class="next-game-opponent">vs ${g.lock.next.opponent}</div><div class="next-game-meta">${g.lock.next.date} · ${g.lock.next.time}</div>${locationHtml(g.lock.next.location)}</div>`
       : `<div class="next-game-box"><div class="next-game-label">Next Game</div><div class="next-game-meta">No further game found</div></div>`;
     body += `
       <div class="locked-box">
