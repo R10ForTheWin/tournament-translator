@@ -738,7 +738,7 @@ async function loadGames(tournamentId, team, sheet) {
       const place  = data.placement;
       grp.innerHTML = `
         <div class="record-banner">
-          <div class="record-banner-label">${place ? `Finished ${place}!` : 'Tournament Record'}</div>
+          <div class="record-banner-label">${place ? (place.includes('(estimated)') ? `Finished ${place}` : `Finished ${place}!`) : 'Tournament Record'}</div>
           <div class="record-banner-stats">
             <div class="record-stat wins"><div class="record-stat-num">${wins}</div><div class="record-stat-lbl">Wins</div></div>
             <div class="record-stat losses"><div class="record-stat-num">${losses}</div><div class="record-stat-lbl">Losses</div></div>

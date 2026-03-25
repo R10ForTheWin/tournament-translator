@@ -378,6 +378,89 @@ def _infer_placement(played_out: list) -> str | None:
     if result == 'loss': return _ordinal(place + 1)
     return None
 
+
+def _bracket_letter_from_comment(comment: str) -> str | None:
+    """Extract bracket letter from 'I bracket I2,I3' → 'I'."""
+    m = re.match(r'^([A-Z])\s+bracket\b', (comment or '').strip(), re.IGNORECASE)
+    return m.group(1).upper() if m else None
+
+
+def _bracket_standings(bracket_letter: str, all_div_games: list) -> dict:
+    """Return {team_name: wins} for all teams in this bracket (played games only)."""
+    standings: dict = {}
+    for g in all_div_games:
+        c = (g.get('comments') or '').strip()
+        if not re.match(rf'^{re.escape(bracket_letter)}\s+bracket\b', c, re.IGNORECASE):
+            continue
+        if not g.get('played'):
+            continue
+        wt = strip_prefix(g['white_team']).upper()
+        dt = strip_prefix(g['dark_team']).upper()
+        standings.setdefault(wt, 0)
+        standings.setdefault(dt, 0)
+        ws, ds = g.get('white_score'), g.get('dark_score')
+        if ws is not None and ds is not None:
+            if ws > ds:   standings[wt] += 1
+            elif ds > ws: standings[dt] += 1
+    return standings
+
+
+def _read_bracket_range(excel_src, sheet_name: str, bracket_letter: str) -> tuple | None:
+    """Read bracket placement range from Excel header row.
+    Matches cells like 'I (7th-12th)' → returns (7, 12)."""
+    try:
+        if hasattr(excel_src, 'seek'):
+            excel_src.seek(0)
+        import openpyxl
+        wb = openpyxl.load_workbook(excel_src, data_only=True, read_only=True)
+        if sheet_name not in wb.sheetnames:
+            return None
+        ws = wb[sheet_name]
+        for row in ws.iter_rows(max_row=30, values_only=True):
+            for cell in row:
+                if not isinstance(cell, str):
+                    continue
+                m = re.match(
+                    rf'^{re.escape(bracket_letter)}\s*\((\d+)(?:st|nd|rd|th)[-–](\d+)(?:st|nd|rd|th)\)',
+                    cell.strip(), re.IGNORECASE,
+                )
+                if m:
+                    return int(m.group(1)), int(m.group(2))
+    except Exception:
+        pass
+    return None
+
+
+def _estimate_placement(played_out: list, all_div_games: list,
+                        excel_src, sheet_name: str, team: str) -> str | None:
+    """Fallback: estimate placement from bracket standings when no explicit ordinal exists.
+    Returns e.g. '8th (estimated)' or None."""
+    if not played_out:
+        return None
+    last = played_out[-1]
+    bracket = _bracket_letter_from_comment(last.get('comments') or '')
+    if not bracket:
+        return None
+
+    standings = _bracket_standings(bracket, all_div_games)
+    if not standings:
+        return None
+
+    # Rank teams by wins (descending); find this team's position
+    my_key = team.upper().strip()
+    ranked = sorted(standings.items(), key=lambda x: -x[1])
+    rank = next(
+        (i + 1 for i, (t, _) in enumerate(ranked) if my_key in t or t in my_key),
+        None,
+    )
+    if rank is None:
+        return None
+
+    # Map bracket rank → overall place using the range from the Excel header
+    bracket_range = _read_bracket_range(excel_src, sheet_name, bracket)
+    place = (bracket_range[0] + (rank - 1)) if bracket_range else rank
+    return f"{_ordinal(place)} (estimated)"
+
 def _fmt_time(t) -> str:
     return t.strftime("%I:%M %p").lstrip("0") if t else "TBD"
 
@@ -569,11 +652,25 @@ def api_games(tournament_id, team):
 
             upcoming_out.append(base)
 
+    placement = _infer_placement(played_out)
+    if placement is None:
+        last_played_raw = next((g for g in reversed(my_games) if g.get('played')), None)
+        if last_played_raw:
+            if hasattr(excel, 'seek'):
+                excel.seek(0)
+            placement = _estimate_placement(
+                played_out,
+                div_map.get(last_played_raw['sheet'], []),
+                excel,
+                last_played_raw['sheet'],
+                team,
+            )
+
     return jsonify({
         "team":      team,
         "played":    played_out,
         "upcoming":  upcoming_out,
-        "placement": _infer_placement(played_out),
+        "placement": placement,
     })
 
 
