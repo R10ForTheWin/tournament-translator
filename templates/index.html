@@ -846,7 +846,7 @@ async function loadGames(tournamentId, team, sheet) {
     ].filter(Boolean).join('–');
     const DIV_NAMES = { D1:'Platinum', D2:'Gold', D3:'Silver', D4:'Bronze', D5:'Copper' };
     const mkRow = s => {
-      const divLabel = s.division ? (DIV_NAMES[s.division] || s.division) : '';
+      const divLabel = s.division ? `${s.division}${DIV_NAMES[s.division] ? ' ('+DIV_NAMES[s.division]+')' : ''}` : '';
       return `<div class="standings-row${s.is_mine ? ' mine' : ''}">
         <div class="standings-rank">${s.rank}</div>
         <div class="standings-name">${s.name}${s.is_mine ? ' ★' : ''}</div>
