@@ -734,9 +734,10 @@ async function loadGames(tournamentId, team, sheet) {
       const wins   = data.played.filter(g => g.result === 'win').length;
       const losses = data.played.filter(g => g.result === 'loss').length;
       const ties   = data.played.filter(g => g.result === 'tie').length;
+      const place  = data.placement;
       grp.innerHTML = `
         <div class="record-banner">
-          <div class="record-banner-label">Tournament Record</div>
+          <div class="record-banner-label">${place ? `Finished ${place}` : 'Tournament Record'}</div>
           <div class="record-banner-stats">
             <div class="record-stat wins"><div class="record-stat-num">${wins}</div><div class="record-stat-lbl">Wins</div></div>
             <div class="record-stat losses"><div class="record-stat-num">${losses}</div><div class="record-stat-lbl">Losses</div></div>

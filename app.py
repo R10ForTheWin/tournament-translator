@@ -358,6 +358,26 @@ def confidence(game, division_games, locked_results):
     return "red", "Not enough information yet — upload the latest schedule to improve this prediction"
 
 
+def _ordinal(n: int) -> str:
+    suffix = 'th' if 11 <= n % 100 <= 13 else {1:'st', 2:'nd', 3:'rd'}.get(n % 10, 'th')
+    return f"{n}{suffix}"
+
+def _infer_placement(played_out: list) -> str | None:
+    """Parse the last played game's comment for an ordinal (e.g. '3rd', '13th').
+    Win → that place; Loss → that place + 1."""
+    if not played_out:
+        return None
+    last = played_out[-1]
+    comment = (last.get('comments') or '').lower()
+    result  = last.get('result')   # 'win' | 'loss' | 'tie'
+    m = re.search(r'\b(\d+)(?:st|nd|rd|th)\b', comment)
+    if not m:
+        return None
+    place = int(m.group(1))
+    if result == 'win':  return _ordinal(place)
+    if result == 'loss': return _ordinal(place + 1)
+    return None
+
 def _fmt_time(t) -> str:
     return t.strftime("%I:%M %p").lstrip("0") if t else "TBD"
 
@@ -550,9 +570,10 @@ def api_games(tournament_id, team):
             upcoming_out.append(base)
 
     return jsonify({
-        "team":     team,
-        "played":   played_out,
-        "upcoming": upcoming_out,
+        "team":      team,
+        "played":    played_out,
+        "upcoming":  upcoming_out,
+        "placement": _infer_placement(played_out),
     })
 
 
