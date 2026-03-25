@@ -496,6 +496,152 @@ def _read_futures_pool_standing(excel_src, weekend_num: int, team: str, sheet_na
     }
 
 
+def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
+    """Aggregate season standings for the division containing `team` across all Futures weekends.
+
+    Returns (division_label, standings_list) where standings_list is sorted by total points,
+    each entry: {name, points, reg_wins, shootout_wins, shootout_losses, reg_losses, weekends, rank, total, is_mine}.
+    Returns (None, None) on failure.
+    """
+    try:
+        if hasattr(excel_src, 'seek'):
+            excel_src.seek(0)
+        import openpyxl
+        wb = openpyxl.load_workbook(excel_src, data_only=True, read_only=True)
+        if 'DivisionsStandings' not in wb.sheetnames:
+            return None, None
+        ws = wb['DivisionsStandings']
+        rows = list(ws.iter_rows(max_row=800, values_only=True))
+    except Exception:
+        return None, None
+
+    gender, age = _parse_sheet(sheet_name)
+    if not age or not gender:
+        return None, None
+    age_key    = age.upper()
+    gender_key = gender.upper()
+    team_upper = team.upper().strip()
+
+    def _is_our_section(c):
+        return (re.search(rf'\b{re.escape(age_key)}\b', c, re.I) and
+                re.search(rf'\b{re.escape(gender_key)}\b', c, re.I) and
+                re.search(r'Weekend\s*\d+', c, re.I))
+
+    def _is_any_section(c):
+        return bool(re.search(r'\d+U\s*(BOYS|GIRLS)', c, re.I) and re.search(r'Weekend', c, re.I))
+
+    def _div_num(c):
+        m = re.match(r'\d+u?\s*(boys|girls)\s*-\s*D(\d+)', c, re.I)
+        return int(m.group(2)) if m else None
+
+    skip_pats = [
+        lambda c: _is_any_section(c),
+        lambda c: _div_num(c) is not None,
+        lambda c: bool(re.search(r'Regulation|Shootout', c, re.I)),
+    ]
+
+    # Collect all team entries: {clean_name: [(weekend_num, div_num, display_name, rw, sw, sl, rl, pts)]}
+    team_data = {}
+    in_our_section = False
+    current_weekend = None
+    current_div = None
+
+    for row in rows:
+        if not row:
+            continue
+        cell0 = row[0] if len(row) > 0 else None
+        if isinstance(cell0, str):
+            c0 = cell0.strip()
+            if c0:
+                if _is_our_section(c0):
+                    in_our_section = True
+                    m = re.search(r'Weekend\s*(\d+)', c0, re.I)
+                    current_weekend = int(m.group(1)) if m else None
+                    current_div = None
+                    continue
+                elif _is_any_section(c0):
+                    in_our_section = False
+                    current_weekend = None
+                    current_div = None
+                    continue
+                elif in_our_section:
+                    dn = _div_num(c0)
+                    if dn is not None:
+                        current_div = dn
+                        continue
+
+        if not in_our_section or current_weekend is None:
+            continue
+
+        for start_col in (0, 7):
+            if len(row) <= start_col:
+                continue
+            v = row[start_col]
+            if not isinstance(v, str):
+                continue
+            c = v.strip()
+            if not c or any(p(c) for p in skip_pats):
+                continue
+            entry = _parse_standing_row(row, start_col)
+            if not entry:
+                continue
+            team_str, rw, sw, sl, rl, pts = entry
+            clean = strip_prefix(team_str).upper().strip()
+            if not clean:
+                continue
+            if clean not in team_data:
+                team_data[clean] = []
+            team_data[clean].append((current_weekend, current_div, team_str, rw, sw, sl, rl, pts))
+
+    if not team_data:
+        return None, None
+
+    # Find our team
+    my_clean = None
+    for clean in team_data:
+        if team_upper in clean or clean in team_upper:
+            my_clean = clean
+            break
+    if my_clean is None:
+        return None, None
+
+    # Determine our division from the most recent weekend
+    div_entries = [e for e in team_data[my_clean] if e[1] is not None]
+    if not div_entries:
+        return None, None
+    my_div = max(div_entries, key=lambda e: e[0])[1]
+    division_label = f"{age} {gender.title()} D{my_div}"
+
+    # Aggregate all teams in our division across all weekends
+    standings = []
+    for clean, entries in team_data.items():
+        our = [e for e in entries if e[1] == my_div]
+        if not our:
+            continue
+        display = strip_prefix(max(our, key=lambda e: e[0])[2])
+        row_out = dict(name=display, points=0, reg_wins=0, shootout_wins=0,
+                       shootout_losses=0, reg_losses=0, weekends=0, is_mine=(clean == my_clean))
+        for (_, _, _, rw, sw, sl, rl, pts) in our:
+            row_out['points']          += int(pts)
+            row_out['reg_wins']        += int(rw)
+            row_out['shootout_wins']   += int(sw)
+            row_out['shootout_losses'] += int(sl)
+            row_out['reg_losses']      += int(rl)
+            row_out['weekends']        += 1
+        standings.append(row_out)
+
+    if not standings:
+        return None, None
+
+    standings.sort(key=lambda x: (-x['points'], -x['reg_wins']))
+    total = len(standings)
+    for i, s in enumerate(standings):
+        s['rank'] = i + 1
+        s['total'] = total
+
+    return division_label, standings
+
+
 def _infer_placement(played_out: list) -> str | None:
     """Parse the last played game's comment for an ordinal (e.g. '3rd', '13th').
     Win → that place; Loss → that place + 1."""
@@ -800,22 +946,29 @@ def api_games(tournament_id, team):
                 team,
             )
 
-    # For Futures weekends: surface pool standing from DivisionsStandings tab
-    pool_standing = None
-    if tournament_id in WPL_TOURNAMENTS:
+    # For Futures weekends: surface pool standing + cumulative season standings
+    pool_standing        = None
+    cumulative_standings = None
+    cumulative_division  = None
+    if tournament_id in WPL_TOURNAMENTS and my_games:
+        sheet = my_games[0]['sheet']
         weekend_num = _futures_weekend_num(tournament_id)
-        if weekend_num is not None and my_games:
-            sheet = my_games[0]['sheet']
+        if weekend_num is not None:
             if hasattr(excel, 'seek'):
                 excel.seek(0)
             pool_standing = _read_futures_pool_standing(excel, weekend_num, team, sheet)
+        if hasattr(excel, 'seek'):
+            excel.seek(0)
+        cumulative_division, cumulative_standings = _read_futures_cumulative_standings(excel, team, sheet)
 
     return jsonify({
-        "team":          team,
-        "played":        played_out,
-        "upcoming":      upcoming_out,
-        "placement":     placement,
-        "pool_standing": pool_standing,
+        "team":                 team,
+        "played":               played_out,
+        "upcoming":             upcoming_out,
+        "placement":            placement,
+        "pool_standing":        pool_standing,
+        "cumulative_standings": cumulative_standings,
+        "cumulative_division":  cumulative_division,
     })
 
 
