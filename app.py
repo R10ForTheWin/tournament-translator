@@ -28,6 +28,9 @@ KAP7_TOURNAMENTS   = {"kap7-intl", "kap7-cup"}
 # Turbo Cup → OneDrive (separate organizer, separate file)
 TURBO_ONEDRIVE_URL = "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQB7PJXtfzNsT74lTYhWpOeXASFcmpB96L1OpYL_E6HBMM0?e=UsRrMb"
 
+# Newport Spring Invite → OneDrive (older resid/authkey format, direct download)
+NEWPORT_ONEDRIVE_URL = "https://onedrive.live.com/download?resid=6F253EF3AFCFE1C8!66694&authkey=!AO8pyWY0qwL2sYE"
+
 _URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
 URL_CACHE_TTL      = 300  # re-fetch at most every 5 minutes
 
@@ -104,6 +107,9 @@ def find_excel(tournament_id: str):
         return io.BytesIO(data) if data else None
     if tournament_id == "turbo-cup":
         data = _fetch_url(TURBO_ONEDRIVE_URL, onedrive=True)
+        return io.BytesIO(data) if data else None
+    if tournament_id == "newport-invite":
+        data = _fetch_url(NEWPORT_ONEDRIVE_URL)  # direct download URL, no API needed
         return io.BytesIO(data) if data else None
     return None
 
