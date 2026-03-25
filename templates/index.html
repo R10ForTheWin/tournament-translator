@@ -263,8 +263,8 @@
 
     /* ── Spinner ── */
     .spinner-wrap { display: flex; justify-content: center; padding: 48px 0; }
-    .wp-spinner { display: block; }
-    .wp-spinner .sb { opacity: 0.22; stroke-dasharray: 1.5 1.5; }
+    .wp-spinner { display: block; animation: spin 0.9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     /* ── Stripe bars ── */
     .stripe-bar { line-height: 0; overflow: hidden; }
@@ -337,7 +337,7 @@
 <main>
   <div id="view-tournaments" class="view active">
     <div id="tournament-list-content">
-      <div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="15" stroke-width="1.5"/><g class="wp-seams" stroke-width="1.2"><path class="sb" d=""/><path class="sb" d=""/><path class="sb" d=""/><path d=""/><path d=""/><path d=""/></g></svg></div>
+      <div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round"><circle cx="18" cy="18" r="15" stroke-width="2" stroke-dasharray="60 35" /></svg></div>
     </div>
     <div style="text-align:center; margin-top:32px; padding-bottom:8px;">
       <button onclick="shareApp()" style="
@@ -351,7 +351,7 @@
         padding: 10px 22px;
         cursor: pointer;
         letter-spacing: 0.04em;
-      ">⬆ Share App with Teammate</button>
+      " id="share-btn" style="display:none">⬆ Share App with Teammate</button>
     </div>
   </div>
   <div id="view-teams" class="view">
@@ -507,6 +507,7 @@ async function loadTournaments() {
     }
     el.appendChild(makeTournamentCards(past));
   }
+  document.getElementById('share-btn').style.display = '';
 }
 
 function makeTournamentCards(tournaments) {
@@ -526,7 +527,7 @@ function makeTournamentCards(tournaments) {
       badgeHtml = `<span class="badge badge-scheduled">View Schedule</span>`;
       dotClass  = 'dot-upcoming';
     } else {
-      badgeHtml = `<span class="badge badge-past">Done</span>`;
+      badgeHtml = `<span class="badge badge-past">Results</span>`;
       dotClass  = 'dot-past';
     }
     card.innerHTML = `
@@ -588,7 +589,7 @@ function renderTeamList(el, tournament, teams, label) {
 
 async function loadTeams(tournament) {
   const el = document.getElementById('team-list-content');
-  el.innerHTML = '<div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="15" stroke-width="1.5"/><g class="wp-seams" stroke-width="1.2"><path class="sb" d=""/><path class="sb" d=""/><path class="sb" d=""/><path d=""/><path d=""/><path d=""/></g></svg></div>';
+  el.innerHTML = '<div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round"><circle cx="18" cy="18" r="15" stroke-width="2" stroke-dasharray="60 35" /></svg></div>';
   showView('view-teams');
   updateSubnav();
 
@@ -700,7 +701,7 @@ function h2hSummary(h2h, opponentRaw) {
 // ── Games ──────────────────────────────────────────────────────────────────────
 async function loadGames(tournamentId, team, sheet) {
   const el = document.getElementById('games-content');
-  el.innerHTML = '<div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="15" stroke-width="1.5"/><g class="wp-seams" stroke-width="1.2"><path class="sb" d=""/><path class="sb" d=""/><path class="sb" d=""/><path d=""/><path d=""/><path d=""/></g></svg></div>';
+  el.innerHTML = '<div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round"><circle cx="18" cy="18" r="15" stroke-width="2" stroke-dasharray="60 35" /></svg></div>';
   showView('view-games');
   updateSubnav();
 
@@ -936,56 +937,6 @@ async function doSubmitUrl() {
 loadTournaments();
 maybeShowA2HS();
 
-// ── Water polo ball 3D sphere spinner ──
-(function(){
-  const R=15, CX=18, CY=18;
-  const P=2*Math.PI/3; // 120°
-  // 3 tilted great circles at 120° apart — correct 6-panel ball construction.
-  // Each seam is a great circle whose normal is tilted 60° from the z-axis:
-  //   lat = arctan(sin(lon - offset) * tan(60°))
-  // This sweeps ±60° lat in one full revolution, matching the real ball seam shape.
-  const SEAMS=[{off:0},{off:P},{off:2*P}];
-  const TAN60=Math.tan(Math.PI/3); // √3
-  const TILT=0.22;
-  const cosTilt=Math.cos(TILT), sinTilt=Math.sin(TILT);
-  let phi=0;
-  function pt(lat,lon){
-    const a=lon-phi;
-    const x=R*Math.cos(lat)*Math.sin(a);
-    const y=R*Math.sin(lat);
-    const z=R*Math.cos(lat)*Math.cos(a);
-    const y2=y*cosTilt-z*sinTilt;
-    const z2=y*sinTilt+z*cosTilt;
-    return {x:CX+x, y:CY-y2, f:z2>=0};
-  }
-  function seamData(s){
-    const N=90, pts=[];
-    for(let i=0;i<=N;i++){
-      const lon=i/N*2*Math.PI;
-      const lat=Math.atan(Math.sin(lon-s.off)*TAN60);
-      pts.push(pt(lat,lon));
-    }
-    let fd='', bd='', fon=false, bon=false;
-    for(const p of pts){
-      if(p.f){ fd+=(fon?` L${p.x.toFixed(1)},${p.y.toFixed(1)}`:`M${p.x.toFixed(1)},${p.y.toFixed(1)}`); fon=true; bon=false; }
-      else     { bd+=(bon?` L${p.x.toFixed(1)},${p.y.toFixed(1)}`:`M${p.x.toFixed(1)},${p.y.toFixed(1)}`); bon=true; fon=false; }
-    }
-    return {f:fd, b:bd};
-  }
-  function tick(){
-    phi+=0.03;
-    document.querySelectorAll('.wp-spinner .wp-seams').forEach(function(g){
-      var ps=g.querySelectorAll('path');
-      SEAMS.forEach(function(s,i){
-        const d=seamData(s);
-        if(ps[i])   ps[i].setAttribute('d',d.b);   // back (dashed)
-        if(ps[i+3]) ps[i+3].setAttribute('d',d.f); // front (solid)
-      });
-    });
-    requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-})();
 </script>
 </body>
 </html>
