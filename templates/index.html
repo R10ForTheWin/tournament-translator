@@ -9,7 +9,7 @@
   <meta name="theme-color" content="#111111">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <link rel="icon" type="image/png" href="/static/apple-touch-icon.png">
-  <title>Tournament Translator</title>
+  <title>Tournament Translator!</title>
   <style>
     :root {
       --cardinal:      #9d2235;
@@ -320,7 +320,7 @@
     </svg>
   </div>
   <div class="hero">
-    <img src="/static/logo.png" class="hero-logo" alt="Tournament Translator">
+    <img src="/static/logo.png" class="hero-logo" alt="Tournament Translator!">
   </div>
   <!-- Bottom stripe bar: flat right, curl downward left, gold → dark -->
   <div class="stripe-bar">
@@ -450,7 +450,7 @@ async function shareApp() {
   const url  = location.origin;
   const text = 'Track Trojan water polo schedules & results all season.';
   if (navigator.share) {
-    try { await navigator.share({ title: 'Tournament Translator', text, url }); } catch(e) {}
+    try { await navigator.share({ title: 'Tournament Translator!', text, url }); } catch(e) {}
   } else {
     await navigator.clipboard.writeText(url);
     alert('Link copied to clipboard!');
