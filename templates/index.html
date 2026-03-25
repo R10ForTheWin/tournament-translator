@@ -378,6 +378,19 @@
   </div>
 </div>
 
+<!-- URL paste sheet -->
+<div class="upload-overlay" id="url-overlay" onclick="closeUrlModal(event)">
+  <div class="upload-sheet" onclick="event.stopPropagation()">
+    <div class="upload-handle"></div>
+    <div class="upload-title">Add Schedule URL</div>
+    <input type="text" inputmode="url" class="pw-input" id="url-input" placeholder="Paste schedule URL here" autocomplete="off" style="margin-bottom:10px">
+    <input type="password" class="pw-input" id="url-pw" placeholder="Password" autocomplete="current-password">
+    <button class="upload-btn" id="url-btn" onclick="doSubmitUrl()">Save URL</button>
+    <button class="cancel-btn" onclick="closeUrlModal()">Cancel</button>
+    <div class="upload-msg" id="url-msg" style="display:none"></div>
+  </div>
+</div>
+
 <!-- Add to Home Screen banner (iOS only, shown once) -->
 <div id="a2hs-banner" style="display:none">
   <div class="a2hs-icon">🏠</div>
@@ -506,7 +519,10 @@ function makeTournamentCards(tournaments) {
     const card = document.createElement('div');
     card.className = 'list-card';
     let badgeHtml = '', dotClass = '';
-    if (!t.has_excel) {
+    if (!t.has_excel && t.url_only) {
+      badgeHtml = `<span class="badge badge-upload">Paste URL</span>`;
+      dotClass  = 'dot-upload';
+    } else if (!t.has_excel) {
       badgeHtml = `<span class="badge badge-upload">Upload Schedule</span>`;
       dotClass  = 'dot-upload';
     } else if (!t.past) {
@@ -526,6 +542,7 @@ function makeTournamentCards(tournaments) {
       </div>
       <div class="list-card-right">${badgeHtml}<span class="list-arrow">›</span></div>`;
     card.onclick = () => {
+      if (!t.has_excel && t.url_only) { openUrlModal(t.id, t.name); return; }
       if (!t.has_excel) { openUpload(); return; }
       state.tournament = t;
       loadTeams(t);
@@ -916,6 +933,48 @@ async function submitPw() {
     document.getElementById('pw-error').style.display = 'block';
     document.getElementById('pw-modal-input').value = '';
     document.getElementById('pw-modal-input').focus();
+  }
+}
+
+// ── URL paste ──────────────────────────────────────────────────────────────────
+let _urlTournamentId = null;
+function openUrlModal(id) {
+  _urlTournamentId = id;
+  document.getElementById('url-input').value = '';
+  document.getElementById('url-pw').value = '';
+  document.getElementById('url-msg').style.display = 'none';
+  document.getElementById('url-btn').disabled = false;
+  document.getElementById('url-btn').textContent = 'Save URL';
+  document.getElementById('url-overlay').classList.add('visible');
+}
+function closeUrlModal(e) {
+  if (e && e.target !== document.getElementById('url-overlay')) return;
+  document.getElementById('url-overlay').classList.remove('visible');
+  _urlTournamentId = null;
+}
+async function doSubmitUrl() {
+  const url = document.getElementById('url-input').value.trim();
+  const pw  = document.getElementById('url-pw').value;
+  const msg = document.getElementById('url-msg');
+  const btn = document.getElementById('url-btn');
+  if (!url || !pw) return;
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const res = await fetch(`/api/tournaments/${encodeURIComponent(_urlTournamentId)}/url`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ url, password: pw })
+  });
+  msg.style.display = 'block';
+  if (res.ok) {
+    msg.className = 'upload-msg success'; msg.textContent = '✅ Schedule URL saved!';
+    setTimeout(() => { document.getElementById('url-overlay').classList.remove('visible'); loadTournaments(); }, 1500);
+  } else if (res.status === 403) {
+    msg.className = 'upload-msg error'; msg.textContent = '❌ Incorrect password.';
+    btn.disabled = false; btn.textContent = 'Save URL';
+  } else {
+    let errMsg = 'Failed to save URL.';
+    try { const d = await res.json(); if (d.error) errMsg = d.error; } catch(e) {}
+    msg.className = 'upload-msg error'; msg.textContent = `❌ ${errMsg}`;
+    btn.disabled = false; btn.textContent = 'Save URL';
   }
 }
 

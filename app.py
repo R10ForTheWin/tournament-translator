@@ -31,6 +31,10 @@ TURBO_ONEDRIVE_URL = "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQB7PJXtfzNsT74lTYhWp
 # Newport Spring Invite → OneDrive (older resid/authkey format, direct download)
 NEWPORT_ONEDRIVE_URL = "https://onedrive.live.com/download?resid=6F253EF3AFCFE1C8!66694&authkey=!AO8pyWY0qwL2sYE"
 
+# Tournaments with no preset URL — user pastes one via the app
+URL_ONLY_TOURNAMENTS = {"jo-quals", "junior-olympics"}
+USER_URLS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "user_urls.json")
+
 _URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
 URL_CACHE_TTL      = 300  # re-fetch at most every 5 minutes
 
@@ -69,6 +73,19 @@ FILE_MAP = {
     "futures-5":      "KAP7 Futures WPL",
     "futures-super":  "KAP7 Futures WPL",
 }
+
+
+def _load_user_urls() -> dict:
+    if os.path.exists(USER_URLS_FILE):
+        with open(USER_URLS_FILE) as f:
+            return json.load(f)
+    return {}
+
+def _save_user_url(tournament_id: str, url: str):
+    urls = _load_user_urls()
+    urls[tournament_id] = url
+    with open(USER_URLS_FILE, "w") as f:
+        json.dump(urls, f, indent=2)
 
 
 def _fetch_url(url: str, *, onedrive=False) -> bytes | None:
@@ -111,6 +128,12 @@ def find_excel(tournament_id: str):
     if tournament_id == "newport-invite":
         data = _fetch_url(NEWPORT_ONEDRIVE_URL)  # direct download URL, no API needed
         return io.BytesIO(data) if data else None
+    if tournament_id in URL_ONLY_TOURNAMENTS:
+        url = _load_user_urls().get(tournament_id)
+        if url:
+            data = _fetch_url(url)
+            return io.BytesIO(data) if data else None
+        return None
     return None
 
 
@@ -414,6 +437,7 @@ def api_tournaments():
         mo = _MMAP.get(month_match.group(1).lower(), 1) if month_match else 1
         t_date = date(yr, mo, 1)
         out.append({**t, "has_excel": has_excel, "has_file": has_file,
+                    "url_only": t["id"] in URL_ONLY_TOURNAMENTS,
                     "past": t_date < today, "_sort_date": t_date})
     # Sort: upcoming first (chronological), past last (reverse chronological)
     out.sort(key=lambda x: (x["past"], x["_sort_date"] if not x["past"] else -x["_sort_date"].toordinal()))
@@ -577,6 +601,28 @@ def api_upload():
     dest = os.path.join(EXCEL_DIR, safe_name)
     f.save(dest)
     return jsonify({"ok": True, "filename": safe_name})
+
+
+@app.route("/api/tournaments/<tournament_id>/url", methods=["POST"])
+def api_set_url(tournament_id):
+    """Store a user-provided URL for a URL-only tournament (password required)."""
+    if tournament_id not in URL_ONLY_TOURNAMENTS:
+        abort(400)
+    data = request.get_json(force=True)
+    if data.get("password") != ADMIN_PW:
+        abort(403)
+    url = (data.get("url") or "").strip()
+    if not url:
+        abort(400)
+    content = _fetch_url(url)
+    if not content:
+        return jsonify({"ok": False, "error": "Could not fetch that URL. Make sure it's publicly accessible."}), 400
+    try:
+        load_and_parse(io.BytesIO(content))
+    except Exception:
+        return jsonify({"ok": False, "error": "URL was fetched but doesn't appear to be a valid Excel schedule."}), 400
+    _save_user_url(tournament_id, url)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/h2h/<path:team>")
