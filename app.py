@@ -53,15 +53,18 @@ KNOWN_TOURNAMENTS = [
     {"id": "newport-invite",  "name": "Newport Spring Invite",  "dates": "Mar 14–15, 2026"},
     {"id": "futures-3",       "name": "Futures Weekend 3",      "dates": "Mar 21–22, 2026",
      "date_start": date(2026, 3, 21), "date_end": date(2026, 3, 22)},
-    {"id": "kap7-cup",        "name": "Kap7 Cup",               "dates": "Apr 18–19, 2026"},
+    {"id": "kap7-cup",        "name": "Kap7 Cup",               "dates": "Apr 18–19, 2026",
+     "date_start": date(2026, 4, 18), "date_end": date(2026, 4, 19)},
     {"id": "futures-4",       "name": "Futures Weekend 4",      "dates": "May 2–3, 2026",
      "date_start": date(2026, 5, 2),  "date_end": date(2026, 5, 3)},
     {"id": "futures-5",       "name": "Futures Weekend 5",      "dates": "May 16–17, 2026",
      "date_start": date(2026, 5, 16), "date_end": date(2026, 5, 17)},
-    {"id": "jo-quals",        "name": "JO Qualifications",      "dates": "May 29–31, 2026"},
+    {"id": "jo-quals",        "name": "JO Qualifications",      "dates": "May 29–31, 2026",
+     "date_start": date(2026, 5, 29), "date_end": date(2026, 5, 31)},
     {"id": "futures-super",   "name": "Futures Superfinal",     "dates": "Jun 26–28, 2026",
      "date_start": date(2026, 6, 26), "date_end": date(2026, 6, 28)},
-    {"id": "junior-olympics", "name": "Junior Olympics",        "dates": "Jul 23–26, 2026"},
+    {"id": "junior-olympics", "name": "Junior Olympics",        "dates": "Jul 23–26, 2026",
+     "date_start": date(2026, 7, 23), "date_end": date(2026, 7, 26)},
 ]
 
 # Map tournament id → excel filename (partial match, case-insensitive)
@@ -811,9 +814,13 @@ def api_tournaments():
         yr = int(year_match.group(1)) if year_match else today.year
         mo = _MMAP.get(month_match.group(1).lower(), 1) if month_match else 1
         t_date = date(yr, mo, 1)
+        start = t.get("date_start") or t_date
+        is_past = start < today
+        days_until = (start - today).days if not is_past else None
         out.append({**t, "has_excel": has_excel, "has_file": has_file,
                     "has_preset_url": t["id"] in PRESET_URL_TOURNAMENTS,
-                    "past": t_date < today, "_sort_date": t_date})
+                    "past": is_past, "days_until": days_until,
+                    "_sort_date": t_date})
     # Sort: upcoming first (chronological), past last (reverse chronological)
     out.sort(key=lambda x: (x["past"], x["_sort_date"] if not x["past"] else -x["_sort_date"].toordinal()))
     for x in out: del x["_sort_date"]

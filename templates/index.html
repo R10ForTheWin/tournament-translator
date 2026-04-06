@@ -575,6 +575,16 @@ async function loadTournaments() {
   document.getElementById('share-btn').style.display = '';
 }
 
+function daysUntilHtml(t) {
+  if (t.past || t.days_until == null) return '';
+  const d = t.days_until;
+  let label;
+  if (d <= 0)      label = 'This weekend!';
+  else if (d === 1) label = 'Tomorrow!';
+  else              label = `${d} days away`;
+  return ` <span style="color:var(--gold);font-weight:600">· ${label}</span>`;
+}
+
 function makeTournamentCards(tournaments) {
   const list = document.createElement('div');
   list.className = 'card-list';
@@ -600,7 +610,7 @@ function makeTournamentCards(tournaments) {
         <div class="list-card-dot ${dotClass}"></div>
         <div class="list-card-info">
           <div class="list-card-main">${t.name}</div>
-          <div class="list-card-sub">${t.dates}</div>
+          <div class="list-card-sub">${t.dates}${daysUntilHtml(t)}</div>
         </div>
       </div>
       <div class="list-card-right">${badgeHtml}<span class="list-arrow">›</span></div>`;
