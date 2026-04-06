@@ -40,6 +40,11 @@ USER_URLS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"
 _URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
 URL_CACHE_TTL      = 300  # re-fetch at most every 5 minutes
 
+_MONTH_MAP = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
+              "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
+_RE_YEAR   = re.compile(r"(\d{4})")
+_RE_MONTH  = re.compile(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)", re.I)
+
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(EXCEL_DIR, exist_ok=True)
 
@@ -804,15 +809,10 @@ def api_tournaments():
                 has_excel = len(games) > 0
             except Exception:
                 has_file = False
-        # Rough "past" detection from dates string
-        year_match = re.search(r"(\d{4})", t["dates"])
-        month_match = re.search(
-            r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)", t["dates"], re.I
-        )
-        _MMAP = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
-                 "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
+        year_match  = _RE_YEAR.search(t["dates"])
+        month_match = _RE_MONTH.search(t["dates"])
         yr = int(year_match.group(1)) if year_match else today.year
-        mo = _MMAP.get(month_match.group(1).lower(), 1) if month_match else 1
+        mo = _MONTH_MAP.get(month_match.group(1).lower(), 1) if month_match else 1
         t_date = date(yr, mo, 1)
         start = t.get("date_start") or t_date
         is_past = start < today

@@ -152,7 +152,7 @@
     .badge-pending   { background: rgba(255,255,255,0.08); color: var(--muted); }
     .badge-scheduled { background: var(--cardinal); color: var(--white); }
 
-    .days-counter { text-align: right; flex-shrink: 0; line-height: 1; }
+    .days-counter { text-align: right; flex-shrink: 0; }
     .days-counter-num { font-size: 48px; font-weight: 200; color: rgba(255,215,0,0.82); letter-spacing: -0.03em; line-height: 1; }
     .days-counter-lbl { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); opacity: 0.7; margin-top: 3px; }
 
@@ -593,11 +593,10 @@ function makeTournamentCards(tournaments) {
       const lbl = d <= 0 ? '' : (d === 1 ? 'Day Away' : 'Days Away');
       rightHtml = `<div class="days-counter"><div class="days-counter-num">${num}</div>${lbl ? `<div class="days-counter-lbl">${lbl}</div>` : ''}</div>`;
       dotClass  = t.has_excel ? 'dot-upcoming' : 'dot-upload';
-    } else if (!t.has_excel && t.has_preset_url) {
-      rightHtml = `<span class="badge badge-pending">Not Yet Scheduled</span>`;
-      dotClass  = 'dot-upload';
     } else if (!t.has_excel) {
-      rightHtml = `<span class="badge badge-upload">Paste URL</span>`;
+      rightHtml = t.has_preset_url
+        ? `<span class="badge badge-pending">Not Yet Scheduled</span>`
+        : `<span class="badge badge-upload">Paste URL</span>`;
       dotClass  = 'dot-upload';
     } else {
       rightHtml = `<span class="badge badge-past">Results</span>`;
