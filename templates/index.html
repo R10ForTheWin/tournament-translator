@@ -152,6 +152,10 @@
     .badge-pending   { background: rgba(255,255,255,0.08); color: var(--muted); }
     .badge-scheduled { background: var(--cardinal); color: var(--white); }
 
+    .days-counter { text-align: right; flex-shrink: 0; }
+    .days-counter-num { font-size: 30px; font-weight: 700; color: var(--gold); line-height: 1; }
+    .days-counter-lbl { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-top: 2px; }
+
     .list-arrow { font-size: 18px; color: rgba(255,255,255,0.2); font-weight: 300; }
 
     /* ── Divider ── */
@@ -575,34 +579,28 @@ async function loadTournaments() {
   document.getElementById('share-btn').style.display = '';
 }
 
-function daysUntilHtml(t) {
-  if (t.past || t.days_until == null) return '';
-  const d = t.days_until;
-  let label;
-  if (d <= 0)      label = 'This weekend!';
-  else if (d === 1) label = 'Tomorrow!';
-  else              label = `${d} days away`;
-  return ` <span style="color:var(--gold);font-weight:600">· ${label}</span>`;
-}
-
 function makeTournamentCards(tournaments) {
   const list = document.createElement('div');
   list.className = 'card-list';
   tournaments.forEach(t => {
     const card = document.createElement('div');
     card.className = 'list-card';
-    let badgeHtml = '', dotClass = '';
-    if (!t.has_excel && t.has_preset_url) {
-      badgeHtml = `<span class="badge badge-pending">Not Yet Scheduled</span>`;
+    let rightHtml = '', dotClass = '';
+    const hasDays = !t.past && t.days_until != null;
+    if (hasDays) {
+      const d = t.days_until;
+      const num = d <= 0 ? 'Now' : d;
+      const lbl = d <= 0 ? '' : (d === 1 ? 'Day Away' : 'Days Away');
+      rightHtml = `<div class="days-counter"><div class="days-counter-num">${num}</div>${lbl ? `<div class="days-counter-lbl">${lbl}</div>` : ''}</div>`;
+      dotClass  = t.has_excel ? 'dot-upcoming' : 'dot-upload';
+    } else if (!t.has_excel && t.has_preset_url) {
+      rightHtml = `<span class="badge badge-pending">Not Yet Scheduled</span>`;
       dotClass  = 'dot-upload';
     } else if (!t.has_excel) {
-      badgeHtml = `<span class="badge badge-upload">Paste URL</span>`;
+      rightHtml = `<span class="badge badge-upload">Paste URL</span>`;
       dotClass  = 'dot-upload';
-    } else if (!t.past) {
-      badgeHtml = `<span class="badge badge-scheduled">View Schedule</span>`;
-      dotClass  = 'dot-upcoming';
     } else {
-      badgeHtml = `<span class="badge badge-past">Results</span>`;
+      rightHtml = `<span class="badge badge-past">Results</span>`;
       dotClass  = 'dot-past';
     }
     card.innerHTML = `
@@ -610,10 +608,10 @@ function makeTournamentCards(tournaments) {
         <div class="list-card-dot ${dotClass}"></div>
         <div class="list-card-info">
           <div class="list-card-main">${t.name}</div>
-          <div class="list-card-sub">${t.dates}${daysUntilHtml(t)}</div>
+          <div class="list-card-sub">${t.dates}</div>
         </div>
       </div>
-      <div class="list-card-right">${badgeHtml}<span class="list-arrow">›</span></div>`;
+      <div class="list-card-right">${rightHtml}<span class="list-arrow">›</span></div>`;
     card.onclick = () => {
       if (!t.has_excel && t.has_preset_url) { openInfoSheet(t); return; }
       if (!t.has_excel) { openUrlModal(t.id); return; }
