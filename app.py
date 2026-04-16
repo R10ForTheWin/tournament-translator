@@ -333,38 +333,6 @@ def find_next_games(game, division_games):
                     else:                           loser_next  = g
     return winner_next, loser_next
 
-def confidence(game, division_games, locked_results):
-    """Return 'green' | 'yellow' | 'red' and an explanation."""
-    if game["played"]:
-        return None, None
-
-    game_id = game["game_id"]
-
-    # Already user-confirmed via yes/no button
-    if game_id in locked_results:
-        return "green", None
-
-    # Explicit W#/L# bracket reference → we can look up both next games
-    winner_next, loser_next = find_next_games(game, division_games)
-    if winner_next or loser_next:
-        return "green", None
-
-    # Pool play — check if we can determine finish from current standings
-    white_prefix = re.match(r"^([A-Z])(\d+)-", game["white_team"])
-    dark_prefix  = re.match(r"^([A-Z])(\d+)-", game["dark_team"])
-    if white_prefix or dark_prefix:
-        pool = (white_prefix or dark_prefix).group(1)
-        pool_games = [g for g in division_games if
-                      re.match(rf"^{pool}\d+-", g["white_team"]) or
-                      re.match(rf"^{pool}\d+-", g["dark_team"])]
-        played = sum(1 for g in pool_games if g["played"])
-        total  = len(pool_games)
-        if played > 0:
-            return "yellow", f"{played} of {total} pool games played — upload the latest schedule for a more accurate prediction"
-        return "red", "No pool results yet — upload the latest schedule to see your bracket path"
-
-    return "red", "Not enough information yet — upload the latest schedule to improve this prediction"
-
 
 def _ordinal(n: int) -> str:
     suffix = 'th' if 11 <= n % 100 <= 13 else {1:'st', 2:'nd', 3:'rd'}.get(n % 10, 'th')
