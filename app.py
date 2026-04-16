@@ -104,6 +104,9 @@ def _fetch_url(url: str, *, onedrive=False) -> bytes | None:
         if onedrive:
             token = base64.urlsafe_b64encode(url.encode()).rstrip(b"=").decode()
             fetch_url = f"https://api.onedrive.com/v1.0/shares/u!{token}/root/content"
+        elif "onedrive.live.com" in url or "1drv.ms" in url:
+            sep = "&" if "?" in url else "?"
+            fetch_url = url + sep + "download=1"
         else:
             fetch_url = url
         resp = requests.get(fetch_url, allow_redirects=True, timeout=30)
