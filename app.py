@@ -250,9 +250,10 @@ def _parse_tier(team_name: str):
     return None
 
 def friendly_team_name(team_name: str, sheet: str):
-    """'TROJAN GOLD' + '16U BOYS PLATINUM GOLD-11 TEAMS' → 'Boys 16U Gold'."""
+    """'TROJAN GOLD' + '16U BOYS PLATINUM-11 TEAMS' → 'Boys 16U Platinum'."""
     gender, age = _parse_sheet(sheet)
-    tier = _parse_tier(team_name)
+    # Use division tier from sheet name (the actual competition level), not the team color
+    tier = _parse_tier(sheet) or _parse_tier(team_name)
     parts = [p for p in [gender, age, tier] if p]
     return " ".join(parts) if len(parts) >= 2 else None
 
