@@ -82,10 +82,13 @@ FILE_MAP = {
 
 
 def _load_user_urls() -> dict:
+    # Env var takes priority — survives deploys (set in Railway dashboard)
+    env_urls = os.environ.get("USER_URLS_JSON", "")
+    base = json.loads(env_urls) if env_urls else {}
     if os.path.exists(USER_URLS_FILE):
         with open(USER_URLS_FILE) as f:
-            return json.load(f)
-    return {}
+            base.update(json.load(f))  # file overrides env (phone UI wins)
+    return base
 
 def _save_user_url(tournament_id: str, url: str):
     urls = _load_user_urls()
@@ -866,7 +869,6 @@ def api_games(tournament_id, team):
         abort(404)
 
     games    = _filter_by_dates(load_and_parse(excel), tournament_id)
-    locked   = load_results(tournament_id)
 
     sheet    = request.args.get("sheet")
     my_games = [g for g in games
@@ -897,33 +899,21 @@ def api_games(tournament_id, team):
             "comments":   g["comments"],
         }
 
+        winner_next, loser_next = find_next_games(g, dg)
+
         if g["played"]:
             base["score"]  = _fmt_score(g)
-            base["result"] = _result_str(g, team)
+            result = _result_str(g, team)
+            base["result"] = result
+            next_game = winner_next if result == "win" else loser_next if result == "loss" else None
+            if next_game:
+                base["next"] = _next_summary(next_game, team)
             played_out.append(base)
         else:
-            conf, conf_msg = confidence(g, dg, locked)
-            winner_next, loser_next = find_next_games(g, dg)
-
-            # Check if user already locked a result for this game
-            lock = locked.get(gid)
-            if lock:
-                trojan_won = lock["trojan_won"]
-                next_game  = winner_next if trojan_won else loser_next
-                base["lock"] = {
-                    "trojan_won": trojan_won,
-                    "team":       lock["team"],
-                    "next":       _next_summary(next_game, team) if next_game else None,
-                }
-            else:
-                # Show yes/no prompt with both scenarios
-                scenarios = {}
-                if winner_next: scenarios["win"]  = _next_summary(winner_next, team)
-                if loser_next:  scenarios["lose"] = _next_summary(loser_next,  team)
-                base["scenarios"]   = scenarios if scenarios else None
-                base["confidence"]  = conf
-                base["conf_msg"]    = conf_msg
-
+            scenarios = {}
+            if winner_next: scenarios["win"]  = _next_summary(winner_next, team)
+            if loser_next:  scenarios["lose"] = _next_summary(loser_next,  team)
+            base["scenarios"] = scenarios if scenarios else None
             upcoming_out.append(base)
 
     placement = _infer_placement(played_out)

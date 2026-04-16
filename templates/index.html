@@ -911,88 +911,35 @@ function buildUpcomingCard(g, tournamentId, team, h2h) {
       ${h2hSummary(h2h, g.opponent)}
       ${g.comments ? `<div class="game-tags"><span class="tag">${g.comments}</span></div>` : ''}`;
 
-  if (g.lock) {
-    const icon = g.lock.trojan_won ? '✅' : '❌';
-    const txt  = g.lock.trojan_won ? `${g.lock.team} won this game` : `${g.lock.team} lost this game`;
-    const nextHtml = g.lock.next
-      ? `<div class="next-game-box"><div class="next-game-label">Next Game</div><div class="next-game-opponent">vs ${g.lock.next.opponent}</div><div class="next-game-meta">${g.lock.next.date} · ${g.lock.next.time}</div>${locationHtml(g.lock.next.location)}</div>`
-      : `<div class="next-game-box"><div class="next-game-label">Next Game</div><div class="next-game-meta">No further game found</div></div>`;
+  // Played game: show next game based on actual result
+  if (g.next) {
     body += `
-      <div class="locked-box">
-        <div class="locked-result"><span class="locked-icon">${icon}</span>${txt}</div>
-        ${nextHtml}
-        <span class="correct-link" onclick="unlockResult('${tournamentId}','${g.game_id}',this)">Incorrect? Correct this 🔒</span>
+      <div class="next-game-box" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+        <div class="next-game-label">Next Game</div>
+        <div class="next-game-opponent">vs ${g.next.opponent}</div>
+        <div class="next-game-meta">${g.next.date} · ${g.next.time}</div>
+        ${locationHtml(g.next.location)}
       </div>`;
-  } else {
-    // Yes/No question right below the game info
-    body += `
-      <div class="yn-box">
-        <div class="yn-question">Did ${state.friendly || team} beat ${g.opponent}?</div>
-        <div class="yn-buttons">
-          <button class="yn-btn yes" onclick="lockResult('${tournamentId}','${g.game_id}',true,'${team}',this)">✅ Yes, we won</button>
-          <button class="yn-btn no"  onclick="lockResult('${tournamentId}','${g.game_id}',false,'${team}',this)">❌ No, we lost</button>
-        </div>
-      </div>`;
+  }
 
-    // Only show confidence warning for yellow/red — green is silent
-    if (g.confidence && g.confidence !== 'green') {
-      const icons = { yellow:'🟡', red:'🔴' };
-      const msgs  = { yellow:'Prediction may change', red:'Too early to call' };
-      body += `
-        <div class="conf-banner ${g.confidence}">
-          <span class="conf-icon">${icons[g.confidence]}</span>
-          <div class="conf-text">
-            <strong>${msgs[g.confidence]}</strong>
-            ${g.conf_msg ? `<br><span style="font-size:12px">${g.conf_msg}</span>` : ''}
-          </div>
-        </div>`;
+  // Upcoming game: always show win/lose scenarios
+  if (g.scenarios && (g.scenarios.win || g.scenarios.lose)) {
+    let rows = '';
+    if (g.scenarios.win) {
+      const n = g.scenarios.win;
+      rows += `<div class="scenario-row win-row"><span class="scenario-icon">✅</span><div><div class="scenario-label">If you win</div><div class="scenario-opponent">vs ${n.opponent}</div><div class="scenario-when">${n.date} · ${n.time} · ${n.location}</div></div></div>`;
     }
-
-    // What's Next scenarios
-    if (g.scenarios && (g.scenarios.win || g.scenarios.lose)) {
-      let rows = '';
-      if (g.scenarios.win) {
-        const n = g.scenarios.win;
-        rows += `<div class="scenario-row win-row"><span class="scenario-icon">✅</span><div><div class="scenario-label">If you win</div><div class="scenario-opponent">vs ${n.opponent}</div><div class="scenario-when">${n.date} · ${n.time} · ${n.location}</div></div></div>`;
-      }
-      if (g.scenarios.lose) {
-        const n = g.scenarios.lose;
-        rows += `<div class="scenario-row lose-row"><span class="scenario-icon">❌</span><div><div class="scenario-label">If you lose</div><div class="scenario-opponent">vs ${n.opponent}</div><div class="scenario-when">${n.date} · ${n.time} · ${n.location}</div></div></div>`;
-      }
-      body += `<div class="scenarios-box"><div class="scenarios-title">What's Next</div>${rows}</div>`;
+    if (g.scenarios.lose) {
+      const n = g.scenarios.lose;
+      rows += `<div class="scenario-row lose-row"><span class="scenario-icon">❌</span><div><div class="scenario-label">If you lose</div><div class="scenario-opponent">vs ${n.opponent}</div><div class="scenario-when">${n.date} · ${n.time} · ${n.location}</div></div></div>`;
     }
+    body += `<div class="scenarios-box"><div class="scenarios-title">What's Next</div>${rows}</div>`;
   }
   body += `</div>`;
   card.innerHTML = body;
   return card;
 }
 
-// ── Result locking ─────────────────────────────────────────────────────────────
-async function lockResult(tournamentId, gameId, won, team, btn) {
-  if (testMode) {
-    // Test mode: just reload games as if the result was locked, without saving
-    btn.closest('.yn-box').innerHTML =
-      `<div style="text-align:center;padding:8px;font-size:13px;color:var(--muted)">🧪 Test — not saved</div>`;
-    return;
-  }
-  btn.disabled = true;
-  const res = await fetch(`/api/result/${tournamentId}/${gameId}`, {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ trojan_won: won, team })
-  });
-  if (res.ok) loadGames(tournamentId, state.team, state.sheet);
-}
-
-function unlockResult(tournamentId, gameId) {
-  openPwModal('Unlock this result so it can be changed.', async (pw) => {
-    const res = await fetch(`/api/result/${tournamentId}/${gameId}/unlock`, {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ password: pw })
-    });
-    if (res.ok) { closePwModal(); loadGames(tournamentId, state.team, state.sheet); return true; }
-    return false;
-  });
-}
 
 
 // ── Password modal ─────────────────────────────────────────────────────────────
