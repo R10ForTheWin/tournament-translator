@@ -21,10 +21,6 @@ FUTURES_SHEETS_ID  = "1AkX3vwOU9CIc3cymacG2F-uXz-_Gi_A8yR40dEbDpMQ"
 FUTURES_SHEETS_URL = f"https://docs.google.com/spreadsheets/d/{FUTURES_SHEETS_ID}/export?format=xlsx"
 WPL_TOURNAMENTS    = {"futures-2", "futures-3", "futures-4", "futures-5", "futures-super"}
 
-# Kap7 → OneDrive
-KAP7_ONEDRIVE_URL  = "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQBGJ01faI_8Rb24gRIV-VoDAQO0zhZw_eBDO4rxJ-5tASs?e=hHsWYP"
-KAP7_TOURNAMENTS   = {"kap7-intl", "kap7-cup"}
-
 # Turbo Cup → OneDrive (separate organizer, separate file)
 TURBO_ONEDRIVE_URL = "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQB7PJXtfzNsT74lTYhWpOeXASFcmpB96L1OpYL_E6HBMM0?e=UsRrMb"
 
@@ -32,9 +28,9 @@ TURBO_ONEDRIVE_URL = "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQB7PJXtfzNsT74lTYhWp
 NEWPORT_ONEDRIVE_URL = "https://onedrive.live.com/download?resid=6F253EF3AFCFE1C8!66694&authkey=!AO8pyWY0qwL2sYE"
 
 # Tournaments with no preset URL — user pastes one via the app
-URL_ONLY_TOURNAMENTS = {"jo-quals", "junior-olympics"}
+URL_ONLY_TOURNAMENTS = {"jo-quals", "junior-olympics", "kap7-intl", "kap7-cup"}
 # Tournaments with a preset auto-fetch URL (schedule appears automatically when posted)
-PRESET_URL_TOURNAMENTS = WPL_TOURNAMENTS | KAP7_TOURNAMENTS | {"turbo-cup", "newport-invite"}
+PRESET_URL_TOURNAMENTS = WPL_TOURNAMENTS | {"turbo-cup", "newport-invite"}
 USER_URLS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "user_urls.json")
 
 _URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
@@ -134,9 +130,6 @@ def find_excel(tournament_id: str):
                 return os.path.join(EXCEL_DIR, f)
     if tournament_id in WPL_TOURNAMENTS:
         data = _fetch_url(FUTURES_SHEETS_URL)
-        return io.BytesIO(data) if data else None
-    if tournament_id in KAP7_TOURNAMENTS:
-        data = _fetch_url(KAP7_ONEDRIVE_URL, onedrive=True)
         return io.BytesIO(data) if data else None
     if tournament_id == "turbo-cup":
         data = _fetch_url(TURBO_ONEDRIVE_URL, onedrive=True)
