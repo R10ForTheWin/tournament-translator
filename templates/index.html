@@ -995,8 +995,12 @@ function buildBracketView(allGames, tournamentId, team, h2h) {
       return (_dayNum(a.date) - _dayNum(b.date)) || ((parseTimeMin(a.time) || 0) - (parseTimeMin(b.time) || 0));
     });
 
+    const hasScenarios = ordered.some(g => g.path);
+
     ordered.forEach((g, i) => {
-      if (i > 0) {
+      // Only show within-column break tiles for confirmed sequential games,
+      // not for win/lose scenario alternatives (those aren't played back-to-back)
+      if (i > 0 && !hasScenarios) {
         const dur = breakDuration(ordered[i - 1].time, g.time, ordered[i - 1].date, g.date);
         if (dur) {
           const bt = document.createElement('div');
@@ -1106,13 +1110,18 @@ function drawBracketLines(inner, rounds, roundNums) {
     const gx = sx + 40;
     const R = 7; // corner radius
 
-    toCards.forEach(toCard => {
+    // Break pill drawn once per column transition, using the first target card's time
+    const firstToCard = toCards[0];
+    const pillDur = breakDuration(
+      fromCard.dataset.gameTime, firstToCard.dataset.gameTime,
+      fromCard.dataset.gameDate, firstToCard.dataset.gameDate
+    );
+
+    toCards.forEach((toCard, toIdx) => {
       const toRect = toCard.getBoundingClientRect();
-      // Enter at top-center of target card
       const tx = toRect.left - innerRect.left + toRect.width / 2;
       const ty = toRect.top - innerRect.top;
 
-      // Orthogonal path: right → into gap → down/up → into card top
       let d;
       if (Math.abs(ty - sy) < R * 2) {
         d = `M ${sx},${sy} H ${gx} V ${ty} H ${tx}`;
@@ -1129,16 +1138,13 @@ function drawBracketLines(inner, rounds, roundNums) {
       path.setAttribute('stroke-width', '2.5');
       svg.appendChild(path);
 
-      // Break pill on the vertical segment midpoint
-      const fromTime = fromCard.dataset.gameTime;
-      const fromDate = fromCard.dataset.gameDate;
-      const toTime   = toCard.dataset.gameTime;
-      const toDate   = toCard.dataset.gameDate;
-      const dur = breakDuration(fromTime, toTime, fromDate, toDate);
-      if (dur) {
+      // Draw break pill once, on the first connector only
+      if (toIdx === 0 && pillDur) {
+        const firstToRect = firstToCard.getBoundingClientRect();
+        const firstTy = firstToRect.top - innerRect.top;
         const mx = gx;
-        const my = (sy + ty) / 2;
-        const pillW = dur.length * 6.5 + 16;
+        const my = (sy + firstTy) / 2;
+        const pillW = pillDur.length * 6.5 + 16;
         const pillH = 18;
 
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -1161,7 +1167,7 @@ function drawBracketLines(inner, rounds, roundNums) {
         txt.setAttribute('font-family', '-apple-system, sans-serif');
         txt.setAttribute('fill', 'rgba(255,255,255,0.6)');
         txt.setAttribute('letter-spacing', '0.03em');
-        txt.textContent = dur;
+        txt.textContent = pillDur;
         svg.appendChild(txt);
       }
     });
