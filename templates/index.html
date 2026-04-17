@@ -1269,7 +1269,6 @@ function buildResultCard(g, h2h) {
       <div class="game-opponent"><span class="vs">vs</span><span class="opponent-name">${g.opponent}</span></div>
       ${h2hSummary(h2h, g.opponent)}
       <div class="game-score">${g.score}</div>
-      ${g.comments ? `<div class="game-tags"><span class="tag">${g.comments}</span></div>` : ''}
     </div>`;
   return card;
 }
