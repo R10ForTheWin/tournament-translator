@@ -1119,12 +1119,13 @@ function drawBracketLines(inner, rounds, roundNums) {
 
     toCards.forEach((toCard, toIdx) => {
       const toRect = toCard.getBoundingClientRect();
-      const tx = toRect.left - innerRect.left + toRect.width / 2;
-      const ty = toRect.top - innerRect.top;
+      // Enter at left-center of target card
+      const tx = toRect.left - innerRect.left;
+      const ty = toRect.top - innerRect.top + toRect.height / 2;
 
       let d;
       if (Math.abs(ty - sy) < R * 2) {
-        d = `M ${sx},${sy} H ${gx} V ${ty} H ${tx}`;
+        d = `M ${sx},${sy} H ${tx}`;
       } else if (ty > sy) {
         d = `M ${sx},${sy} H ${gx - R} Q ${gx},${sy} ${gx},${sy + R} V ${ty - R} Q ${gx},${ty} ${gx + R},${ty} H ${tx}`;
       } else {
@@ -1141,7 +1142,7 @@ function drawBracketLines(inner, rounds, roundNums) {
       // Draw break pill once, on the first connector only
       if (toIdx === 0 && pillDur) {
         const firstToRect = firstToCard.getBoundingClientRect();
-        const firstTy = firstToRect.top - innerRect.top;
+        const firstTy = firstToRect.top - innerRect.top + firstToRect.height / 2;
         const mx = gx;
         const my = (sy + firstTy) / 2;
         const pillW = pillDur.length * 6.5 + 16;
