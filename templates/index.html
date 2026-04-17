@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=0.25, maximum-scale=5.0">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="TT Scheduler">
@@ -539,8 +539,7 @@ function locationHtml(rawLocation) {
   const addr = venueAddress(rawLocation);
   const query = encodeURIComponent(addr || (rawLocation + ', Orange County, CA'));
   const mapsUrl = `https://maps.google.com/?q=${query}`;
-  const addrLine = addr ? `<div class="venue-address">${addr}</div>` : '';
-  return `<a class="game-card-location" href="${mapsUrl}" target="_blank" rel="noopener">📍 ${rawLocation}${addrLine}</a>`;
+  return `<a class="game-card-location" href="${mapsUrl}" target="_blank" rel="noopener">📍 ${rawLocation}</a>`;
 }
 
 // ── Add to Home Screen prompt ───────────────────────────────────────────────────
@@ -607,8 +606,6 @@ function updateSubnav() {
 
 function goHome()       { showView('view-tournaments'); }
 function goTournament() {
-  document.querySelector('meta[name=viewport]').content =
-    'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
   showView('view-teams');
   updateSubnav();
 }
@@ -830,9 +827,6 @@ async function loadGames(tournamentId, team, sheet) {
   el.innerHTML = '<div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round"><circle cx="18" cy="18" r="15" stroke-width="2" stroke-dasharray="60 35" /></svg></div>';
   showView('view-games');
   updateSubnav();
-  // Enable pinch-to-zoom for the bracket staircase
-  document.querySelector('meta[name=viewport]').content =
-    'width=device-width, initial-scale=1.0, user-scalable=yes';
 
   const [gamesRes, h2hRes] = await Promise.all([
     fetch(`/api/games/${encodeURIComponent(tournamentId)}/${encodeURIComponent(team)}?sheet=${encodeURIComponent(sheet)}`),
@@ -987,7 +981,54 @@ function buildBracketView(allGames, tournamentId, team, h2h) {
   });
 
   wrap.appendChild(inner);
+
+  requestAnimationFrame(() => {
+    drawBracketLines(inner, rounds, roundNums);
+  });
+
   return wrap;
+}
+
+function drawBracketLines(inner, rounds, roundNums) {
+  const innerRect = inner.getBoundingClientRect();
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible';
+  inner.style.position = 'relative';
+  inner.appendChild(svg);
+
+  const steps = inner.querySelectorAll('.bracket-step');
+  const stepArr = Array.from(steps);
+
+  for (let i = 0; i < stepArr.length - 1; i++) {
+    const fromStep = stepArr[i];
+    const toStep   = stepArr[i + 1];
+    const fromCards = fromStep.querySelectorAll('.game-card');
+    const toCards   = toStep.querySelectorAll('.game-card');
+    if (!fromCards.length || !toCards.length) continue;
+
+    const fromCard = fromCards[fromCards.length - 1];
+    const fromRect = fromCard.getBoundingClientRect();
+    const fx = fromRect.left - innerRect.left + fromRect.width / 2;
+    const fy = fromRect.bottom - innerRect.top;
+
+    toCards.forEach(toCard => {
+      const toRect = toCard.getBoundingClientRect();
+      const tx = toRect.left - innerRect.left + toRect.width / 2;
+      const ty = toRect.top - innerRect.top;
+
+      const isPlaceholder = toCard.classList.contains('placeholder');
+      const cx1 = fx, cy1 = fy + (ty - fy) * 0.5;
+      const cx2 = tx, cy2 = fy + (ty - fy) * 0.5;
+
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', `M${fx},${fy} C${cx1},${cy1} ${cx2},${cy2} ${tx},${ty}`);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', isPlaceholder ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.35)');
+      path.setAttribute('stroke-width', '1.5');
+      if (isPlaceholder) path.setAttribute('stroke-dasharray', '5,4');
+      svg.appendChild(path);
+    });
+  }
 }
 
 function parseTimeMin(t) {
