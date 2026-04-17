@@ -1002,6 +1002,31 @@ function buildBracketView(allGames, tournamentId, team, h2h) {
     drawBracketLines(inner, rounds, roundNums);
   });
 
+  // Custom pinch-to-zoom: native browser zoom doesn't reach inside overflow:auto containers on iOS
+  let _pinchStartDist = null, _pinchStartScale = 1, _pinchScale = 1;
+  wrap.addEventListener('touchstart', e => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      _pinchStartDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      _pinchStartScale = _pinchScale;
+    }
+  }, { passive: false });
+  wrap.addEventListener('touchmove', e => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      _pinchScale = Math.min(1.5, Math.max(0.25, _pinchStartScale * dist / _pinchStartDist));
+      inner.style.transform = `scale(${_pinchScale})`;
+      inner.style.transformOrigin = 'top left';
+    }
+  }, { passive: false });
+
   return wrap;
 }
 
@@ -1014,6 +1039,7 @@ function drawBracketLines(inner, rounds, roundNums) {
 
   const steps = inner.querySelectorAll('.bracket-step');
   const stepArr = Array.from(steps);
+  const R = 6; // corner radius
 
   for (let i = 0; i < stepArr.length - 1; i++) {
     const fromStep = stepArr[i];
@@ -1024,20 +1050,29 @@ function drawBracketLines(inner, rounds, roundNums) {
 
     const fromCard = fromCards[fromCards.length - 1];
     const fromRect = fromCard.getBoundingClientRect();
-    const fx = fromRect.left - innerRect.left + fromRect.width / 2;
-    const fy = fromRect.bottom - innerRect.top;
+    // Route through the gap: exit bottom-center of source, go to right edge, drop down, enter target top
+    const fx   = fromRect.left - innerRect.left + fromRect.width / 2;
+    const fy   = fromRect.bottom - innerRect.top;
+    const gx   = fromRect.right - innerRect.left + 8; // midpoint of column gap
 
     toCards.forEach(toCard => {
       const toRect = toCard.getBoundingClientRect();
-      const tx = toRect.left - innerRect.left + toRect.width / 2;
-      const ty = toRect.top - innerRect.top;
-
+      const tx  = toRect.left - innerRect.left + toRect.width / 2;
+      const ty  = toRect.top - innerRect.top;
       const isPlaceholder = toCard.classList.contains('placeholder');
-      const cx1 = fx, cy1 = fy + (ty - fy) * 0.5;
-      const cx2 = tx, cy2 = fy + (ty - fy) * 0.5;
+
+      // Orthogonal path with rounded corners:
+      // down → right (to gap) → down (through gap) → right (to target center) → down (to card top)
+      const d = `M ${fx},${fy}
+        V ${fy + R}
+        H ${gx - R}
+        Q ${gx},${fy + R} ${gx},${fy + 2 * R}
+        V ${ty - R}
+        Q ${gx},${ty} ${gx + R},${ty}
+        H ${tx}`;
 
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', `M${fx},${fy} C${cx1},${cy1} ${cx2},${cy2} ${tx},${ty}`);
+      path.setAttribute('d', d);
       path.setAttribute('fill', 'none');
       path.setAttribute('stroke', isPlaceholder ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.35)');
       path.setAttribute('stroke-width', '1.5');
@@ -1162,7 +1197,7 @@ function buildUpcomingCard(g, tournamentId, team, h2h) {
     ? `<div class="path-banner lose-path">↓ If We Lose</div>`
     : '';
 
-  const possiblePill = g.placeholder ? `<span class="placeholder-pill">Possible</span>` : '';
+  const possiblePill = '';
 
   let body = `${gameNumBadge}${pathBanner}
     <div class="game-card-header">
