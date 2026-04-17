@@ -962,35 +962,24 @@ function buildBracketView(allGames, tournamentId, team, h2h) {
       return (o[a.path] ?? 0) - (o[b.path] ?? 0);
     });
 
-    // Last confirmed game from the previous step — used for cross-step break tiles
-    const prevOrdered = r > roundNums[0]
-      ? [...(rounds[r - 1] || [])].sort((a, b) => {
-          const o = { undefined: 0, null: 0, win: 1, lose: 2 };
-          return (o[a.path] ?? 0) - (o[b.path] ?? 0);
-        })
-      : [];
-    const lastPrevConfirmed = [...prevOrdered].reverse().find(g2 => g2.time && !g2.placeholder) || null;
-
     ordered.forEach((g, i) => {
-      let dur = null;
-      if (i === 0 && lastPrevConfirmed) {
-        // Cross-step: gap from last confirmed game in previous step to this game
-        dur = breakDuration(lastPrevConfirmed.time, g.time, lastPrevConfirmed.date, g.date);
-      } else if (i > 0) {
-        // Within-step: gap between consecutive games in this step
-        dur = breakDuration(ordered[i - 1].time, g.time, ordered[i - 1].date, g.date);
+      // Within-step break tile (between stacked win/lose cards in the same column)
+      if (i > 0) {
+        const dur = breakDuration(ordered[i - 1].time, g.time, ordered[i - 1].date, g.date);
+        if (dur) {
+          const bt = document.createElement('div');
+          bt.className = 'break-tile';
+          bt.innerHTML = `<div class="break-inner"><div class="break-label">Break</div><div class="break-duration">${dur}</div></div>`;
+          step.appendChild(bt);
+        }
       }
-      if (dur) {
-        const bt = document.createElement('div');
-        bt.className = 'break-tile';
-        bt.innerHTML = `<div class="break-inner"><div class="break-label">Break</div><div class="break-duration">${dur}</div></div>`;
-        step.appendChild(bt);
-      }
-      if (g.result) {
-        step.appendChild(buildResultCard(g, h2h));
-      } else {
-        step.appendChild(buildUpcomingCard(g, tournamentId, team, h2h));
-      }
+      const card = g.result
+        ? buildResultCard(g, h2h)
+        : buildUpcomingCard(g, tournamentId, team, h2h);
+      // Store time/date so drawBracketLines can compute break durations on the line
+      card.dataset.gameTime = g.time || '';
+      card.dataset.gameDate = g.date || '';
+      step.appendChild(card);
     });
 
     inner.appendChild(step);
@@ -1039,7 +1028,6 @@ function drawBracketLines(inner, rounds, roundNums) {
 
   const steps = inner.querySelectorAll('.bracket-step');
   const stepArr = Array.from(steps);
-  const R = 6; // corner radius
 
   for (let i = 0; i < stepArr.length - 1; i++) {
     const fromStep = stepArr[i];
@@ -1048,36 +1036,71 @@ function drawBracketLines(inner, rounds, roundNums) {
     const toCards   = toStep.querySelectorAll('.game-card');
     if (!fromCards.length || !toCards.length) continue;
 
+    // Source: last card in step, exit from its right-center
     const fromCard = fromCards[fromCards.length - 1];
     const fromRect = fromCard.getBoundingClientRect();
-    // Route through the gap: exit bottom-center of source, go to right edge, drop down, enter target top
-    const fx   = fromRect.left - innerRect.left + fromRect.width / 2;
-    const fy   = fromRect.bottom - innerRect.top;
-    const gx   = fromRect.right - innerRect.left + 8; // midpoint of column gap
+    const sx = fromRect.right - innerRect.left;
+    const sy = fromRect.top   - innerRect.top + fromRect.height / 2;
 
     toCards.forEach(toCard => {
       const toRect = toCard.getBoundingClientRect();
-      const tx  = toRect.left - innerRect.left + toRect.width / 2;
-      const ty  = toRect.top - innerRect.top;
+      // Target: enter at top-center of card
+      const tx = toRect.left  - innerRect.left + toRect.width / 2;
+      const ty = toRect.top   - innerRect.top;
       const isPlaceholder = toCard.classList.contains('placeholder');
 
-      // Orthogonal path with rounded corners:
-      // down → right (to gap) → down (through gap) → right (to target center) → down (to card top)
-      const d = `M ${fx},${fy}
-        V ${fy + R}
-        H ${gx - R}
-        Q ${gx},${fy + R} ${gx},${fy + 2 * R}
-        V ${ty - R}
-        Q ${gx},${ty} ${gx + R},${ty}
-        H ${tx}`;
+      // Smooth bezier: exit horizontally right from source, arrive vertically at target top
+      const cpDx = (tx - sx) * 0.55;
+      const cpDy = (ty - sy) * 0.55;
+      const d = `M ${sx},${sy} C ${sx + cpDx},${sy} ${tx},${ty - cpDy} ${tx},${ty}`;
 
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', d);
       path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', isPlaceholder ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.35)');
+      path.setAttribute('stroke', isPlaceholder ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.4)');
       path.setAttribute('stroke-width', '1.5');
       if (isPlaceholder) path.setAttribute('stroke-dasharray', '5,4');
       svg.appendChild(path);
+
+      // Break indicator on the line at t=0.5 of the bezier
+      const fromTime = fromCard.dataset.gameTime;
+      const fromDate = fromCard.dataset.gameDate;
+      const toTime   = toCard.dataset.gameTime;
+      const toDate   = toCard.dataset.gameDate;
+      const dur = breakDuration(fromTime, toTime, fromDate, toDate);
+      if (dur && !isPlaceholder) {
+        // Cubic bezier midpoint at t=0.5
+        const P1x = sx + cpDx, P1y = sy;
+        const P2x = tx,        P2y = ty - cpDy;
+        const mx = 0.125*sx + 0.375*P1x + 0.375*P2x + 0.125*tx;
+        const my = 0.125*sy + 0.375*P1y + 0.375*P2y + 0.125*ty;
+
+        const pillW = dur.length * 6.5 + 16;
+        const pillH = 18;
+
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', mx - pillW / 2);
+        rect.setAttribute('y', my - pillH / 2);
+        rect.setAttribute('width', pillW);
+        rect.setAttribute('height', pillH);
+        rect.setAttribute('rx', 9);
+        rect.setAttribute('fill', '#1a1a1a');
+        rect.setAttribute('stroke', 'rgba(255,255,255,0.2)');
+        rect.setAttribute('stroke-width', '1');
+        svg.appendChild(rect);
+
+        const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        txt.setAttribute('x', mx);
+        txt.setAttribute('y', my + 4);
+        txt.setAttribute('text-anchor', 'middle');
+        txt.setAttribute('font-size', '10');
+        txt.setAttribute('font-weight', '700');
+        txt.setAttribute('font-family', '-apple-system, sans-serif');
+        txt.setAttribute('fill', 'rgba(255,255,255,0.6)');
+        txt.setAttribute('letter-spacing', '0.03em');
+        txt.textContent = dur;
+        svg.appendChild(txt);
+      }
     });
   }
 }
