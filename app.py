@@ -258,13 +258,21 @@ def _parse_tier(team_name: str):
     return None
 
 def friendly_team_name(team_name: str, sheet: str):
-    """'TROJAN GOLD' + '16U BOYS PLATINUM-11 TEAMS' → 'Trojan Gold · Boys 16U'."""
+    """'TROJAN GOLD' + '16U BOYS PLATINUM-11 TEAMS' → 'Trojan Gold · Boys 16U'.
+    Also strips embedded age/gender words that Kahuna includes in the team name itself,
+    e.g. 'TROJAN 16 BOYS 19U CARDINAL' → 'Trojan 16 Cardinal · Boys 19U'."""
     gender, age = _parse_sheet(sheet)
-    name = team_name.strip().title()
+    # Strip embedded age/gender words from the team name (Kahuna includes them)
+    name = team_name.strip()
+    if gender:
+        name = _GENDER_BOYS.sub("", name) if gender == "Boys" else name
+        name = _GENDER_GIRLS.sub("", name) if gender == "Girls" else name
+        name = _GENDER_COED.sub("", name) if gender == "Coed" else name
+    if age:
+        name = re.sub(rf"\b{re.escape(age)}\b", "", name, flags=re.IGNORECASE)
+    name = re.sub(r"\s{2,}", " ", name).strip().title()
     age_gender = " ".join(p for p in [gender, age] if p)
-    if age_gender and age_gender.upper() not in team_name.upper():
-        return f"{name} · {age_gender}"
-    return name or None
+    return f"{name} · {age_gender}" if age_gender else name or None
 
 def _team_sort_key(team: dict):
     """Sort: Boys before Girls, age desc (18U→10U), tier Gold→Cardinal→Silver."""

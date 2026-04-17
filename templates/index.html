@@ -241,9 +241,6 @@
     .fork-opponent { font-size: 14px; font-weight: 700; color: var(--white); line-height: 1.3; margin-bottom: 2px; }
     .fork-when { font-size: 12px; color: var(--muted); }
 
-    /* ── Game number badge ── */
-    .game-num-badge { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); padding: 10px 14px 2px; }
-
     /* ── Path label on bracket cards ── */
     .path-banner { padding: 10px 14px 8px; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; }
     .path-banner.win-path  { background: rgba(196,160,0,0.15);  color: var(--gold); border-bottom: 1px solid rgba(196,160,0,0.2); }
@@ -253,12 +250,11 @@
     .game-card.branch-card { margin-left: 16px; }
 
     /* ── Placeholder (possible future game) ── */
-    .game-card.placeholder { border-left-style: dashed; background: rgba(255,255,255,0.02); }
+    .game-card.placeholder { border-left-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.02); }
     .game-card.placeholder .opponent-name,
     .game-card.placeholder .game-card-datetime,
     .game-card.placeholder .location-link,
     .game-card.placeholder .vs { color: var(--muted); }
-    .placeholder-pill { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); background: rgba(255,255,255,0.07); border-radius: 20px; padding: 3px 9px; flex-shrink: 0; }
 
     /* ── Break tile ── */
     .break-tile { display: flex; align-items: center; gap: 10px; margin: -2px 0 10px; }
@@ -269,9 +265,11 @@
 
     /* ── Bracket staircase view ── */
     .bracket-stair-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -16px; padding: 0 16px 32px; }
-    .bracket-stair-inner { /* min-width set inline */ }
+    .bracket-stair-inner { position: relative; }
     .bracket-step { width: 340px; margin-bottom: 6px; }
-    .bracket-step-label { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); margin-bottom: 8px; }
+    .bracket-day-header { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); padding: 16px 0 8px; border-top: 1px solid var(--border); margin-top: 8px; }
+    .bracket-step.first-step .bracket-day-header { margin-top: 0; border-top: none; padding-top: 4px; }
+    .bracket-game-num-header { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); padding: 0 0 6px; }
 
     /* ── Place Predictor tile ── */
     .predictor-tile { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-top: 24px; }
@@ -902,13 +900,10 @@ async function loadGames(tournamentId, team, sheet) {
       s.shootout_losses  ? `${s.shootout_losses}SL` : null,
       s.reg_losses       ? `${s.reg_losses}L`  : null,
     ].filter(Boolean).join('–');
-    const DIV_NAMES = { D1:'Platinum', D2:'Gold', D3:'Silver', D4:'Bronze', D5:'Copper' };
     const mkRow = s => {
-      const divLabel = s.division ? `${s.division}${DIV_NAMES[s.division] ? ' ('+DIV_NAMES[s.division]+')' : ''}` : '';
       return `<div class="standings-row${s.is_mine ? ' mine' : ''}">
         <div class="standings-rank">${s.rank}</div>
         <div class="standings-name">${s.name}${s.is_mine ? ' ★' : ''}</div>
-        ${divLabel ? `<div class="standings-div">${divLabel}</div>` : ''}
         <div class="standings-pts">${s.points}</div>
         <div class="standings-record">${recStr(s)}</div>
       </div>`;
@@ -925,40 +920,82 @@ async function loadGames(tournamentId, team, sheet) {
   }
 }
 
+function _dayNum(d) {
+  if (!d) return 99;
+  const dl = d.toLowerCase();
+  if (dl.startsWith('sat')) return 0;
+  if (dl.startsWith('sun')) return 1;
+  return 2;
+}
+
 function buildBracketView(allGames, tournamentId, team, h2h) {
-  const STEP     = 356; // horizontal offset per game number (card width + gap)
-  const CARD_W   = 340;
+  const STEP   = 420; // card width 340 + gap 80
+  const CARD_W = 340;
 
   const rounds = {};
-  let maxRound = 0;
   allGames.forEach(g => {
     const n = g.game_num || 1;
     if (!rounds[n]) rounds[n] = [];
     rounds[n].push(g);
-    if (n > maxRound) maxRound = n;
   });
-  const roundNums = Object.keys(rounds).map(Number).sort((a, b) => a - b);
+
+  // Sort columns chronologically by first game's date+time
+  const roundNums = Object.keys(rounds).map(Number).sort((a, b) => {
+    const ga = rounds[a].find(g => g.date && g.time) || rounds[a][0];
+    const gb = rounds[b].find(g => g.date && g.time) || rounds[b][0];
+    const dn = _dayNum(ga?.date) - _dayNum(gb?.date);
+    if (dn !== 0) return dn;
+    const tm = (parseTimeMin(ga?.time) || 0) - (parseTimeMin(gb?.time) || 0);
+    if (tm !== 0) return tm;
+    return a - b;
+  });
+
+  const maxIdx = roundNums.length - 1;
 
   const wrap = document.createElement('div');
   wrap.className = 'bracket-stair-wrap';
 
   const inner = document.createElement('div');
   inner.className = 'bracket-stair-inner';
-  inner.style.minWidth = ((maxRound - 1) * STEP + CARD_W + 32) + 'px';
+  inner.style.minWidth = (maxIdx * STEP + CARD_W + 32) + 'px';
 
-  roundNums.forEach(r => {
+  let prevDayLabel = null;
+
+  roundNums.forEach((r, idx) => {
     const step = document.createElement('div');
-    step.className = 'bracket-step';
-    step.style.marginLeft = ((r - 1) * STEP) + 'px';
+    step.className = 'bracket-step' + (idx === 0 ? ' first-step' : '');
+    step.style.marginLeft = (idx * STEP) + 'px';
 
-    // No-path first, then win, then lose
-    const ordered = [...rounds[r]].sort((a, b) => {
+    // Day header when the day changes
+    const stepGames = rounds[r];
+    const firstGame = stepGames.find(g => g.date) || stepGames[0];
+    const dayLabel = firstGame?.date?.split(',')[0] || '';
+    if (dayLabel && dayLabel !== prevDayLabel) {
+      const dayHdr = document.createElement('div');
+      dayHdr.className = 'bracket-day-header';
+      dayHdr.textContent = dayLabel;
+      step.appendChild(dayHdr);
+      prevDayLabel = dayLabel;
+    }
+
+    // Game number label above all cards in this column (once)
+    const gameNum = stepGames[0]?.game_num;
+    if (gameNum) {
+      const numHdr = document.createElement('div');
+      numHdr.className = 'bracket-game-num-header';
+      numHdr.textContent = `Game ${gameNum}`;
+      step.appendChild(numHdr);
+    }
+
+    // No-path first, then win, then lose; within path sort by time
+    const ordered = [...stepGames].sort((a, b) => {
       const o = { undefined: 0, null: 0, win: 1, lose: 2 };
-      return (o[a.path] ?? 0) - (o[b.path] ?? 0);
+      const pathDiff = (o[a.path] ?? 0) - (o[b.path] ?? 0);
+      if (pathDiff !== 0) return pathDiff;
+      return (_dayNum(a.date) - _dayNum(b.date)) || ((parseTimeMin(a.time) || 0) - (parseTimeMin(b.time) || 0));
     });
 
     ordered.forEach((g, i) => {
-      // Within-step break tile (between stacked win/lose cards in the same column)
       if (i > 0) {
         const dur = breakDuration(ordered[i - 1].time, g.time, ordered[i - 1].date, g.date);
         if (dur) {
@@ -971,7 +1008,6 @@ function buildBracketView(allGames, tournamentId, team, h2h) {
       const card = g.result
         ? buildResultCard(g, h2h)
         : buildUpcomingCard(g, tournamentId, team, h2h);
-      // Store time/date so drawBracketLines can compute break durations on the line
       card.dataset.gameTime = g.time || '';
       card.dataset.gameDate = g.date || '';
       step.appendChild(card);
@@ -1058,36 +1094,31 @@ function drawBracketLines(inner, rounds, roundNums) {
     // Exit from right-center of source card
     const sx = fromRect.right - innerRect.left;
     const sy = fromRect.top - innerRect.top + fromRect.height / 2;
-    // Vertical highway runs in the column gap: 8px past the card right edge
-    const gx = sx + 8;
-    const R = 5; // corner radius
+    // Vertical highway runs in the center of the 80px column gap
+    const gx = sx + 40;
+    const R = 7; // corner radius
 
     toCards.forEach(toCard => {
       const toRect = toCard.getBoundingClientRect();
       // Enter at top-center of target card
       const tx = toRect.left - innerRect.left + toRect.width / 2;
       const ty = toRect.top - innerRect.top;
-      const isPlaceholder = toCard.classList.contains('placeholder');
 
       // Orthogonal path: right → into gap → down/up → into card top
       let d;
       if (Math.abs(ty - sy) < R * 2) {
-        // Same level: simple horizontal + vertical
         d = `M ${sx},${sy} H ${gx} V ${ty} H ${tx}`;
       } else if (ty > sy) {
-        // Going down
         d = `M ${sx},${sy} H ${gx - R} Q ${gx},${sy} ${gx},${sy + R} V ${ty - R} Q ${gx},${ty} ${gx + R},${ty} H ${tx}`;
       } else {
-        // Going up
         d = `M ${sx},${sy} H ${gx - R} Q ${gx},${sy} ${gx},${sy - R} V ${ty + R} Q ${gx},${ty} ${gx + R},${ty} H ${tx}`;
       }
 
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', d);
       path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', isPlaceholder ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.45)');
-      path.setAttribute('stroke-width', '1.5');
-      if (isPlaceholder) path.setAttribute('stroke-dasharray', '5,4');
+      path.setAttribute('stroke', 'rgba(255,255,255,0.5)');
+      path.setAttribute('stroke-width', '2.5');
       svg.appendChild(path);
 
       // Break pill on the vertical segment midpoint
@@ -1209,14 +1240,12 @@ function dayClass(dateStr) {
 function buildResultCard(g, h2h) {
   const card = document.createElement('div');
   card.className = `game-card ${dayClass(g.date)}`;
-  const gameNumBadge = g.game_num ? `<div class="game-num-badge">Game ${g.game_num}</div>` : '';
   const cls   = g.result === 'win' ? 'win' : g.result === 'loss' ? 'loss' : 'tie';
   const label = g.result === 'win' ? 'Win'  : g.result === 'loss' ? 'Loss' : 'Tie';
   card.innerHTML = `
-    ${gameNumBadge}
     <div class="game-card-header">
       <div class="game-card-meta">
-        <div class="game-card-datetime">${g.date} · ${g.time}</div>
+        <div class="game-card-datetime">${g.time || g.date}</div>
         ${locationHtml(g.location)}
       </div>
       <span class="result-pill ${cls}">${label}</span>
@@ -1235,24 +1264,18 @@ function buildUpcomingCard(g, tournamentId, team, h2h) {
   const isBranch = !!g.path;
   card.className = `game-card ${dayClass(g.date)}${g.placeholder ? ' placeholder' : ''}${isBranch ? ' branch-card' : ''}`;
 
-  const gameNumBadge = g.game_num ? `<div class="game-num-badge">Game ${g.game_num}</div>` : '';
-
-  // Path banner (win/lose bracket card label)
   const pathBanner = g.path === 'win'
     ? `<div class="path-banner win-path">↑ If We Win</div>`
     : g.path === 'lose'
     ? `<div class="path-banner lose-path">↓ If We Lose</div>`
     : '';
 
-  const possiblePill = '';
-
-  let body = `${gameNumBadge}${pathBanner}
+  let body = `${pathBanner}
     <div class="game-card-header">
       <div class="game-card-meta">
-        <div class="game-card-datetime">${g.date} · ${g.time}</div>
+        <div class="game-card-datetime">${g.time || g.date}</div>
         ${locationHtml(g.location)}
       </div>
-      ${possiblePill}
     </div>
     <div class="game-card-body">
       <div class="game-opponent"><span class="vs">vs</span><span class="opponent-name">${g.opponent}</span></div>
