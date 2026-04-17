@@ -241,6 +241,10 @@
     /* ── Path label on bracket cards ── */
     .path-banner { padding: 6px 14px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; background: rgba(255,255,255,0.06); color: var(--muted); }
 
+    /* ── Placeholder (possible future game) ── */
+    .game-card.placeholder { opacity: 0.55; border-left-style: dashed; }
+    .placeholder-pill { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); background: rgba(255,255,255,0.07); border-radius: 20px; padding: 3px 9px; flex-shrink: 0; }
+
     /* ── Yes/No ── */
     .yn-box { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 14px; }
     .yn-question { font-size: 14px; font-weight: 600; color: var(--white); margin-bottom: 12px; line-height: 1.3; }
@@ -901,7 +905,7 @@ function buildResultCard(g, h2h) {
 
 function buildUpcomingCard(g, tournamentId, team, h2h) {
   const card = document.createElement('div');
-  card.className = `game-card ${dayClass(g.date)}`;
+  card.className = `game-card ${dayClass(g.date)}${g.placeholder ? ' placeholder' : ''}`;
 
   // Path banner (win/lose bracket card label)
   const pathBanner = g.path === 'win'
@@ -910,12 +914,15 @@ function buildUpcomingCard(g, tournamentId, team, h2h) {
     ? `<div class="path-banner">↓ Lose</div>`
     : '';
 
+  const possiblePill = g.placeholder ? `<span class="placeholder-pill">Possible</span>` : '';
+
   let body = `${pathBanner}
     <div class="game-card-header">
       <div class="game-card-meta">
         <div class="game-card-datetime">${g.date} · ${g.time}</div>
         ${locationHtml(g.location)}
       </div>
+      ${possiblePill}
     </div>
     <div class="game-card-body">
       <div class="game-opponent"><span class="vs">vs</span><span class="opponent-name">${g.opponent}</span></div>

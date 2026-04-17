@@ -371,11 +371,27 @@ _FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)([A-Z])-', re.IGNORECASE)
 # Composite bracket slots like K4(1stG)- or K4(1stG) — group letter is inside parens
 _COMPOSITE_SLOT_RE = re.compile(r'\(\d+(?:st|nd|rd|th)([A-Z])\)', re.IGNORECASE)
 
+def _team_won(team: str, game: dict):
+    """True if team won, False if lost, None if not yet played."""
+    ws, ds = game.get("white_score"), game.get("dark_score")
+    if ws is None or ds is None:
+        return None
+    yours = ws if team_matches(game["white_team"], team) else ds
+    opp   = ds if team_matches(game["white_team"], team) else ws
+    if yours > opp: return True
+    if yours < opp: return False
+    return None
+
 def _expand_bracket_games(team: str, direct_games: list, division_games: list) -> list:
-    """Return bracket games the team can reach, limited to the same calendar day
-    as the most recent direct game.  Once results are recorded the team name
-    appears in later slots, making those games direct — so Sunday games unlock
-    automatically once Saturday results are known."""
+    """Return all bracket games the team can potentially reach, across all days.
+
+    Each returned game gets a 'placeholder' bool:
+      False = confirmed (result already determined this path)
+      True  = possible but not yet confirmed
+
+    Progressive narrowing: once a game is played, the losing path is dropped
+    so only the correct branch remains.
+    """
     if not direct_games:
         return []
     seen_ids = {g["game_id"] for g in direct_games}
@@ -388,49 +404,63 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             if m and team_matches(slot, team):
                 groups.add(m.group(1).upper())
 
-    # Game numbers reachable so far (for W#/L# chaining)
-    reachable_nums = set()
+    # game_num -> (game_dict, is_placeholder)
+    reachable: dict[str, tuple] = {}
     for g in direct_games:
         n = _game_num(g["game_id"])
         if n:
-            reachable_nums.add(n)
-
-    # Only expand within the same day as the latest direct game
-    latest_date = max((g["date"] for g in direct_games if g["date"]), default=None)
+            reachable[n] = (g, False)  # direct games are confirmed
 
     extras = []
-    while True:
-        found_any = False
+    changed = True
+    while changed:
+        changed = False
         for g in division_games:
             if g["game_id"] in seen_ids:
                 continue
-            # Don't cross into the next day until results resolve the slots
-            if latest_date and g["date"] and g["date"] > latest_date:
-                continue
-            added = False
+            add_placeholder = None  # None = skip, bool = add with this placeholder status
+
             for slot in (g["white_team"], g["dark_team"]):
-                slot = slot.strip()
-                # Pool-finish bracket: 1stA- or K4(1stG)- composite
-                fm = _FINISH_SLOT_RE.match(slot) or _COMPOSITE_SLOT_RE.search(slot)
+                s = slot.strip()
+
+                # Pool-finish bracket (1stA-, K4(1stG), etc.) — placeholder until Excel resolves
+                fm = _FINISH_SLOT_RE.match(s) or _COMPOSITE_SLOT_RE.search(s)
                 if fm and fm.group(1).upper() in groups:
-                    added = True
+                    add_placeholder = True
                     break
-                # W#/L# bracket: winner/loser of any reachable game
-                wm = _WL_SLOT_RE.match(slot)
+
+                # W#/L# bracket
+                wm = _WL_SLOT_RE.match(s)
                 if wm:
                     ref = re.search(r'(\d+)$', wm.group(1))
-                    if ref and str(int(ref.group(1))) in reachable_nums:
-                        added = True
-                        break
-            if added:
-                extras.append(g)
+                    if not ref:
+                        continue
+                    ref_num = str(int(ref.group(1)))
+                    if ref_num not in reachable:
+                        continue
+                    src_game, src_ph = reachable[ref_num]
+                    is_win_slot = s[0].upper() == 'W'
+                    won = _team_won(team, src_game)
+
+                    # Drop paths made impossible by a known result
+                    if won is True  and not is_win_slot: continue  # won → drop L# path
+                    if won is False and     is_win_slot: continue  # lost → drop W# path
+
+                    # Confirmed only if source is confirmed AND result is known
+                    ph = src_ph or (won is None)
+                    add_placeholder = ph if add_placeholder is None else (add_placeholder and ph)
+                    break
+
+            if add_placeholder is not None:
+                g_copy = dict(g)
+                g_copy["placeholder"] = add_placeholder
+                extras.append(g_copy)
                 seen_ids.add(g["game_id"])
                 n = _game_num(g["game_id"])
                 if n:
-                    reachable_nums.add(n)
-                found_any = True
-        if not found_any:
-            break
+                    reachable[n] = (g_copy, add_placeholder)
+                changed = True
+
     return extras
 
 
@@ -1007,7 +1037,8 @@ def api_games(tournament_id, team):
             "opponent":   describe_slot(opp_sl, dg),
             "your_color": color,
             "comments":   g["comments"],
-            "path":       bracket_path.get(gid),  # "win", "lose", or None
+            "path":        bracket_path.get(gid),   # "win", "lose", or None
+            "placeholder": g.get("placeholder", False),
         }
 
         winner_next, loser_next = find_next_games(g, dg)
