@@ -1028,6 +1028,14 @@ function buildBracketView(allGames, tournamentId, team, h2h) {
   let _pinchGesture = null;
 
   function _applyPZ() {
+    // Clamp so content never moves entirely off-screen
+    const ww = wrap.clientWidth;
+    const wh = wrap.clientHeight;
+    const scaledW = inner.scrollWidth * _pz.scale;
+    const scaledH = inner.scrollHeight * _pz.scale;
+    const minVisible = 80; // px of content that must stay visible
+    _pz.tx = Math.min(ww - minVisible, Math.max(minVisible - scaledW, _pz.tx));
+    _pz.ty = Math.min(wh - minVisible, Math.max(minVisible - scaledH, _pz.ty));
     inner.style.transformOrigin = '0 0';
     inner.style.transform = `translate(${_pz.tx}px,${_pz.ty}px) scale(${_pz.scale})`;
   }
