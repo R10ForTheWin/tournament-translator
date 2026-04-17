@@ -83,12 +83,17 @@ FILE_MAP = {
 
 
 def _load_user_urls() -> dict:
-    # Env var takes priority — survives deploys (set in Railway dashboard)
     env_urls = os.environ.get("USER_URLS_JSON", "")
-    base = json.loads(env_urls) if env_urls else {}
-    if os.path.exists(USER_URLS_FILE):
-        with open(USER_URLS_FILE) as f:
-            base.update(json.load(f))  # file overrides env (phone UI wins)
+    try:
+        base = json.loads(env_urls) if env_urls else {}
+    except Exception:
+        base = {}
+    try:
+        if os.path.exists(USER_URLS_FILE):
+            with open(USER_URLS_FILE) as f:
+                base.update(json.load(f))
+    except Exception:
+        pass
     return base
 
 def _save_user_url(tournament_id: str, url: str):
