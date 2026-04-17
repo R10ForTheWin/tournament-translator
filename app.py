@@ -1023,7 +1023,7 @@ def api_games(tournament_id, team):
     played_out   = []
     upcoming_out = []
 
-    for g in my_games:
+    for game_num, g in enumerate(my_games, 1):
         dg     = div_map.get(g["sheet"], [])
         gid    = g["game_id"]
         opp_sl = g["dark_team"] if team_matches(g["white_team"], team) else g["white_team"]
@@ -1037,7 +1037,8 @@ def api_games(tournament_id, team):
             "opponent":   describe_slot(opp_sl, dg),
             "your_color": color,
             "comments":   g["comments"],
-            "path":        bracket_path.get(gid),   # "win", "lose", or None
+            "game_num":    game_num,
+            "path":        bracket_path.get(gid),
             "placeholder": g.get("placeholder", False),
         }
 
