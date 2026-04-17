@@ -258,17 +258,13 @@ def _parse_tier(team_name: str):
     return None
 
 def friendly_team_name(team_name: str, sheet: str):
-    """'TROJAN GOLD' + '16U BOYS PLATINUM-11 TEAMS' → 'Trojan Boys 16U Gold'."""
+    """'TROJAN GOLD' + '16U BOYS PLATINUM-11 TEAMS' → 'Trojan Gold · Boys 16U'."""
     gender, age = _parse_sheet(sheet)
-    team_tier = _parse_tier(team_name)
-    display_tier = team_tier or _parse_tier(sheet)
-    club = None
-    if team_tier:
-        club_raw = re.sub(r'\b' + re.escape(team_tier) + r'\b', '', team_name, flags=re.IGNORECASE).strip()
-        if club_raw:
-            club = club_raw.title()
-    parts = [p for p in [club, gender, age, display_tier] if p]
-    return " ".join(parts) if len(parts) >= 2 else None
+    name = team_name.strip().title()
+    age_gender = " ".join(p for p in [gender, age] if p)
+    if age_gender and age_gender.upper() not in team_name.upper():
+        return f"{name} · {age_gender}"
+    return name or None
 
 def _team_sort_key(team: dict):
     """Sort: Boys before Girls, age desc (18U→10U), tier Gold→Cardinal→Silver."""
@@ -332,6 +328,10 @@ def _standings_for_group(group: str, division_games: list, extra_outcomes: dict 
     extra_outcomes = extra_outcomes or {}
     pool_games, team_stats = [], {}
 
+    # Pre-populate all known pool members so no team is missing from standings
+    for name in _pool_teams_for_group(group, division_games):
+        team_stats[name] = {"team": name, "wins": 0, "losses": 0, "gf": 0, "ga": 0}
+
     for g in division_games:
         wm = _POOL_SLOT_RE.match(g["white_team"].strip())
         dm = _POOL_SLOT_RE.match(g["dark_team"].strip())
@@ -340,9 +340,6 @@ def _standings_for_group(group: str, division_games: list, extra_outcomes: dict 
         if wm.group(1).upper() != group.upper() or dm.group(1).upper() != group.upper():
             continue
         pool_games.append(g)
-        for name in (wm.group(3).strip(), dm.group(3).strip()):
-            if name and name not in team_stats:
-                team_stats[name] = {"team": name, "wins": 0, "losses": 0, "gf": 0, "ga": 0}
 
     for g in pool_games:
         wm = _POOL_SLOT_RE.match(g["white_team"].strip())

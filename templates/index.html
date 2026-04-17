@@ -1053,45 +1053,52 @@ function drawBracketLines(inner, rounds, roundNums) {
     const toCards   = toStep.querySelectorAll('.game-card');
     if (!fromCards.length || !toCards.length) continue;
 
-    // Source: last card in step, exit from its right-center
     const fromCard = fromCards[fromCards.length - 1];
     const fromRect = fromCard.getBoundingClientRect();
+    // Exit from right-center of source card
     const sx = fromRect.right - innerRect.left;
-    const sy = fromRect.top   - innerRect.top + fromRect.height / 2;
+    const sy = fromRect.top - innerRect.top + fromRect.height / 2;
+    // Vertical highway runs in the column gap: 8px past the card right edge
+    const gx = sx + 8;
+    const R = 5; // corner radius
 
     toCards.forEach(toCard => {
       const toRect = toCard.getBoundingClientRect();
-      // Target: enter at top-center of card
-      const tx = toRect.left  - innerRect.left + toRect.width / 2;
-      const ty = toRect.top   - innerRect.top;
+      // Enter at top-center of target card
+      const tx = toRect.left - innerRect.left + toRect.width / 2;
+      const ty = toRect.top - innerRect.top;
       const isPlaceholder = toCard.classList.contains('placeholder');
 
-      // Smooth bezier: exit horizontally right from source, arrive vertically at target top
-      const cpDx = (tx - sx) * 0.55;
-      const cpDy = (ty - sy) * 0.55;
-      const d = `M ${sx},${sy} C ${sx + cpDx},${sy} ${tx},${ty - cpDy} ${tx},${ty}`;
+      // Orthogonal path: right → into gap → down/up → into card top
+      let d;
+      if (Math.abs(ty - sy) < R * 2) {
+        // Same level: simple horizontal + vertical
+        d = `M ${sx},${sy} H ${gx} V ${ty} H ${tx}`;
+      } else if (ty > sy) {
+        // Going down
+        d = `M ${sx},${sy} H ${gx - R} Q ${gx},${sy} ${gx},${sy + R} V ${ty - R} Q ${gx},${ty} ${gx + R},${ty} H ${tx}`;
+      } else {
+        // Going up
+        d = `M ${sx},${sy} H ${gx - R} Q ${gx},${sy} ${gx},${sy - R} V ${ty + R} Q ${gx},${ty} ${gx + R},${ty} H ${tx}`;
+      }
 
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', d);
       path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', isPlaceholder ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.4)');
+      path.setAttribute('stroke', isPlaceholder ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.45)');
       path.setAttribute('stroke-width', '1.5');
       if (isPlaceholder) path.setAttribute('stroke-dasharray', '5,4');
       svg.appendChild(path);
 
-      // Break indicator on the line at t=0.5 of the bezier
+      // Break pill on the vertical segment midpoint
       const fromTime = fromCard.dataset.gameTime;
       const fromDate = fromCard.dataset.gameDate;
       const toTime   = toCard.dataset.gameTime;
       const toDate   = toCard.dataset.gameDate;
       const dur = breakDuration(fromTime, toTime, fromDate, toDate);
-      if (dur && !isPlaceholder) {
-        // Cubic bezier midpoint at t=0.5
-        const P1x = sx + cpDx, P1y = sy;
-        const P2x = tx,        P2y = ty - cpDy;
-        const mx = 0.125*sx + 0.375*P1x + 0.375*P2x + 0.125*tx;
-        const my = 0.125*sy + 0.375*P1y + 0.375*P2y + 0.125*ty;
-
+      if (dur) {
+        const mx = gx;
+        const my = (sy + ty) / 2;
         const pillW = dur.length * 6.5 + 16;
         const pillH = 18;
 
@@ -1163,7 +1170,7 @@ async function loadPlacePredictor(container, tournamentId, team, sheet) {
       const isCurrent = r.rank === p.current_rank;
       const barW = Math.round((r.pct / maxPct) * 100);
       return `<div class="predictor-row${isCurrent ? ' current' : ''}">
-        <div class="predictor-rank">${r.label} in Pool</div>
+        <div class="predictor-rank">${r.label} Place</div>
         <div class="predictor-bar-wrap"><div class="predictor-bar" style="width:${barW}%"></div></div>
         <div class="predictor-pct">${r.pct}%</div>
       </div>`;
