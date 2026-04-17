@@ -3,6 +3,7 @@ Tournament Translator — Flask app
 """
 import os, re, json, glob, io, time, base64
 from datetime import datetime, date
+from zoneinfo import ZoneInfo
 from functools import lru_cache
 import requests
 from flask import Flask, render_template, jsonify, request, abort
@@ -768,7 +769,7 @@ def index():
 
 @app.route("/api/tournaments")
 def api_tournaments():
-    today = date.today()
+    today = datetime.now(ZoneInfo('America/Los_Angeles')).date()
     out = []
     for t in KNOWN_TOURNAMENTS:
         excel = find_excel(t["id"])

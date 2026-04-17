@@ -673,53 +673,43 @@ async function loadTeams(tournament) {
     return;
   }
 
-  // Group by age group
-  const groups = {};
-  teams.forEach(t => {
-    const ag = ageGroupOf(t.friendly || t.name);
-    if (!groups[ag]) groups[ag] = [];
-    groups[ag].push(t);
-  });
-
-  const agKeys = Object.keys(groups);
-
-  // If only one age group with one team — skip straight to games
-  if (agKeys.length === 1 && groups[agKeys[0]].length === 1) {
-    const t = groups[agKeys[0]][0];
+  // Skip straight to games if only one team
+  if (teams.length === 1) {
+    const t = teams[0];
     state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
     loadGames(tournament.id, t.name, t.sheet);
     return;
   }
 
-  // Build age-group rows
-  const rows = agKeys.map(ag => ({
-    label: ag,
-    onclick: () => {
-      const members = groups[ag];
-      if (members.length === 1) {
-        const t = members[0];
-        state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
-        loadGames(tournament.id, t.name, t.sheet);
-      } else {
-        // Show tier picker
-        const tierRows = members.map(t => {
-          const parts = (t.friendly || t.name).split(' ');
-          const tierLabel = TIER_WORDS.has(parts[parts.length-1].toLowerCase())
-            ? parts[parts.length-1] : t.name;
-          return {
-            label: tierLabel,
-            onclick: () => {
-              state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
-              loadGames(tournament.id, t.name, t.sheet);
-            }
-          };
-        });
-        renderTeamList(el, tournament, tierRows, ag);
-      }
-    }
-  }));
+  // Flat list: team name primary, division as subtitle
+  el.innerHTML = '';
+  const lbl = document.createElement('p');
+  lbl.className = 'section-label';
+  lbl.textContent = 'Select Your Team';
+  el.appendChild(lbl);
 
-  renderTeamList(el, tournament, rows, 'Select Age Group');
+  const list = document.createElement('div');
+  list.className = 'card-list';
+  teams.forEach(t => {
+    const teamLabel = t.name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+    const card = document.createElement('div');
+    card.className = 'list-card';
+    card.innerHTML = `
+      <div class="list-card-left">
+        <div class="list-card-dot dot-upcoming"></div>
+        <div class="list-card-info">
+          <div class="list-card-main">${teamLabel}</div>
+          ${t.friendly ? `<div class="list-card-sub" style="font-size:12px;color:var(--muted);margin-top:2px">${t.friendly}</div>` : ''}
+        </div>
+      </div>
+      <span class="list-arrow">›</span>`;
+    card.onclick = () => {
+      state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
+      loadGames(tournament.id, t.name, t.sheet);
+    };
+    list.appendChild(card);
+  });
+  el.appendChild(list);
 }
 
 // ── H2H helpers ────────────────────────────────────────────────────────────────
