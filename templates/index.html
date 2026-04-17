@@ -193,9 +193,11 @@
     .standings-div { font-size: 10px; font-weight: 700; color: var(--muted); background: rgba(255,255,255,0.07); border-radius: 4px; padding: 1px 5px; flex-shrink: 0; }
     .standings-gap { text-align: center; color: var(--muted); font-size: 12px; padding: 4px; border-top: 1px solid var(--border); }
 
-    .game-card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; margin-bottom: 12px; border: 1px solid var(--border); }
+    .game-card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; margin-bottom: 12px; border: 1px solid var(--border); border-left: 3px solid var(--cardinal); }
+    .game-card.day-sun { border-left-color: var(--gold); }
 
-    .game-card-header { padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); background: var(--card-header); }
+    .game-card-header { padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); background: rgba(157,34,53,0.12); }
+    .game-card.day-sun .game-card-header { background: rgba(196,160,0,0.10); }
     .game-card-meta { flex: 1; }
     .game-card-datetime { font-size: 13px; font-weight: 600; color: var(--white); }
     .game-card-location { font-size: 12px; color: var(--muted); margin-top: 1px; display: block; text-decoration: none; }
@@ -210,10 +212,10 @@
     .game-card-body { padding: 14px; }
     .game-opponent { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
     .vs { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; flex-shrink: 0; }
-    .opponent-name { font-size: 18px; font-weight: 700; color: var(--white); line-height: 1.2; }
+    .opponent-name { font-size: 20px; font-weight: 800; color: var(--gold); line-height: 1.2; }
     .game-score { font-size: 28px; font-weight: 900; color: var(--gold); letter-spacing: -1px; margin-bottom: 8px; }
     .game-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-    .tag { font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; color: var(--muted); font-weight: 500; }
+    .tag { font-size: 12px; background: rgba(157,34,53,0.15); border: 1px solid rgba(157,34,53,0.3); border-radius: 6px; padding: 3px 8px; color: rgba(255,255,255,0.7); font-weight: 500; }
     .h2h-line { font-size: 11px; color: var(--muted); margin: 2px 0 6px; letter-spacing: 0.02em; }
 
     /* ── Confidence ── */
@@ -864,9 +866,14 @@ async function loadGames(tournamentId, team, sheet) {
   }
 }
 
+function dayClass(dateStr) {
+  if (dateStr && dateStr.startsWith('Sunday')) return 'day-sun';
+  return 'day-sat';
+}
+
 function buildResultCard(g, h2h) {
   const card = document.createElement('div');
-  card.className = 'game-card';
+  card.className = `game-card ${dayClass(g.date)}`;
   const cls   = g.result === 'win' ? 'win' : g.result === 'loss' ? 'loss' : 'tie';
   const label = g.result === 'win' ? 'Win'  : g.result === 'loss' ? 'Loss' : 'Tie';
   card.innerHTML = `
@@ -888,7 +895,7 @@ function buildResultCard(g, h2h) {
 
 function buildUpcomingCard(g, tournamentId, team, h2h) {
   const card = document.createElement('div');
-  card.className = 'game-card';
+  card.className = `game-card ${dayClass(g.date)}`;
   let body = `
     <div class="game-card-header">
       <div class="game-card-meta">
