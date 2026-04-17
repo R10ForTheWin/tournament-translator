@@ -1145,7 +1145,7 @@ function drawBracketLines(inner, rounds, roundNums) {
         const firstTy = firstToRect.top - innerRect.top + firstToRect.height / 2;
         const mx = gx;
         const my = (sy + firstTy) / 2;
-        const pillW = pillDur.length * 6.5 + 16;
+        const pillW = (`BREAK ${pillDur}`).length * 6.5 + 16;
         const pillH = 18;
 
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -1168,7 +1168,7 @@ function drawBracketLines(inner, rounds, roundNums) {
         txt.setAttribute('font-family', '-apple-system, sans-serif');
         txt.setAttribute('fill', 'rgba(255,255,255,0.6)');
         txt.setAttribute('letter-spacing', '0.03em');
-        txt.textContent = pillDur;
+        txt.textContent = `BREAK ${pillDur}`;
         svg.appendChild(txt);
       }
     });
