@@ -327,8 +327,12 @@ _FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)([A-Z])-', re.IGNORECASE)
 _COMPOSITE_SLOT_RE = re.compile(r'\(\d+(?:st|nd|rd|th)([A-Z])\)', re.IGNORECASE)
 
 def _expand_bracket_games(team: str, direct_games: list, division_games: list) -> list:
-    """Return bracket games (not already in direct_games) that this team could reach.
-    Iterates until no new games are found so multi-round W#/L# chains resolve fully."""
+    """Return bracket games the team can reach, limited to the same calendar day
+    as the most recent direct game.  Once results are recorded the team name
+    appears in later slots, making those games direct — so Sunday games unlock
+    automatically once Saturday results are known."""
+    if not direct_games:
+        return []
     seen_ids = {g["game_id"] for g in direct_games}
 
     # Pool groups this team is seeded in (e.g. 'G' from 'G2-TROJAN SILVER')
@@ -346,21 +350,27 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
         if n:
             reachable_nums.add(n)
 
+    # Only expand within the same day as the latest direct game
+    latest_date = max((g["date"] for g in direct_games if g["date"]), default=None)
+
     extras = []
     while True:
         found_any = False
         for g in division_games:
             if g["game_id"] in seen_ids:
                 continue
+            # Don't cross into the next day until results resolve the slots
+            if latest_date and g["date"] and g["date"] > latest_date:
+                continue
             added = False
             for slot in (g["white_team"], g["dark_team"]):
                 slot = slot.strip()
-                # Pool-finish bracket: 1stA- (simple) or K4(1stG)- (composite)
+                # Pool-finish bracket: 1stA- or K4(1stG)- composite
                 fm = _FINISH_SLOT_RE.match(slot) or _COMPOSITE_SLOT_RE.search(slot)
                 if fm and fm.group(1).upper() in groups:
                     added = True
                     break
-                # W#/L# bracket: winner/loser of any game already reachable
+                # W#/L# bracket: winner/loser of any reachable game
                 wm = _WL_SLOT_RE.match(slot)
                 if wm:
                     ref = re.search(r'(\d+)$', wm.group(1))
