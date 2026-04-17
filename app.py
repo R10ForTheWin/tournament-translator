@@ -279,7 +279,7 @@ def _team_sort_key(team: dict):
 # ── Game helpers ───────────────────────────────────────────────────────────────
 
 _PREFIX_RE = re.compile(
-    r"^(?:\d+(?:st|nd|rd|th)[A-Z]-|[A-Z]\d+\([^)]+\)-|[WL]#[^-]+-|[A-Z]\d+-|\d+-)(.*)",
+    r"^(?:\d+(?:st|nd|rd|th)[A-Z]-|[A-Z]\d+\([^)]+\)-?|[WL]#[^-\s]+-?|[A-Z]\d+-|\d+-)(.*)",
     re.IGNORECASE,
 )
 
@@ -321,14 +321,17 @@ def _game_num(game_id: str):
     return str(int(m.group(1))) if m else None
 
 _POOL_SLOT_RE    = re.compile(r'^([A-Z])(\d+)-(.+)', re.IGNORECASE)
-_WL_SLOT_RE      = re.compile(r'^[WL]#([^-]+)-', re.IGNORECASE)
+_WL_SLOT_RE      = re.compile(r'^[WL]#([^-\s]+)', re.IGNORECASE)   # dash optional (bare W#2 before scores)
 _FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)([A-Z])-', re.IGNORECASE)
+# Composite bracket slots like K4(1stG)- or K4(1stG) — group letter is inside parens
+_COMPOSITE_SLOT_RE = re.compile(r'\(\d+(?:st|nd|rd|th)([A-Z])\)', re.IGNORECASE)
 
 def _expand_bracket_games(team: str, direct_games: list, division_games: list) -> list:
-    """Return bracket games (not already in direct_games) that this team could reach."""
+    """Return bracket games (not already in direct_games) that this team could reach.
+    Iterates until no new games are found so multi-round W#/L# chains resolve fully."""
     seen_ids = {g["game_id"] for g in direct_games}
 
-    # Which pool groups is this team seeded in?
+    # Pool groups this team is seeded in (e.g. 'G' from 'G2-TROJAN SILVER')
     groups = set()
     for g in direct_games:
         for slot in (g["white_team"], g["dark_team"]):
@@ -336,34 +339,43 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             if m and team_matches(slot, team):
                 groups.add(m.group(1).upper())
 
-    # Which game numbers from direct games can appear in W#/L# slots?
-    direct_nums = set()
+    # Game numbers reachable so far (for W#/L# chaining)
+    reachable_nums = set()
     for g in direct_games:
         n = _game_num(g["game_id"])
         if n:
-            direct_nums.add(n)
+            reachable_nums.add(n)
 
     extras = []
-    for g in division_games:
-        if g["game_id"] in seen_ids:
-            continue
-        for slot in (g["white_team"], g["dark_team"]):
-            slot = slot.strip()
-            # Pool-finish bracket: 1stA-, 2ndB-, etc.
-            fm = _FINISH_SLOT_RE.match(slot)
-            if fm and fm.group(1).upper() in groups:
+    while True:
+        found_any = False
+        for g in division_games:
+            if g["game_id"] in seen_ids:
+                continue
+            added = False
+            for slot in (g["white_team"], g["dark_team"]):
+                slot = slot.strip()
+                # Pool-finish bracket: 1stA- (simple) or K4(1stG)- (composite)
+                fm = _FINISH_SLOT_RE.match(slot) or _COMPOSITE_SLOT_RE.search(slot)
+                if fm and fm.group(1).upper() in groups:
+                    added = True
+                    break
+                # W#/L# bracket: winner/loser of any game already reachable
+                wm = _WL_SLOT_RE.match(slot)
+                if wm:
+                    ref = re.search(r'(\d+)$', wm.group(1))
+                    if ref and str(int(ref.group(1))) in reachable_nums:
+                        added = True
+                        break
+            if added:
                 extras.append(g)
                 seen_ids.add(g["game_id"])
-                break
-            # W#/L# bracket: winner/loser of a game we're already in
-            wm = _WL_SLOT_RE.match(slot)
-            if wm:
-                ref = re.search(r'(\d+)$', wm.group(1))
-                if ref and str(int(ref.group(1))) in direct_nums:
-                    extras.append(g)
-                    seen_ids.add(g["game_id"])
-                    direct_nums.add(_game_num(g["game_id"]) or "")
-                    break
+                n = _game_num(g["game_id"])
+                if n:
+                    reachable_nums.add(n)
+                found_any = True
+        if not found_any:
+            break
     return extras
 
 
@@ -376,7 +388,7 @@ def find_next_games(game, division_games):
         if g["game_id"] == game["game_id"]:
             continue
         for slot in (g["white_team"], g["dark_team"]):
-            pm = re.match(r"^([WL])#([^-]+)-", slot)
+            pm = re.match(r"^([WL])#([^-\s]+)", slot)
             if pm:
                 ref = re.search(r"(\d+)$", pm.group(2))
                 ref_num = str(int(ref.group(1))) if ref else pm.group(2)
