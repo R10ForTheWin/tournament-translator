@@ -100,7 +100,10 @@
 
 
     /* ── Main ── */
-    main { padding: 20px 16px; max-width: 540px; margin: 0 auto; }
+    main { padding: 20px max(16px, env(safe-area-inset-right)) 20px max(16px, env(safe-area-inset-left)); max-width: 540px; margin: 0 auto; }
+    @media (orientation: landscape) {
+      .bracket-stair-wrap { margin: 0 calc(-1 * max(16px, env(safe-area-inset-left))); padding: 0 max(16px, env(safe-area-inset-left)) 32px; }
+    }
 
     /* ── Section labels ── */
     .section-label {
@@ -959,16 +962,29 @@ function buildBracketView(allGames, tournamentId, team, h2h) {
       return (o[a.path] ?? 0) - (o[b.path] ?? 0);
     });
 
+    // Last confirmed game from the previous step — used for cross-step break tiles
+    const prevOrdered = r > roundNums[0]
+      ? [...(rounds[r - 1] || [])].sort((a, b) => {
+          const o = { undefined: 0, null: 0, win: 1, lose: 2 };
+          return (o[a.path] ?? 0) - (o[b.path] ?? 0);
+        })
+      : [];
+    const lastPrevConfirmed = [...prevOrdered].reverse().find(g2 => g2.time && !g2.placeholder) || null;
+
     ordered.forEach((g, i) => {
-      if (i > 0) {
-        const prev = ordered[i - 1];
-        const dur = breakDuration(prev.time, g.time, prev.date, g.date);
-        if (dur) {
-          const bt = document.createElement('div');
-          bt.className = 'break-tile';
-          bt.innerHTML = `<div class="break-inner"><div class="break-label">Break</div><div class="break-duration">${dur}</div></div>`;
-          step.appendChild(bt);
-        }
+      let dur = null;
+      if (i === 0 && lastPrevConfirmed) {
+        // Cross-step: gap from last confirmed game in previous step to this game
+        dur = breakDuration(lastPrevConfirmed.time, g.time, lastPrevConfirmed.date, g.date);
+      } else if (i > 0) {
+        // Within-step: gap between consecutive games in this step
+        dur = breakDuration(ordered[i - 1].time, g.time, ordered[i - 1].date, g.date);
+      }
+      if (dur) {
+        const bt = document.createElement('div');
+        bt.className = 'break-tile';
+        bt.innerHTML = `<div class="break-inner"><div class="break-label">Break</div><div class="break-duration">${dur}</div></div>`;
+        step.appendChild(bt);
       }
       if (g.result) {
         step.appendChild(buildResultCard(g, h2h));
@@ -976,22 +992,6 @@ function buildBracketView(allGames, tournamentId, team, h2h) {
         step.appendChild(buildUpcomingCard(g, tournamentId, team, h2h));
       }
     });
-
-    // Break tile between this step and the next (confirmed-to-confirmed cross-step)
-    const nextRound = rounds[r + 1];
-    if (nextRound) {
-      const lastGame = ordered[ordered.length - 1];
-      const confirmedNext = nextRound.find(g => g.time && !g.placeholder);
-      if (confirmedNext && lastGame.time && !lastGame.placeholder) {
-        const dur = breakDuration(lastGame.time, confirmedNext.time, lastGame.date, confirmedNext.date);
-        if (dur) {
-          const bt = document.createElement('div');
-          bt.className = 'break-tile';
-          bt.innerHTML = `<div class="break-inner"><div class="break-label">Break</div><div class="break-duration">${dur}</div></div>`;
-          step.appendChild(bt);
-        }
-      }
-    }
 
     inner.appendChild(step);
   });
