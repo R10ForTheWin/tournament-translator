@@ -293,27 +293,72 @@ def is_trojan(team_slot: str) -> bool:
 def team_matches(slot: str, name: str) -> bool:
     return name.upper() in strip_prefix(slot).upper()
 
-def describe_slot(slot: str) -> str:
-    """Return just the team name, stripping any bracket/pool prefix.
-    Only shows bracket notation when no team name is known yet."""
+def _title(s: str) -> str:
+    return s.title() if s else s
+
+def _pool_teams_for_group(group: str, division_games: list) -> list[str]:
+    """All team names seeded in a pool group, ordered by seed number."""
+    teams = {}
+    for g in division_games:
+        for slot in (g["white_team"], g["dark_team"]):
+            m = _POOL_SLOT_RE.match(slot.strip())
+            if m and m.group(1).upper() == group.upper():
+                seed = int(m.group(2))
+                name = m.group(3).strip()
+                if name:
+                    teams[seed] = name
+    return [teams[k] for k in sorted(teams)]
+
+def _game_by_num(num: str, division_games: list):
+    for g in division_games:
+        if _game_num(g["game_id"]) == num:
+            return g
+    return None
+
+def describe_slot(slot: str, division_games: list = None) -> str:
+    """Return a human-readable opponent label.
+    With division_games, resolves unresolved bracket slots to actual team names."""
     slot = slot.strip()
-    # strip_prefix extracts the team name after any bracket prefix (A1-, W#12-, H3(2ndC)-, etc.)
     name = strip_prefix(slot)
     if name != slot and name:
-        # A prefix was stripped and a real team name remains — just show the team name
-        return name
-    # No prefix was matched (slot IS the name), or prefix matched but no team name yet
-    # For unresolved bracket slots, show something readable
-    m = re.match(r"^([WL])#([^-]+)-\s*$", slot, re.IGNORECASE)
+        return name  # team name already present in slot
+
+    if division_games:
+        # W#N / L#N → look up the referenced game and name both possible teams
+        wm = re.match(r'^([WL])#([^-\s]+)', slot, re.IGNORECASE)
+        if wm:
+            wl = "Winner" if wm.group(1).upper() == "W" else "Loser"
+            ref = re.search(r'(\d+)$', wm.group(2))
+            if ref:
+                ref_game = _game_by_num(str(int(ref.group(1))), division_games)
+                if ref_game:
+                    t1 = strip_prefix(ref_game["white_team"])
+                    t2 = strip_prefix(ref_game["dark_team"])
+                    if t1 and t2:
+                        return f"{wl} of {_title(t1)} or {_title(t2)}"
+
+        # Pool-finish slot: 1stG- (simple) or K4(1stG) (composite)
+        gm = _COMPOSITE_SLOT_RE.search(slot) or _FINISH_SLOT_RE.match(slot)
+        if gm:
+            group = gm.group(1).upper()
+            ordinal_m = re.search(r'(\d+(?:st|nd|rd|th))', slot, re.IGNORECASE)
+            ordinal = ordinal_m.group(1) if ordinal_m else "?"
+            teams = _pool_teams_for_group(group, division_games)
+            if teams:
+                team_str = " or ".join(_title(t) for t in teams)
+                return f"{ordinal} in Pool {group} ({team_str})"
+
+    # Fallbacks when no division_games context
+    m = re.match(r"^([WL])#([^-\s]+)", slot, re.IGNORECASE)
     if m:
         wl = "Winner" if m.group(1).upper() == "W" else "Loser"
-        return f"{wl} of game #{m.group(2).strip()}"
-    m = re.match(r"^(\d+(?:st|nd|rd|th))([A-Z])-\s*$", slot, re.IGNORECASE)
+        return f"{wl} of game #{m.group(2).strip('#')}"
+    m = re.match(r"^(\d+(?:st|nd|rd|th))([A-Z])-?\s*$", slot, re.IGNORECASE)
     if m:
-        return f"{m.group(1)} place Pool {m.group(2)}"
-    m = re.match(r"^([A-Z]\d+)\(([^)]+)\)-\s*$", slot, re.IGNORECASE)
+        return f"{m.group(1)} in Pool {m.group(2)}"
+    m = re.match(r"^[A-Z]\d+\(([^)]+)\)-?\s*$", slot, re.IGNORECASE)
     if m:
-        return f"{m.group(2)} from {m.group(1)}"
+        return m.group(1)
     return slot
 
 def _game_num(game_id: str):
@@ -802,10 +847,10 @@ def _result_str(game, team) -> str:
     if yours < opp:  return "loss"
     return "tie"
 
-def _next_summary(g, team):
+def _next_summary(g, team, dg=None):
     opp = g["dark_team"] if team_matches(g["white_team"], team) else g["white_team"]
     return {
-        "opponent": describe_slot(opp),
+        "opponent": describe_slot(opp, dg),
         "date":     _fmt_date(g["date"]),
         "time":     _fmt_time(g["time"]),
         "location": g["location"],
@@ -934,6 +979,17 @@ def api_games(tournament_id, team):
 
     my_games.sort(key=lambda g: (g["date"] or date.min, g["time"] or datetime.min.time()))
 
+    # Pre-compute which games are the win/lose bracket path of another game in the list
+    my_game_ids = {g["game_id"] for g in my_games}
+    bracket_path = {}  # game_id -> "win" | "lose"
+    for g in my_games:
+        dg_pre = div_map.get(g["sheet"], [])
+        wn, ln = find_next_games(g, dg_pre)
+        if wn and wn["game_id"] in my_game_ids:
+            bracket_path[wn["game_id"]] = "win"
+        if ln and ln["game_id"] in my_game_ids:
+            bracket_path[ln["game_id"]] = "lose"
+
     played_out   = []
     upcoming_out = []
 
@@ -948,9 +1004,10 @@ def api_games(tournament_id, team):
             "date":       _fmt_date(g["date"]),
             "time":       _fmt_time(g["time"]),
             "location":   g["location"],
-            "opponent":   describe_slot(opp_sl),
+            "opponent":   describe_slot(opp_sl, dg),
             "your_color": color,
             "comments":   g["comments"],
+            "path":       bracket_path.get(gid),  # "win", "lose", or None
         }
 
         winner_next, loser_next = find_next_games(g, dg)
@@ -961,12 +1018,15 @@ def api_games(tournament_id, team):
             base["result"] = result
             next_game = winner_next if result == "win" else loser_next if result == "loss" else None
             if next_game:
-                base["next"] = _next_summary(next_game, team)
+                base["next"] = _next_summary(next_game, team, dg)
             played_out.append(base)
         else:
             scenarios = {}
-            if winner_next: scenarios["win"]  = _next_summary(winner_next, team)
-            if loser_next:  scenarios["lose"] = _next_summary(loser_next,  team)
+            # Suppress a scenario if that game is already shown as its own card
+            if winner_next and winner_next["game_id"] not in my_game_ids:
+                scenarios["win"]  = _next_summary(winner_next, team, dg)
+            if loser_next and loser_next["game_id"] not in my_game_ids:
+                scenarios["lose"] = _next_summary(loser_next,  team, dg)
             base["scenarios"] = scenarios if scenarios else None
             upcoming_out.append(base)
 
