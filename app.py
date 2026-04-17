@@ -555,14 +555,12 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             if m and team_matches(slot, team):
                 groups.add(m.group(1).upper())
 
-    MAX_BRACKET_DEPTH = 4  # show at most 4 rounds ahead of direct games
-
-    # game_num -> (game_dict, is_placeholder, depth)
+    # game_num -> (game_dict, is_placeholder)
     reachable: dict[str, tuple] = {}
     for g in direct_games:
         n = _game_num(g["game_id"])
         if n:
-            reachable[n] = (g, False, 0)  # direct games: depth 0
+            reachable[n] = (g, False)
 
     extras = []
     changed = True
@@ -572,16 +570,14 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             if g["game_id"] in seen_ids:
                 continue
             add_placeholder = None
-            add_depth = None
 
             for slot in (g["white_team"], g["dark_team"]):
                 s = slot.strip()
 
-                # Pool-finish bracket (1stA-, K4(1stG), etc.) — placeholder until Excel resolves
+                # Pool-finish bracket (1stA-, K4(1stG), etc.)
                 fm = _FINISH_SLOT_RE.match(s) or _COMPOSITE_SLOT_RE.search(s)
                 if fm and fm.group(1).upper() in groups:
                     add_placeholder = True
-                    add_depth = 1
                     break
 
                 # W#/L# bracket
@@ -593,9 +589,7 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     ref_num = str(int(ref.group(1)))
                     if ref_num not in reachable:
                         continue
-                    src_game, src_ph, src_depth = reachable[ref_num]
-                    if src_depth >= MAX_BRACKET_DEPTH:
-                        continue  # stop expanding beyond depth limit
+                    src_game, src_ph = reachable[ref_num]
                     is_win_slot = s[0].upper() == 'W'
                     won = _team_won(team, src_game)
 
@@ -604,13 +598,7 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     if won is False and     is_win_slot: continue
 
                     ph = src_ph or (won is None)
-                    new_depth = src_depth + 1
-                    if add_placeholder is None:
-                        add_placeholder = ph
-                        add_depth = new_depth
-                    else:
-                        add_placeholder = add_placeholder and ph
-                        add_depth = min(add_depth, new_depth)
+                    add_placeholder = ph if add_placeholder is None else (add_placeholder and ph)
                     break
 
             if add_placeholder is not None:
@@ -620,7 +608,7 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                 seen_ids.add(g["game_id"])
                 n = _game_num(g["game_id"])
                 if n:
-                    reachable[n] = (g_copy, add_placeholder, add_depth)
+                    reachable[n] = (g_copy, add_placeholder)
                 changed = True
 
     return extras
