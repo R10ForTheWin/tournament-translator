@@ -1,7 +1,7 @@
 """
 Tournament Translator — Flask app
 """
-import os, re, json, glob, io, time, base64
+import os, re, json, glob, io, time, base64, random
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 from functools import lru_cache
@@ -308,6 +308,135 @@ def _pool_teams_for_group(group: str, division_games: list) -> list[str]:
                 if name:
                     teams[seed] = name
     return [teams[k] for k in sorted(teams)]
+
+# ── Place Predictor ────────────────────────────────────────────────────────────
+
+def _ordinal(n: int) -> str:
+    return {1: "1st", 2: "2nd", 3: "3rd"}.get(n, f"{n}th")
+
+def _find_team_pool_group(team: str, division_games: list):
+    for g in division_games:
+        for slot in (g["white_team"], g["dark_team"]):
+            m = _POOL_SLOT_RE.match(slot.strip())
+            if m and team_matches(m.group(3), team):
+                return m.group(1).upper()
+    return None
+
+def _standings_for_group(group: str, division_games: list, extra_outcomes: dict = None) -> list:
+    """Pool standings with optional simulated outcomes for unplayed games."""
+    extra_outcomes = extra_outcomes or {}
+    pool_games, team_stats = [], {}
+
+    for g in division_games:
+        wm = _POOL_SLOT_RE.match(g["white_team"].strip())
+        dm = _POOL_SLOT_RE.match(g["dark_team"].strip())
+        if not wm or not dm:
+            continue
+        if wm.group(1).upper() != group.upper() or dm.group(1).upper() != group.upper():
+            continue
+        pool_games.append(g)
+        for name in (wm.group(3).strip(), dm.group(3).strip()):
+            if name and name not in team_stats:
+                team_stats[name] = {"team": name, "wins": 0, "losses": 0, "gf": 0, "ga": 0}
+
+    for g in pool_games:
+        wm = _POOL_SLOT_RE.match(g["white_team"].strip())
+        dm = _POOL_SLOT_RE.match(g["dark_team"].strip())
+        wt, dt = wm.group(3).strip(), dm.group(3).strip()
+        ws, ds = g.get("white_score"), g.get("dark_score")
+        gid = g["game_id"]
+
+        if g.get("played") and ws is not None and ds is not None:
+            white_wins, wgf, dgf = ws > ds, ws, ds
+        elif gid in extra_outcomes:
+            white_wins, wgf, dgf = extra_outcomes[gid], 0, 0
+        else:
+            continue
+
+        wkey = next((k for k in team_stats if team_matches(k, wt)), None)
+        dkey = next((k for k in team_stats if team_matches(k, dt)), None)
+        if not wkey or not dkey:
+            continue
+
+        if white_wins:
+            team_stats[wkey]["wins"]  += 1; team_stats[dkey]["losses"] += 1
+        else:
+            team_stats[dkey]["wins"]  += 1; team_stats[wkey]["losses"] += 1
+        team_stats[wkey]["gf"] += wgf; team_stats[wkey]["ga"] += dgf
+        team_stats[dkey]["gf"] += dgf; team_stats[dkey]["ga"] += wgf
+
+    return sorted(team_stats.values(),
+                  key=lambda s: (-s["wins"], -(s["gf"] - s["ga"]), -s["gf"]))
+
+
+def _pool_finish_probs(team: str, group: str, division_games: list) -> dict:
+    """Returns {rank (int): probability 0-1} for all possible pool finishes."""
+    def _in_group(g):
+        wm = _POOL_SLOT_RE.match(g["white_team"].strip())
+        dm = _POOL_SLOT_RE.match(g["dark_team"].strip())
+        return (wm and dm and wm.group(1).upper() == group.upper()
+                and dm.group(1).upper() == group.upper())
+    pool_games = [g for g in division_games if _in_group(g)]
+    remaining = [g for g in pool_games if not g.get("played")]
+
+    if not remaining:
+        standings = _standings_for_group(group, division_games)
+        rank = next((i + 1 for i, s in enumerate(standings) if team_matches(s["team"], team)), None)
+        return {rank: 1.0} if rank else {}
+
+    n = len(remaining)
+    universe = 2 ** n
+    masks = random.sample(range(universe), min(universe, 4096)) if universe > 4096 else range(universe)
+    rank_counts: dict = {}
+    for mask in masks:
+        outcomes = {remaining[i]["game_id"]: bool((mask >> i) & 1) for i in range(n)}
+        standings = _standings_for_group(group, division_games, outcomes)
+        rank = next((i + 1 for i, s in enumerate(standings) if team_matches(s["team"], team)), None)
+        if rank:
+            rank_counts[rank] = rank_counts.get(rank, 0) + 1
+
+    total = len(masks)
+    return {r: c / total for r, c in rank_counts.items()}
+
+
+@app.route("/api/place-predictor/<tournament_id>/<path:team>")
+def api_place_predictor(tournament_id, team):
+    excel = find_excel(tournament_id)
+    if not excel:
+        abort(404)
+
+    sheet = request.args.get("sheet")
+    games = _filter_by_dates(load_and_parse(excel), tournament_id)
+    division_games = [g for g in games if sheet is None or g["sheet"] == sheet]
+
+    group = _find_team_pool_group(team, division_games)
+    if not group:
+        return jsonify({"pool": None, "finish_probs": []})
+
+    standings   = _standings_for_group(group, division_games)
+    current_rank = next((i + 1 for i, s in enumerate(standings) if team_matches(s["team"], team)), None)
+    team_stats   = next((s for s in standings if team_matches(s["team"], team)), {})
+    finish_probs = _pool_finish_probs(team, group, division_games)
+
+    return jsonify({
+        "pool": {
+            "group":        group,
+            "current_rank": current_rank,
+            "total_teams":  len(standings),
+            "wins":         team_stats.get("wins", 0),
+            "losses":       team_stats.get("losses", 0),
+        },
+        "finish_probs": [
+            {"rank": r, "label": _ordinal(r), "pct": round(p * 100)}
+            for r, p in sorted(finish_probs.items())
+        ],
+        "all_teams": [
+            {"team": s["team"], "wins": s["wins"], "losses": s["losses"],
+             "gf": s["gf"], "ga": s["ga"], "is_mine": team_matches(s["team"], team)}
+            for s in standings
+        ],
+    })
+
 
 def _game_by_num(num: str, division_games: list):
     for g in division_games:
@@ -1023,7 +1152,17 @@ def api_games(tournament_id, team):
     played_out   = []
     upcoming_out = []
 
-    for game_num, g in enumerate(my_games, 1):
+    # Assign game numbers by time slot: win/lose branch games at the same slot share a number
+    _slot_num: dict[tuple, int] = {}
+    _slot_ctr = 0
+    for g in my_games:
+        key = (g["date"], g["time"])
+        if key not in _slot_num:
+            _slot_ctr += 1
+            _slot_num[key] = _slot_ctr
+
+    for g in my_games:
+        game_num = _slot_num[(g["date"], g["time"])]
         dg     = div_map.get(g["sheet"], [])
         gid    = g["game_id"]
         opp_sl = g["dark_team"] if team_matches(g["white_team"], team) else g["white_team"]

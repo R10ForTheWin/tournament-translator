@@ -20,7 +20,7 @@
       --card:          #1e1e1e;
       --card-header:   #171717;
       --dark:          #ffffff;
-      --muted:         #aeaeb2;
+      --muted:         #c4c4c8;
       --border:        rgba(255,255,255,0.09);
       --win-bg:        rgba(40,160,70,0.15);
       --win-text:      #5dba70;
@@ -95,9 +95,13 @@
       font-size: 15px; font-weight: 700;
       color: var(--white);
       text-transform: uppercase; letter-spacing: 0.05em;
-      padding-right: 48px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
+
+    /* View toggle (List / Bracket) */
+    .bracket-toggle { display: flex; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 2px; gap: 2px; flex-shrink: 0; }
+    .btog-btn { background: none; border: none; color: rgba(255,255,255,0.6); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; cursor: pointer; padding: 5px 9px; border-radius: 4px; font-family: inherit; transition: all 0.15s; }
+    .btog-btn.active { background: rgba(255,255,255,0.2); color: var(--white); }
 
     /* ── Main ── */
     main { padding: 20px 16px; max-width: 540px; margin: 0 auto; }
@@ -199,8 +203,8 @@
     .game-card-header { padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); background: rgba(157,34,53,0.12); }
     .game-card.day-sun .game-card-header { background: rgba(196,160,0,0.10); }
     .game-card-meta { flex: 1; }
-    .game-card-datetime { font-size: 13px; font-weight: 600; color: var(--white); }
-    .game-card-location { font-size: 12px; color: var(--muted); margin-top: 1px; display: block; text-decoration: none; }
+    .game-card-datetime { font-size: 15px; font-weight: 700; color: var(--white); }
+    .game-card-location { font-size: 13px; color: var(--muted); margin-top: 2px; display: block; text-decoration: none; }
     .game-card-location:hover { color: var(--white); }
     .venue-address { font-size: 11px; color: var(--muted); opacity: 0.7; margin-top: 2px; }
 
@@ -212,7 +216,7 @@
     .game-card-body { padding: 14px; }
     .game-opponent { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
     .vs { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; flex-shrink: 0; }
-    .opponent-name { font-size: 20px; font-weight: 800; color: var(--gold); line-height: 1.2; }
+    .opponent-name { font-size: 22px; font-weight: 800; color: var(--gold); line-height: 1.2; }
     .game-score { font-size: 28px; font-weight: 900; color: var(--gold); letter-spacing: -1px; margin-bottom: 8px; }
     .game-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
     .tag { font-size: 12px; background: rgba(157,34,53,0.15); border: 1px solid rgba(157,34,53,0.3); border-radius: 6px; padding: 3px 8px; color: rgba(255,255,255,0.7); font-weight: 500; }
@@ -250,8 +254,68 @@
     .game-card.branch-card { margin-left: 16px; }
 
     /* ── Placeholder (possible future game) ── */
-    .game-card.placeholder { opacity: 0.5; border-left-style: dashed; }
+    .game-card.placeholder { border-left-style: dashed; background: rgba(255,255,255,0.02); }
+    .game-card.placeholder .opponent-name,
+    .game-card.placeholder .game-card-datetime,
+    .game-card.placeholder .location-link,
+    .game-card.placeholder .vs { color: var(--muted); }
     .placeholder-pill { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); background: rgba(255,255,255,0.07); border-radius: 20px; padding: 3px 9px; flex-shrink: 0; }
+
+    /* ── Break tile ── */
+    .break-tile { display: flex; align-items: center; gap: 10px; margin: -2px 0 10px; }
+    .break-tile::before, .break-tile::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+    .break-inner { background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 20px; padding: 5px 14px; text-align: center; white-space: nowrap; }
+    .break-label { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+    .break-duration { font-size: 15px; font-weight: 700; color: var(--white); line-height: 1.1; }
+
+    /* ── Bracket view ── */
+    .bracket-view-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -16px; padding: 0 16px 8px; }
+    .bracket-track { display: flex; align-items: flex-start; padding-bottom: 8px; min-width: max-content; }
+    .bracket-col { display: flex; flex-direction: column; gap: 8px; width: 172px; flex-shrink: 0; padding: 0 5px; }
+    .bracket-col-label { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.12em; color: var(--gold); text-align: center; padding-bottom: 6px; }
+    .bracket-arrow { display: flex; align-items: flex-start; justify-content: center; width: 14px; font-size: 14px; color: rgba(255,255,255,0.15); flex-shrink: 0; padding-top: 30px; }
+    .bc { background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--cardinal); border-radius: 9px; overflow: hidden; }
+    .bc.day-sun { border-left-color: var(--gold); }
+    .bc.path-win  { border-left-color: var(--gold); }
+    .bc.path-lose { border-left-color: var(--cardinal); }
+    .bc.bc-ph { border-left-style: dashed; background: rgba(255,255,255,0.02); }
+    .bc-head { padding: 7px 9px 5px; background: rgba(157,34,53,0.1); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 4px; }
+    .bc.path-win .bc-head, .bc.day-sun .bc-head { background: rgba(196,160,0,0.1); }
+    .bc-time { font-size: 11px; font-weight: 600; color: var(--white); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bc-rpill { font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 10px; text-transform: uppercase; flex-shrink: 0; }
+    .bc-rpill.win  { background: var(--win-bg); color: var(--win-text); }
+    .bc-rpill.loss { background: var(--loss-bg); color: var(--loss-text); }
+    .bc-body { padding: 7px 9px 8px; }
+    .bc-path-lbl { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 2px; color: var(--muted); }
+    .bc.path-win  .bc-path-lbl { color: rgba(196,160,0,0.75); }
+    .bc.path-lose .bc-path-lbl { color: rgba(220,100,110,0.8); }
+    .bc-opp { font-size: 13px; font-weight: 800; color: var(--gold); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bc.bc-ph .bc-opp { color: var(--muted); }
+    .bc-score { font-size: 17px; font-weight: 900; color: var(--white); letter-spacing: -0.5px; margin-top: 1px; }
+
+    /* ── Place Predictor tile ── */
+    .predictor-tile { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-top: 24px; }
+    .predictor-header { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+    .predictor-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); }
+    .predictor-standing { font-size: 14px; font-weight: 700; color: var(--white); margin-top: 4px; }
+    .predictor-record { font-size: 13px; color: var(--muted); margin-top: 1px; }
+    .predictor-body { padding: 12px 16px 14px; }
+    .predictor-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .predictor-row:last-child { margin-bottom: 0; }
+    .predictor-rank { font-size: 13px; font-weight: 700; color: var(--white); width: 60px; flex-shrink: 0; }
+    .predictor-bar-wrap { flex: 1; height: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; }
+    .predictor-bar { height: 100%; border-radius: 4px; background: var(--gold); transition: width 0.5s ease; }
+    .predictor-pct { font-size: 13px; font-weight: 700; color: var(--muted); width: 36px; text-align: right; flex-shrink: 0; }
+    .predictor-row.current .predictor-rank { color: var(--gold); }
+    .predictor-row.current .predictor-bar { background: var(--cardinal); }
+    .predictor-row.current .predictor-pct { color: var(--white); }
+    .predictor-note { font-size: 11px; color: var(--muted); margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+    .predictor-all-teams { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+    .predictor-team-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
+    .predictor-team-rank { width: 20px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
+    .predictor-team-name { flex: 1; font-weight: 500; }
+    .predictor-team-name.mine { font-weight: 800; color: var(--gold); }
+    .predictor-team-rec { font-size: 12px; color: var(--muted); }
 
     /* ── Yes/No ── */
     .yn-box { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 14px; }
@@ -376,6 +440,10 @@
   <div class="subnav-inner">
     <button class="back-btn" id="back-btn">‹ Back</button>
     <div class="subnav-title" id="subnav-title"></div>
+    <div id="bracket-toggle" style="display:none" class="bracket-toggle">
+      <button class="btog-btn active" id="btog-list" onclick="setBracketMode(false)">List</button>
+      <button class="btog-btn" id="btog-bracket" onclick="setBracketMode(true)">Bracket</button>
+    </div>
   </div>
   <div class="gold-bar"></div>
 </div>
@@ -567,7 +635,16 @@ function updateSubnav() {
 }
 
 function goHome()       { showView('view-tournaments'); }
-function goTournament() { showView('view-teams'); updateSubnav(); }
+function goTournament() {
+  _bracketMode = false;
+  const vp = document.querySelector('meta[name=viewport]');
+  vp.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+  document.getElementById('bracket-toggle').style.display = 'none';
+  document.getElementById('btog-list').classList.add('active');
+  document.getElementById('btog-bracket').classList.remove('active');
+  showView('view-teams');
+  updateSubnav();
+}
 
 // ── Tournaments ────────────────────────────────────────────────────────────────
 async function loadTournaments() {
@@ -781,6 +858,23 @@ function h2hSummary(h2h, opponentRaw) {
 }
 
 // ── Games ──────────────────────────────────────────────────────────────────────
+let _bracketMode = false;
+let _gamesCache  = null;  // { tournamentId, team, sheet, data, h2h }
+
+function setBracketMode(on) {
+  _bracketMode = on;
+  document.getElementById('btog-list').classList.toggle('active', !on);
+  document.getElementById('btog-bracket').classList.toggle('active', on);
+  const vp = document.querySelector('meta[name=viewport]');
+  vp.content = on
+    ? 'width=device-width, initial-scale=1.0, user-scalable=yes'
+    : 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+  if (_gamesCache) {
+    const { tournamentId, team, sheet, data, h2h } = _gamesCache;
+    renderGamesContent(document.getElementById('games-content'), tournamentId, team, sheet, data, h2h);
+  }
+}
+
 async function loadGames(tournamentId, team, sheet) {
   const el = document.getElementById('games-content');
   el.innerHTML = '<div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round"><circle cx="18" cy="18" r="15" stroke-width="2" stroke-dasharray="60 35" /></svg></div>';
@@ -793,6 +887,15 @@ async function loadGames(tournamentId, team, sheet) {
   ]);
   const data = await gamesRes.json();
   const h2h  = h2hRes.ok ? await h2hRes.json() : null;
+
+  const hasUpcoming = data.upcoming && data.upcoming.length > 0;
+  document.getElementById('bracket-toggle').style.display = hasUpcoming ? 'flex' : 'none';
+  _gamesCache = { tournamentId, team, sheet, data, h2h };
+
+  renderGamesContent(el, tournamentId, team, sheet, data, h2h);
+}
+
+function renderGamesContent(el, tournamentId, team, sheet, data, h2h) {
   el.innerHTML = '';
 
   if (!data.played.length && !data.upcoming.length) {
@@ -832,15 +935,38 @@ async function loadGames(tournamentId, team, sheet) {
     } else {
       grp.innerHTML = '<div class="games-group-title">Results</div>';
     }
-    data.played.forEach(g => grp.appendChild(buildResultCard(g, h2h)));
+    if (!_bracketMode) data.played.forEach(g => grp.appendChild(buildResultCard(g, h2h)));
     el.appendChild(grp);
   }
+
   if (data.upcoming.length) {
-    const grp = document.createElement('div');
-    grp.className = 'games-group';
-    grp.innerHTML = '<div class="games-group-title">Upcoming Games</div>';
-    data.upcoming.forEach(g => grp.appendChild(buildUpcomingCard(g, tournamentId, team, h2h)));
-    el.appendChild(grp);
+    if (_bracketMode) {
+      const allGames = [
+        ...(data.played || []),
+        ...(data.upcoming || []),
+      ];
+      el.appendChild(buildBracketView(allGames));
+    } else {
+      const grp = document.createElement('div');
+      grp.className = 'games-group';
+      grp.innerHTML = '<div class="games-group-title">Upcoming Games</div>';
+      data.upcoming.forEach((g, i) => {
+        if (i > 0) {
+          const prev = data.upcoming[i - 1];
+          const dur = breakDuration(prev.time, g.time, prev.date, g.date);
+          if (dur) {
+            const bt = document.createElement('div');
+            bt.className = 'break-tile';
+            bt.innerHTML = `<div class="break-inner"><div class="break-label">Break</div><div class="break-duration">${dur}</div></div>`;
+            grp.appendChild(bt);
+          }
+        }
+        grp.appendChild(buildUpcomingCard(g, tournamentId, team, h2h));
+      });
+      el.appendChild(grp);
+    }
+
+    loadPlacePredictor(el, tournamentId, team, sheet);
   }
 
   // Futures season standings table
@@ -882,6 +1008,148 @@ async function loadGames(tournamentId, team, sheet) {
     </div>`;
     el.appendChild(grp);
   }
+}
+
+function buildBracketView(allGames) {
+  const wrap = document.createElement('div');
+  wrap.className = 'bracket-view-wrap';
+  const track = document.createElement('div');
+  track.className = 'bracket-track';
+
+  // Group by game_num
+  const rounds = {};
+  allGames.forEach(g => {
+    const n = g.game_num || 1;
+    if (!rounds[n]) rounds[n] = [];
+    rounds[n].push(g);
+  });
+  const roundNums = Object.keys(rounds).map(Number).sort((a, b) => a - b);
+
+  roundNums.forEach((r, idx) => {
+    if (idx > 0) {
+      const arrow = document.createElement('div');
+      arrow.className = 'bracket-arrow';
+      arrow.textContent = '›';
+      track.appendChild(arrow);
+    }
+    const col = document.createElement('div');
+    col.className = 'bracket-col';
+    const lbl = document.createElement('div');
+    lbl.className = 'bracket-col-label';
+    lbl.textContent = `Game ${r}`;
+    col.appendChild(lbl);
+
+    // No-path first, then win, then lose
+    const ordered = [...rounds[r]].sort((a, b) => {
+      const o = { undefined: 0, null: 0, win: 1, lose: 2 };
+      return (o[a.path] ?? 0) - (o[b.path] ?? 0);
+    });
+    ordered.forEach(g => col.appendChild(buildBracketCard(g)));
+    track.appendChild(col);
+  });
+
+  wrap.appendChild(track);
+  return wrap;
+}
+
+function buildBracketCard(g) {
+  const card = document.createElement('div');
+  const pathCls = g.path ? `path-${g.path}` : dayClass(g.date);
+  card.className = ['bc', pathCls, g.placeholder ? 'bc-ph' : ''].filter(Boolean).join(' ');
+
+  const day = g.date ? g.date.split(',')[0] : '';
+  const timeStr = [day, g.time].filter(Boolean).join(' ');
+  const pathLabel = g.path === 'win' ? 'If We Win' : g.path === 'lose' ? 'If We Lose' : '';
+
+  let rpill = '';
+  if (g.result) {
+    const rc = g.result === 'win' ? 'win' : g.result === 'loss' ? 'loss' : '';
+    rpill = `<span class="bc-rpill ${rc}">${g.result === 'win' ? 'W' : g.result === 'loss' ? 'L' : 'T'}</span>`;
+  }
+
+  card.innerHTML = `
+    <div class="bc-head">
+      <span class="bc-time">${timeStr || '—'}</span>
+      ${rpill}
+    </div>
+    <div class="bc-body">
+      ${pathLabel ? `<div class="bc-path-lbl">${pathLabel}</div>` : ''}
+      <div class="bc-opp">${g.opponent || '?'}</div>
+      ${g.score ? `<div class="bc-score">${g.score}</div>` : ''}
+    </div>`;
+  return card;
+}
+
+function parseTimeMin(t) {
+  if (!t) return null;
+  const m = t.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!m) return null;
+  let h = +m[1], min = +m[2], pm = m[3].toUpperCase() === 'PM';
+  if (pm && h !== 12) h += 12;
+  if (!pm && h === 12) h = 0;
+  return h * 60 + min;
+}
+
+function breakDuration(t1, t2, d1, d2) {
+  if (!t1 || !t2) return null;
+  if (d1 !== d2) return null;  // different days — no break tile
+  const m1 = parseTimeMin(t1), m2 = parseTimeMin(t2);
+  if (m1 === null || m2 === null) return null;
+  const diff = m2 - m1;
+  if (diff <= 0 || diff > 300) return null;  // negative or over 5 hours = skip
+  const h = Math.floor(diff / 60), m = diff % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}min`;
+  if (h > 0) return `${h}h`;
+  return `${m}min`;
+}
+
+async function loadPlacePredictor(container, tournamentId, team, sheet) {
+  try {
+    const qs = sheet ? `?sheet=${encodeURIComponent(sheet)}` : '';
+    const res = await fetch(`/api/place-predictor/${tournamentId}/${encodeURIComponent(team)}${qs}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.pool || !data.finish_probs.length) return;
+
+    const p = data.pool;
+    const ordFn = n => { const s=['th','st','nd','rd']; const v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); };
+    const standingLabel = `Currently ${ordFn(p.current_rank)} in Pool ${p.group}`;
+    const record = `${p.wins}W · ${p.losses}L`;
+    const maxPct = Math.max(...data.finish_probs.map(r => r.pct), 1);
+
+    const rows = data.finish_probs.map(r => {
+      const isCurrent = r.rank === p.current_rank;
+      const barW = Math.round((r.pct / maxPct) * 100);
+      return `<div class="predictor-row${isCurrent ? ' current' : ''}">
+        <div class="predictor-rank">${r.label} in Pool</div>
+        <div class="predictor-bar-wrap"><div class="predictor-bar" style="width:${barW}%"></div></div>
+        <div class="predictor-pct">${r.pct}%</div>
+      </div>`;
+    }).join('');
+
+    const teamRows = (data.all_teams || []).map((t, i) =>
+      `<div class="predictor-team-row">
+        <div class="predictor-team-rank">${i + 1}</div>
+        <div class="predictor-team-name${t.is_mine ? ' mine' : ''}">${t.team}</div>
+        <div class="predictor-team-rec">${t.wins}W · ${t.losses}L</div>
+      </div>`
+    ).join('');
+
+    const tile = document.createElement('div');
+    tile.className = 'predictor-tile';
+    tile.innerHTML = `
+      <div class="predictor-header">
+        <div class="predictor-title">Place Predictor</div>
+        <div class="predictor-standing">${standingLabel}</div>
+        <div class="predictor-record">${record}</div>
+      </div>
+      <div class="predictor-body">
+        ${rows}
+        ${teamRows ? `<div class="predictor-all-teams">${teamRows}</div>` : ''}
+        <div class="predictor-note">Based on equal probability for remaining pool games</div>
+      </div>`;
+    container.appendChild(tile);
+  } catch (e) { /* silent fail */ }
 }
 
 function dayClass(dateStr) {
