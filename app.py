@@ -1152,17 +1152,40 @@ def api_games(tournament_id, team):
     played_out   = []
     upcoming_out = []
 
-    # Assign game numbers by time slot: win/lose branch games at the same slot share a number
-    _slot_num: dict[tuple, int] = {}
-    _slot_ctr = 0
-    for g in my_games:
-        key = (g["date"], g["time"])
-        if key not in _slot_num:
-            _slot_ctr += 1
-            _slot_num[key] = _slot_ctr
+    # Assign game_num by bracket round (BFS) when bracket relationships exist,
+    # otherwise fall back to time-slot ordering for pool play.
+    if bracket_path:
+        # Build adjacency: predecessor game_id -> list of successor game_ids
+        _adj: dict[str, list] = {}
+        for g in my_games:
+            dg_pre = div_map.get(g["sheet"], [])
+            wn, ln = find_next_games(g, dg_pre)
+            for nxt in (wn, ln):
+                if nxt and nxt["game_id"] in my_game_ids:
+                    _adj.setdefault(g["game_id"], []).append(nxt["game_id"])
+        _game_round: dict[str, int] = {}
+        _queue = [(gid, 1) for gid in my_game_ids if gid not in bracket_path]
+        while _queue:
+            _gid, _r = _queue.pop(0)
+            if _gid in _game_round:
+                continue
+            _game_round[_gid] = _r
+            for _succ in _adj.get(_gid, []):
+                if _succ not in _game_round:
+                    _queue.append((_succ, _r + 1))
+        _game_num_map = _game_round
+    else:
+        _slot_num: dict[tuple, int] = {}
+        _slot_ctr = 0
+        for g in my_games:
+            key = (g["date"], g["time"])
+            if key not in _slot_num:
+                _slot_ctr += 1
+                _slot_num[key] = _slot_ctr
+        _game_num_map = {g["game_id"]: _slot_num[(g["date"], g["time"])] for g in my_games}
 
     for g in my_games:
-        game_num = _slot_num[(g["date"], g["time"])]
+        game_num = _game_num_map.get(g["game_id"], 1)
         dg     = div_map.get(g["sheet"], [])
         gid    = g["game_id"]
         opp_sl = g["dark_team"] if team_matches(g["white_team"], team) else g["white_team"]
