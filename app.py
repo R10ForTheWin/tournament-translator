@@ -320,6 +320,53 @@ def _game_num(game_id: str):
     m = re.search(r"(\d+)$", game_id)
     return str(int(m.group(1))) if m else None
 
+_POOL_SLOT_RE    = re.compile(r'^([A-Z])(\d+)-(.+)', re.IGNORECASE)
+_WL_SLOT_RE      = re.compile(r'^[WL]#([^-]+)-', re.IGNORECASE)
+_FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)([A-Z])-', re.IGNORECASE)
+
+def _expand_bracket_games(team: str, direct_games: list, division_games: list) -> list:
+    """Return bracket games (not already in direct_games) that this team could reach."""
+    seen_ids = {g["game_id"] for g in direct_games}
+
+    # Which pool groups is this team seeded in?
+    groups = set()
+    for g in direct_games:
+        for slot in (g["white_team"], g["dark_team"]):
+            m = _POOL_SLOT_RE.match(slot.strip())
+            if m and team_matches(slot, team):
+                groups.add(m.group(1).upper())
+
+    # Which game numbers from direct games can appear in W#/L# slots?
+    direct_nums = set()
+    for g in direct_games:
+        n = _game_num(g["game_id"])
+        if n:
+            direct_nums.add(n)
+
+    extras = []
+    for g in division_games:
+        if g["game_id"] in seen_ids:
+            continue
+        for slot in (g["white_team"], g["dark_team"]):
+            slot = slot.strip()
+            # Pool-finish bracket: 1stA-, 2ndB-, etc.
+            fm = _FINISH_SLOT_RE.match(slot)
+            if fm and fm.group(1).upper() in groups:
+                extras.append(g)
+                seen_ids.add(g["game_id"])
+                break
+            # W#/L# bracket: winner/loser of a game we're already in
+            wm = _WL_SLOT_RE.match(slot)
+            if wm:
+                ref = re.search(r'(\d+)$', wm.group(1))
+                if ref and str(int(ref.group(1))) in direct_nums:
+                    extras.append(g)
+                    seen_ids.add(g["game_id"])
+                    direct_nums.add(_game_num(g["game_id"]) or "")
+                    break
+    return extras
+
+
 def find_next_games(game, division_games):
     num = _game_num(game["game_id"])
     if not num:
@@ -829,8 +876,14 @@ def api_trojan_teams(tournament_id):
         if key not in deduped or t["_count"] > deduped[key]["_count"]:
             deduped[key] = t
 
-    teams = [{"name": t["name"], "sheet": t["sheet"], "friendly": t["friendly"]}
-             for t in deduped.values()]
+    def _team_fields(t):
+        gender, age = _parse_sheet(t["sheet"])
+        tier = _parse_tier(t["sheet"]) or _parse_tier(t["name"])
+        age_gender = " ".join(p for p in [gender, age] if p) or None
+        return {"name": t["name"], "sheet": t["sheet"], "friendly": t["friendly"],
+                "age_gender": age_gender, "tier": tier}
+
+    teams = [_team_fields(t) for t in deduped.values()]
     teams.sort(key=_team_sort_key)
     return jsonify(teams)
 
@@ -847,11 +900,17 @@ def api_games(tournament_id, team):
     my_games = [g for g in games
                 if (sheet is None or g["sheet"] == sheet)
                 and (team_matches(g["white_team"], team) or team_matches(g["dark_team"], team))]
-    my_games.sort(key=lambda g: (g["date"] or date.min, g["time"] or datetime.min.time()))
 
     div_map = {}
     for g in games:
         div_map.setdefault(g["sheet"], []).append(g)
+
+    # Expand to include bracket games (pool-finish and W#/L# slots) the team can reach
+    for sheet_key in {g["sheet"] for g in my_games}:
+        direct = [g for g in my_games if g["sheet"] == sheet_key]
+        my_games.extend(_expand_bracket_games(team, direct, div_map.get(sheet_key, [])))
+
+    my_games.sort(key=lambda g: (g["date"] or date.min, g["time"] or datetime.min.time()))
 
     played_out   = []
     upcoming_out = []
