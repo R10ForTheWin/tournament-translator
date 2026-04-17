@@ -446,38 +446,50 @@ def _game_by_num(num: str, division_games: list):
 
 def describe_slot(slot: str, division_games: list = None) -> str:
     """Return a human-readable opponent label.
-    With division_games, resolves unresolved bracket slots to actual team names."""
+    With division_games, resolves bracket slots to actual team names using standings."""
     slot = slot.strip()
     name = strip_prefix(slot)
     if name != slot and name:
-        return name  # team name already present in slot
+        return name  # team name already embedded in slot
 
     if division_games:
-        # W#N / L#N → look up the referenced game and name both possible teams
+        # W#N / L#N → resolve to actual winner/loser if game has been played
         wm = re.match(r'^([WL])#([^-\s]+)', slot, re.IGNORECASE)
         if wm:
-            wl = "Winner" if wm.group(1).upper() == "W" else "Loser"
+            want_winner = wm.group(1).upper() == "W"
             ref = re.search(r'(\d+)$', wm.group(2))
             if ref:
                 ref_game = _game_by_num(str(int(ref.group(1))), division_games)
                 if ref_game:
                     t1 = strip_prefix(ref_game["white_team"])
                     t2 = strip_prefix(ref_game["dark_team"])
-                    if t1 and t2:
+                    if ref_game.get("played") and ref_game.get("white_score") is not None:
+                        white_won = ref_game["white_score"] > ref_game["dark_score"]
+                        resolved = (t1 if white_won else t2) if want_winner else (t2 if white_won else t1)
+                        return _title(resolved)
+                    elif t1 and t2:
+                        wl = "Winner" if want_winner else "Loser"
                         return f"{wl} of {_title(t1)} or {_title(t2)}"
 
-        # Pool-finish slot: 1stG- (simple) or K4(1stG) (composite)
+        # Pool-finish slot: 1stB- (simple) or K4(1stB) (composite)
         gm = _COMPOSITE_SLOT_RE.search(slot) or _FINISH_SLOT_RE.match(slot)
         if gm:
             group = gm.group(1).upper()
+            rank_m = re.search(r'(\d+)', slot)
+            rank = int(rank_m.group(1)) if rank_m else None
             ordinal_m = re.search(r'(\d+(?:st|nd|rd|th))', slot, re.IGNORECASE)
             ordinal = ordinal_m.group(1) if ordinal_m else "?"
-            teams = _pool_teams_for_group(group, division_games)
-            if teams:
-                team_str = " or ".join(_title(t) for t in teams)
-                return f"{ordinal} in Pool {group} ({team_str})"
+            if rank:
+                standings = _standings_for_group(group, division_games)
+                if standings and len(standings) >= rank:
+                    any_played = any(s["wins"] > 0 or s["losses"] > 0 for s in standings)
+                    if any_played:
+                        return _title(standings[rank - 1]["team"])
+                    else:
+                        team_str = " or ".join(_title(s["team"]) for s in standings)
+                        return f"{ordinal} in Pool {group} ({team_str})"
 
-    # Fallbacks when no division_games context
+    # Fallbacks without division_games
     m = re.match(r"^([WL])#([^-\s]+)", slot, re.IGNORECASE)
     if m:
         wl = "Winner" if m.group(1).upper() == "W" else "Loser"
@@ -1152,24 +1164,54 @@ def api_games(tournament_id, team):
     played_out   = []
     upcoming_out = []
 
-    # Step 1: assign game_num by time-slot (preserves the staircase for sequential games)
+    # Build adjacency map: game_id -> unique successor game_ids in this team's game list
+    _adj: dict[str, list] = {}
+    for g in my_games:
+        dg_pre = div_map.get(g["sheet"], [])
+        wn, ln = find_next_games(g, dg_pre)
+        succs: list[str] = []
+        for nxt in (wn, ln):
+            if nxt and nxt["game_id"] in my_game_ids and nxt["game_id"] not in succs:
+                succs.append(nxt["game_id"])
+        if succs:
+            _adj[g["game_id"]] = succs
+
+    # Games that are connected in the bracket graph (have a predecessor or successor)
+    connected = {gid for gid in my_game_ids if gid in bracket_path or gid in _adj}
+
+    # BFS from bracket roots to assign bracket rounds
+    _bfs_round: dict[str, int] = {}
+    if connected:
+        _bfs_roots = [gid for gid in connected if gid not in bracket_path]
+        _bfs_q = [(gid, 1) for gid in _bfs_roots]
+        while _bfs_q:
+            _gid, _r = _bfs_q.pop(0)
+            if _gid in _bfs_round:
+                continue
+            _bfs_round[_gid] = _r
+            for _succ in _adj.get(_gid, []):
+                if _succ not in _bfs_round:
+                    _bfs_q.append((_succ, _r + 1))
+
+    # Time-slot ordering for isolated (pool play) games not connected to the bracket
+    isolated = [g for g in my_games if g["game_id"] not in connected]
     _slot_num: dict[tuple, int] = {}
     _slot_ctr = 0
-    for g in my_games:
+    for g in sorted(isolated, key=lambda g: (g.get("date", ""), g.get("time", "") or "")):
         key = (g["date"], g["time"])
         if key not in _slot_num:
             _slot_ctr += 1
             _slot_num[key] = _slot_ctr
-    _game_num_map = {g["game_id"]: _slot_num[(g["date"], g["time"])] for g in my_games}
 
-    # Step 2: merge win/lose paths that diverge from the same game into the same column
+    # Combine: pool slots first, then bracket rounds start after
+    _game_num_map: dict[str, int] = {}
     for g in my_games:
-        dg_pre = div_map.get(g["sheet"], [])
-        wn, ln = find_next_games(g, dg_pre)
-        if wn and ln and wn["game_id"] in _game_num_map and ln["game_id"] in _game_num_map:
-            merged = min(_game_num_map[wn["game_id"]], _game_num_map[ln["game_id"]])
-            _game_num_map[wn["game_id"]] = merged
-            _game_num_map[ln["game_id"]] = merged
+        gid = g["game_id"]
+        if gid in _bfs_round:
+            _game_num_map[gid] = _slot_ctr + _bfs_round[gid]
+        else:
+            key = (g["date"], g["time"])
+            _game_num_map[gid] = _slot_num.get(key, 1)
 
     for g in my_games:
         game_num = _game_num_map.get(g["game_id"], 1)
