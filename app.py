@@ -27,10 +27,16 @@ TURBO_ONEDRIVE_URL = "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQB7PJXtfzNsT74lTYhWp
 # Newport Spring Invite → OneDrive (older resid/authkey format, direct download)
 NEWPORT_ONEDRIVE_URL = "https://onedrive.live.com/download?resid=6F253EF3AFCFE1C8!66694&authkey=!AO8pyWY0qwL2sYE"
 
+# Kap7 → OneDrive (update URL each tournament; phone UI overrides this)
+KAP7_URLS = {
+    "kap7-cup":  "https://onedrive.live.com/:x:/g/personal/6f253ef3afcfe1c8/IQDxdebmKQFASaux2nx7kWcvASg2jqJRHO5Kj9EwKW4D82o?rtime=L4r2Pg2c3kg&redeem=aHR0cHM6Ly8xZHJ2Lm1zL3gvYy82ZjI1M2VmM2FmY2ZlMWM4L0lRRHhkZWJtS1FGQVNhdXgybng3a1djdkFTZzJqcUpSSE81S2o5RXdLVzREODJvP2U9WEdNa1FB",
+    "kap7-intl": "",  # update before Jan tournament
+}
+
 # Tournaments with no preset URL — user pastes one via the app
-URL_ONLY_TOURNAMENTS = {"jo-quals", "junior-olympics", "kap7-intl", "kap7-cup"}
+URL_ONLY_TOURNAMENTS = {"jo-quals", "junior-olympics"}
 # Tournaments with a preset auto-fetch URL (schedule appears automatically when posted)
-PRESET_URL_TOURNAMENTS = WPL_TOURNAMENTS | {"turbo-cup", "newport-invite"}
+PRESET_URL_TOURNAMENTS = WPL_TOURNAMENTS | {"turbo-cup", "newport-invite"} | {k for k, v in KAP7_URLS.items() if v}
 USER_URLS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "user_urls.json")
 
 _URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
@@ -136,6 +142,9 @@ def find_excel(tournament_id: str):
                 return os.path.join(EXCEL_DIR, f)
     if tournament_id in WPL_TOURNAMENTS:
         data = _fetch_url(FUTURES_SHEETS_URL)
+        return io.BytesIO(data) if data else None
+    if tournament_id in KAP7_URLS and KAP7_URLS[tournament_id]:
+        data = _fetch_url(KAP7_URLS[tournament_id])
         return io.BytesIO(data) if data else None
     if tournament_id == "turbo-cup":
         data = _fetch_url(TURBO_ONEDRIVE_URL, onedrive=True)
