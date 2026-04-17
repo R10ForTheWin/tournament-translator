@@ -977,6 +977,22 @@ function buildBracketView(allGames, tournamentId, team, h2h) {
       }
     });
 
+    // Break tile between this step and the next (confirmed-to-confirmed cross-step)
+    const nextRound = rounds[r + 1];
+    if (nextRound) {
+      const lastGame = ordered[ordered.length - 1];
+      const confirmedNext = nextRound.find(g => g.time && !g.placeholder);
+      if (confirmedNext && lastGame.time && !lastGame.placeholder) {
+        const dur = breakDuration(lastGame.time, confirmedNext.time, lastGame.date, confirmedNext.date);
+        if (dur) {
+          const bt = document.createElement('div');
+          bt.className = 'break-tile';
+          bt.innerHTML = `<div class="break-inner"><div class="break-label">Break</div><div class="break-duration">${dur}</div></div>`;
+          step.appendChild(bt);
+        }
+      }
+    }
+
     inner.appendChild(step);
   });
 
