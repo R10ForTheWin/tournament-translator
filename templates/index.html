@@ -1249,11 +1249,11 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
       </div>
     </div>`;
 
-  const sheet = backdrop.querySelector('.pred-sheet');
+  const sheetEl = backdrop.querySelector('.pred-sheet');
 
   function dismissSheet() {
-    sheet.style.transition = 'transform 0.25s ease';
-    sheet.style.transform = 'translateY(100%)';
+    sheetEl.style.transition = 'transform 0.25s ease';
+    sheetEl.style.transform = 'translateY(100%)';
     backdrop.style.transition = 'opacity 0.25s ease';
     backdrop.style.opacity = '0';
     setTimeout(() => backdrop.remove(), 250);
@@ -1264,23 +1264,23 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
 
   // Swipe-down to dismiss
   let startY = 0, dragging = false;
-  sheet.addEventListener('touchstart', e => {
+  sheetEl.addEventListener('touchstart', e => {
     startY = e.touches[0].clientY;
     dragging = true;
-    sheet.style.transition = 'none';
+    sheetEl.style.transition = 'none';
   }, { passive: true });
-  sheet.addEventListener('touchmove', e => {
+  sheetEl.addEventListener('touchmove', e => {
     if (!dragging) return;
     const dy = e.touches[0].clientY - startY;
-    if (dy > 0) sheet.style.transform = `translateY(${dy}px)`;
+    if (dy > 0) sheetEl.style.transform = `translateY(${dy}px)`;
   }, { passive: true });
-  sheet.addEventListener('touchend', e => {
+  sheetEl.addEventListener('touchend', e => {
     if (!dragging) return;
     dragging = false;
     const dy = e.changedTouches[0].clientY - startY;
     if (dy > 80) { dismissSheet(); } else {
-      sheet.style.transition = 'transform 0.2s ease';
-      sheet.style.transform = 'translateY(0)';
+      sheetEl.style.transition = 'transform 0.2s ease';
+      sheetEl.style.transform = 'translateY(0)';
     }
   }, { passive: true });
 
