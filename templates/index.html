@@ -245,6 +245,7 @@
     .path-banner { padding: 10px 14px 8px; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; }
     .path-banner.win-path  { background: rgba(196,160,0,0.15);  color: var(--gold); border-bottom: 1px solid rgba(196,160,0,0.2); }
     .path-banner.lose-path { background: rgba(157,34,53,0.18);  color: rgba(255,200,200,0.85); border-bottom: 1px solid rgba(157,34,53,0.25); }
+    .path-banner.pool-path { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.6); border-bottom: 1px solid rgba(255,255,255,0.1); }
 
     /* Branch cards indented to show they flow from the game above */
     .game-card.branch-card { margin-left: 16px; }
@@ -1278,10 +1279,10 @@ function buildUpcomingCard(g, tournamentId, team, h2h) {
   const isBranch = !!g.path;
   card.className = `game-card ${dayClass(g.date)}${g.placeholder ? ' placeholder' : ''}${isBranch ? ' branch-card' : ''}`;
 
-  const pathBanner = g.path === 'win'
-    ? `<div class="path-banner win-path">↑ If We Win</div>`
-    : g.path === 'lose'
-    ? `<div class="path-banner lose-path">↓ If We Lose</div>`
+  const _ord = n => ['','1st','2nd','3rd'][n] || `${n}th`;
+  const pathBanner = g.path === 'win'  ? `<div class="path-banner win-path">↑ If We Win</div>`
+    : g.path === 'lose' ? `<div class="path-banner lose-path">↓ If We Lose</div>`
+    : g.path?.startsWith('pool_') ? `<div class="path-banner pool-path">If ${_ord(+g.path.split('_')[1])} in Pool</div>`
     : '';
 
   let body = `${pathBanner}

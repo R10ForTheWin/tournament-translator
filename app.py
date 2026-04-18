@@ -571,12 +571,16 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                 continue
             add_placeholder = None
 
+            add_pool_rank = None
+
             for slot in (g["white_team"], g["dark_team"]):
                 s = slot.strip()
 
                 # Pool-finish bracket (1stA-, K4(1stG), etc.)
                 fm = _FINISH_SLOT_RE.match(s) or _COMPOSITE_SLOT_RE.search(s)
                 if fm and fm.group(1).upper() in groups:
+                    rank_m = re.search(r'(\d+)', s)
+                    add_pool_rank = int(rank_m.group(1)) if rank_m else None
                     add_placeholder = True
                     break
 
@@ -604,6 +608,8 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             if add_placeholder is not None:
                 g_copy = dict(g)
                 g_copy["placeholder"] = add_placeholder
+                if add_pool_rank:
+                    g_copy["pool_rank"] = add_pool_rank
                 extras.append(g_copy)
                 seen_ids.add(g["game_id"])
                 n = _game_num(g["game_id"])
@@ -1238,7 +1244,7 @@ def api_games(tournament_id, team):
             "your_color": color,
             "comments":   g["comments"],
             "game_num":    game_num,
-            "path":        bracket_path.get(gid),
+            "path":        bracket_path.get(gid) or (f"pool_{g.get('pool_rank')}" if g.get('pool_rank') else None),
             "placeholder": g.get("placeholder", False),
         }
 
