@@ -1218,11 +1218,22 @@ def api_games(tournament_id, team):
         if pr and g["game_id"] not in connected:
             pf_by_rank.setdefault(pr, []).append(g)
     if pf_by_rank:
-        max_wl_depth = max(_bfs_round.values()) if _bfs_round else 0
+        # Build a time-sorted list of (date, time, round) for already-connected games
+        # so we can find where each rank group falls in the bracket chronologically.
+        connected_timeline = sorted(
+            ((g.get("date") or date.min, g.get("time") or datetime.min.time(), _bfs_round[g["game_id"]])
+             for g in my_games if g["game_id"] in _bfs_round),
+        )
         for rank, grp in pf_by_rank.items():
-            grp.sort(key=lambda x: (str(x.get("date") or ""), str(x.get("time") or "")))
+            grp.sort(key=lambda x: (x.get("date") or date.min, x.get("time") or datetime.min.time()))
+            # Base depth = max round of connected games occurring before the first game
+            # in this rank group. This places the group correctly even when the W#/L#
+            # chain is deeper than the orphan games' chronological position.
+            first_dt = (grp[0].get("date") or date.min, grp[0].get("time") or datetime.min.time())
+            prev_max = max((cr for cd, ct, cr in connected_timeline if (cd, ct) < first_dt), default=0)
+            start_depth = prev_max + 1
             for i, g in enumerate(grp):
-                _bfs_round[g["game_id"]] = max_wl_depth + 1 + i
+                _bfs_round[g["game_id"]] = start_depth + i
         connected.update(_bfs_round.keys())
 
     # Time-slot ordering for isolated (pool play) games not connected to the bracket

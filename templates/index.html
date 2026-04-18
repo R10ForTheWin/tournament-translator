@@ -1140,6 +1140,7 @@ function drawBracketLines(inner, rounds, roundNums) {
     const gx = sx + 40;
     const R = 7;
 
+    let dayPillAdded = false;
     toCards.forEach((toCard) => {
       const toRect = toCard.getBoundingClientRect();
       const tx = toRect.left - innerRect.left;
@@ -1166,8 +1167,12 @@ function drawBracketLines(inner, rounds, roundNums) {
         fromCard.dataset.gameDate, toCard.dataset.gameDate
       );
       if (pillDur) {
-        // Position pill at 25% along the connector (near source) to avoid the GAME label at top of target column
-        pendingPills.push({ mx: gx, my: sy + (ty - sy) * 0.25, label: pillDur });
+        const isDayChange = fromCard.dataset.gameDate !== toCard.dataset.gameDate;
+        // Day-change pill: only once per column transition (on the first connector)
+        if (!isDayChange || !dayPillAdded) {
+          pendingPills.push({ mx: gx, my: sy + (ty - sy) * 0.25, label: pillDur });
+          if (isDayChange) dayPillAdded = true;
+        }
       }
     });
   }
