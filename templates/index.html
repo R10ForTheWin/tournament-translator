@@ -1311,9 +1311,9 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
 
     const maxPct = Math.max(...data.finish_probs.map(r => r.pct), 1);
     const rows = data.finish_probs.map(r => {
-      const isCurrent = r.rank === p.current_rank;
+      const isBest = r.pct === maxPct;
       const barW = Math.round((r.pct / maxPct) * 100);
-      return `<div class="predictor-row${isCurrent ? ' current' : ''}">
+      return `<div class="predictor-row${isBest ? ' current' : ''}">
         <div class="predictor-rank">${r.label} Place</div>
         <div class="predictor-bar-wrap"><div class="predictor-bar" style="width:${barW}%"></div></div>
         <div class="predictor-pct">${r.pct}%</div>
@@ -1331,7 +1331,7 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
     bodyEl.innerHTML = `
       ${rows}
       ${teamRows ? `<div class="predictor-all-teams">${teamRows}</div>` : ''}
-      <div class="predictor-note">Based on equal probability for remaining pool games</div>`;
+      <div class="predictor-note">Based on equal win probability for all remaining games · ${data.total_div_teams || ''} teams in division</div>`;
   } catch (e) {
     backdrop.querySelector('#pred-body').innerHTML = `<div class="pred-sheet-msg">Unable to load prediction.</div>`;
   }

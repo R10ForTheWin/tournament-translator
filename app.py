@@ -454,37 +454,158 @@ def _pool_bracket_games(group: str, division_games: list) -> list:
             and _refs_direct(g["white_team"]) and _refs_direct(g["dark_team"])]
 
 
-def _pool_finish_probs(team: str, group: str, division_games: list) -> dict:
-    """Returns {rank (int): probability 0-1} for all possible pool finishes."""
-    def _is_direct(g):
-        wm = _POOL_SLOT_RE.match(g["white_team"].strip())
-        dm = _POOL_SLOT_RE.match(g["dark_team"].strip())
-        return (wm and dm and wm.group(1).upper() == group.upper()
-                and dm.group(1).upper() == group.upper())
+def _resolve_slot_for_sim(slot: str, group_standings: dict, game_results: dict) -> str | None:
+    """Resolve a bracket slot to a team name for Monte Carlo simulation.
+    group_standings: {group: [team_name, ...]} ordered 1st..last
+    game_results: {game_id: (winner_name, loser_name)}
+    """
+    slot = slot.strip()
 
-    direct_games  = [g for g in division_games if _is_direct(g)]
-    bracket_games = _pool_bracket_games(group, division_games)
-    all_pool_games = direct_games + bracket_games
-    remaining = [g for g in all_pool_games if not g.get("played")]
+    pm = _POOL_SLOT_RE.match(slot)
+    if pm:
+        return pm.group(3).strip()
 
-    if not remaining:
-        standings = _standings_for_group(group, division_games)
-        rank = next((i + 1 for i, s in enumerate(standings) if team_matches(s["team"], team)), None)
-        return {rank: 1.0} if rank else {}
+    # Composite+W#/L# like "E1(4thB)L#7": W#/L# takes priority over pool label
+    name = strip_prefix(slot)
+    if name != slot and name and re.match(r'^[WL]#', name, re.IGNORECASE):
+        wm = _WL_SLOT_RE.match(name)
+        if wm:
+            ref = re.search(r'(\d+)$', wm.group(1))
+            if ref:
+                ref_num = str(int(ref.group(1)))
+                ref_gid = next((gid for gid in game_results if _game_num(gid) == ref_num), None)
+                if ref_gid:
+                    winner, loser = game_results[ref_gid]
+                    return winner if name[0].upper() == 'W' else loser
 
-    n = len(remaining)
-    universe = 2 ** n
-    masks = random.sample(range(universe), min(universe, 4096)) if universe > 4096 else range(universe)
-    rank_counts: dict = {}
-    for mask in masks:
-        outcomes = {remaining[i]["game_id"]: bool((mask >> i) & 1) for i in range(n)}
-        standings = _standings_for_group(group, division_games, outcomes)
-        rank = next((i + 1 for i, s in enumerate(standings) if team_matches(s["team"], team)), None)
-        if rank:
-            rank_counts[rank] = rank_counts.get(rank, 0) + 1
+    wm = _WL_SLOT_RE.match(slot)
+    if wm:
+        ref = re.search(r'(\d+)$', wm.group(1))
+        if ref:
+            ref_num = str(int(ref.group(1)))
+            ref_gid = next((gid for gid in game_results if _game_num(gid) == ref_num), None)
+            if ref_gid:
+                winner, loser = game_results[ref_gid]
+                return winner if slot[0].upper() == 'W' else loser
 
-    total = len(masks)
-    return {r: c / total for r, c in rank_counts.items()}
+    # Composite: K4(2ndB) or K4(2ndB)-
+    cm = re.search(r'\((\d+)(?:st|nd|rd|th)([A-Z])\)', slot, re.IGNORECASE)
+    if cm:
+        rank = int(cm.group(1))
+        teams = group_standings.get(cm.group(2).upper(), [])
+        return teams[rank - 1] if len(teams) >= rank else None
+
+    # Simple finish slot: 1stA-
+    fm = _FINISH_SLOT_RE.match(slot)
+    if fm:
+        group = fm.group(1).upper()
+        rank_m = re.search(r'^(\d+)', slot)
+        rank = int(rank_m.group(1)) if rank_m else 1
+        teams = group_standings.get(group, [])
+        return teams[rank - 1] if len(teams) >= rank else None
+
+    return None
+
+
+def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 500) -> dict:
+    """Monte Carlo simulation of final tournament placement (1st through Nth).
+    Returns {placement_int: probability_0_to_1}.
+    """
+    all_groups = sorted({
+        m.group(1).upper()
+        for g in division_games
+        for slot in (g["white_team"], g["dark_team"])
+        if (m := _POOL_SLOT_RE.match(slot.strip()))
+    })
+    if not all_groups:
+        return {}
+
+    all_pool_teams: dict = {}
+    for group in all_groups:
+        for t in _pool_teams_for_group(group, division_games):
+            all_pool_teams[t] = group
+    if not all_pool_teams:
+        return {}
+
+    our_team = next((t for t in all_pool_teams if team_matches(t, team)), None)
+    if not our_team:
+        return {}
+
+    # Pool phase games (direct pool games + intra-pool bracket games)
+    def _is_pool_slot(g):
+        return bool(_POOL_SLOT_RE.match(g["white_team"].strip()) and
+                    _POOL_SLOT_RE.match(g["dark_team"].strip()))
+
+    pool_direct = [g for g in division_games if _is_pool_slot(g)]
+    intra_bracket: list = []
+    for grp in all_groups:
+        intra_bracket.extend(_pool_bracket_games(grp, division_games))
+    pool_phase_ids = {g["game_id"] for g in pool_direct + intra_bracket}
+
+    # Sunday placement bracket games (composite slots)
+    bracket_games = sorted(
+        (g for g in division_games if g["game_id"] not in pool_phase_ids),
+        key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
+    )
+
+    unplayed_pool_phase = [g for g in division_games
+                           if g["game_id"] in pool_phase_ids and not g.get("played")]
+
+    placement_counts: dict = {}
+
+    for _ in range(n_trials):
+        pool_outcomes = {g["game_id"]: random.random() < 0.5 for g in unplayed_pool_phase}
+
+        group_standings: dict = {}
+        for grp in all_groups:
+            st = _standings_for_group(grp, division_games, pool_outcomes)
+            group_standings[grp] = [s["team"] for s in st]
+
+        game_results: dict = {}  # game_id -> (winner_name, loser_name)
+        # [bracket_wins, last_game_date_ordinal, last_game_minute]
+        team_rec: dict = {t: [0, 0, 0] for t in all_pool_teams}
+
+        for g in bracket_games:
+            wt = _resolve_slot_for_sim(g["white_team"], group_standings, game_results)
+            dt = _resolve_slot_for_sim(g["dark_team"], group_standings, game_results)
+            if not wt or not dt:
+                continue
+
+            if g.get("played") and g.get("white_score") is not None:
+                white_won = g["white_score"] > g["dark_score"]
+            else:
+                white_won = random.random() < 0.5
+
+            winner, loser = (wt, dt) if white_won else (dt, wt)
+            game_results[g["game_id"]] = (winner, loser)
+
+            gdate = g.get("date") or date.min
+            gtime = g.get("time") or datetime.min.time()
+            date_ord = gdate.toordinal() if gdate != date.min else 0
+            time_min = gtime.hour * 60 + gtime.minute if gdate != date.min else 0
+
+            for name, won in ((winner, True), (loser, False)):
+                key = next((t for t in all_pool_teams if team_matches(t, name)), None)
+                if key:
+                    if won:
+                        team_rec[key][0] += 1
+                    team_rec[key][1] = max(team_rec[key][1], date_ord)
+                    team_rec[key][2] = max(team_rec[key][2], time_min)
+
+        def _rank_key(t):
+            wins, date_ord, time_min = team_rec[t]
+            grp = all_pool_teams[t]
+            pool_rank = next((i for i, pt in enumerate(group_standings.get(grp, []))
+                              if team_matches(pt, t)), 99)
+            return (-wins, -date_ord, -time_min, pool_rank)
+
+        sorted_teams = sorted(all_pool_teams.keys(), key=_rank_key)
+        placement = next((i + 1 for i, t in enumerate(sorted_teams) if t == our_team), None)
+        if placement is not None:
+            placement_counts[placement] = placement_counts.get(placement, 0) + 1
+
+    total = sum(placement_counts.values())
+    return {p: c / total for p, c in placement_counts.items()} if total else {}
 
 
 @app.route("/api/place-predictor/<tournament_id>/<path:team>")
@@ -501,10 +622,18 @@ def api_place_predictor(tournament_id, team):
     if not group:
         return jsonify({"pool": None, "finish_probs": []})
 
-    standings   = _standings_for_group(group, division_games)
+    standings    = _standings_for_group(group, division_games)
     current_rank = next((i + 1 for i, s in enumerate(standings) if team_matches(s["team"], team)), None)
     team_stats   = next((s for s in standings if team_matches(s["team"], team)), {})
-    finish_probs = _pool_finish_probs(team, group, division_games)
+    finish_probs = _tournament_finish_probs(team, division_games)
+
+    all_groups = {
+        m.group(1).upper()
+        for g in division_games
+        for slot in (g["white_team"], g["dark_team"])
+        if (m := _POOL_SLOT_RE.match(slot.strip()))
+    }
+    total_div_teams = sum(len(_pool_teams_for_group(g, division_games)) for g in all_groups)
 
     return jsonify({
         "pool": {
@@ -518,6 +647,7 @@ def api_place_predictor(tournament_id, team):
             {"rank": r, "label": _ordinal(r), "pct": round(p * 100)}
             for r, p in sorted(finish_probs.items())
         ],
+        "total_div_teams": total_div_teams,
         "all_teams": [
             {"team": s["team"], "wins": s["wins"], "losses": s["losses"],
              "gf": s["gf"], "ga": s["ga"], "is_mine": team_matches(s["team"], team)}
