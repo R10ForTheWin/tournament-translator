@@ -1009,24 +1009,10 @@ function buildBracketView(allGames, tournamentId, team, h2h) {
   inner.className = 'bracket-stair-inner';
   inner.style.minWidth = (maxIdx * STEP + CARD_W + 32) + 'px';
 
-  let prevDayLabel = null;
-
   roundNums.forEach((r, idx) => {
     const step = document.createElement('div');
     step.className = 'bracket-step' + (idx === 0 ? ' first-step' : '');
     step.style.marginLeft = (idx * STEP) + 'px';
-
-    // Day header when the day changes
-    const stepGames = rounds[r];
-    const firstGame = stepGames.find(g => g.date) || stepGames[0];
-    const dayLabel = firstGame?.date?.split(',')[0] || '';
-    if (dayLabel && dayLabel !== prevDayLabel) {
-      const dayHdr = document.createElement('div');
-      dayHdr.className = 'bracket-day-header';
-      dayHdr.textContent = dayLabel;
-      step.appendChild(dayHdr);
-      prevDayLabel = dayLabel;
-    }
 
     // Game number label above all cards in this column (once)
     const gameNum = stepGames[0]?.game_num;
@@ -1188,19 +1174,16 @@ function drawBracketLines(inner, rounds, roundNums) {
         fromCard.dataset.gameTime, toCard.dataset.gameTime,
         fromCard.dataset.gameDate, toCard.dataset.gameDate
       );
-      if (pillDur) {
-        const isDayChange = fromCard.dataset.gameDate !== toCard.dataset.gameDate;
-        // Day-change pill: only once per column transition (on the first connector)
-        if (!isDayChange || !dayPillAdded) {
-          pendingPills.push({ mx: gx, my: sy + (ty - sy) * 0.75, label: pillDur });
-          if (isDayChange) dayPillAdded = true;
-        }
+      const isDayChange = fromCard.dataset.gameDate !== toCard.dataset.gameDate;
+      if (pillDur && (!isDayChange || !dayPillAdded)) {
+        pendingPills.push({ mx: gx, my: sy + (ty - sy) * 0.75, label: pillDur, gold: isDayChange });
+        if (isDayChange) dayPillAdded = true;
       }
     });
   }
 
   // Draw all pills after all paths so they always render on top
-  for (const { mx, my, label } of pendingPills) {
+  for (const { mx, my, label, gold } of pendingPills) {
     const pillW = label.length * 6.5 + 16;
     const pillH = 18;
 
@@ -1210,8 +1193,8 @@ function drawBracketLines(inner, rounds, roundNums) {
     rect.setAttribute('width', pillW);
     rect.setAttribute('height', pillH);
     rect.setAttribute('rx', 9);
-    rect.setAttribute('fill', '#1a1a1a');
-    rect.setAttribute('stroke', 'rgba(255,255,255,0.2)');
+    rect.setAttribute('fill', gold ? '#ffd700' : '#1a1a1a');
+    rect.setAttribute('stroke', gold ? 'none' : 'rgba(255,255,255,0.2)');
     rect.setAttribute('stroke-width', '1');
     svg.appendChild(rect);
 
@@ -1219,11 +1202,11 @@ function drawBracketLines(inner, rounds, roundNums) {
     txt.setAttribute('x', mx);
     txt.setAttribute('y', my + 4);
     txt.setAttribute('text-anchor', 'middle');
-    txt.setAttribute('font-size', '10');
-    txt.setAttribute('font-weight', '700');
+    txt.setAttribute('font-size', gold ? '11' : '10');
+    txt.setAttribute('font-weight', '900');
     txt.setAttribute('font-family', '-apple-system, sans-serif');
-    txt.setAttribute('fill', 'rgba(255,255,255,0.6)');
-    txt.setAttribute('letter-spacing', '0.03em');
+    txt.setAttribute('fill', gold ? '#000' : 'rgba(255,255,255,0.6)');
+    txt.setAttribute('letter-spacing', gold ? '0.1em' : '0.03em');
     txt.textContent = label;
     svg.appendChild(txt);
   }
@@ -1243,7 +1226,7 @@ function breakDuration(t1, t2, d1, d2) {
   if (!t1 || !t2) return null;
   if (d1 && d2 && d1 !== d2) {
     const dayName = (d2.split(',')[0] || '').toUpperCase();
-    return dayName ? `→ ${dayName}` : '→ NEXT DAY';
+    return dayName || 'NEXT DAY';
   }
   const m1 = parseTimeMin(t1), m2 = parseTimeMin(t2);
   if (m1 === null || m2 === null) return null;
