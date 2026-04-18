@@ -1013,6 +1013,7 @@ function buildBracketView(allGames, tournamentId, team, h2h) {
     const step = document.createElement('div');
     step.className = 'bracket-step' + (idx === 0 ? ' first-step' : '');
     step.style.marginLeft = (idx * STEP) + 'px';
+    const stepGames = rounds[r];
 
     // Game number label above all cards in this column (once)
     const gameNum = stepGames[0]?.game_num;
