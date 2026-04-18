@@ -25,7 +25,7 @@ WPL_TOURNAMENTS    = {"futures-2", "futures-3", "futures-4", "futures-5", "futur
 
 TOURNAMENT_URLS = {
     "kap7-intl":      "",  # update before Jan 2027 tournament
-    "kap7-cup":       "https://onedrive.live.com/:x:/g/personal/6f253ef3afcfe1c8/IQDxdebmKQFASaux2nx7kWcvASg2jqJRHO5Kj9EwKW4D82o?rtime=L4r2Pg2c3kg&redeem=aHR0cHM6Ly8xZHJ2Lm1zL3gvYy82ZjI1M2VmM2FmY2ZlMWM4L0lRRHhkZWJtS1FGQVNhdXgybng3a1djdkFTZzJqcUpSSE81S2o5RXdLVzREODJvP2U9WEdNa1FB",
+    "kap7-cup":       "https://onedrive.live.com/:x:/g/personal/6f253ef3afcfe1c8/IQDxdebmKQFASaux2nx7kWcvASg2jqJRHO5Kj9EwKW4D82o?rtime=GrzV592c3kg&redeem=aHR0cHM6Ly8xZHJ2Lm1zL3gvYy82ZjI1M2VmM2FmY2ZlMWM4L0lRRHhkZWJtS1FGQVNhdXgybng3a1djdkFTZzJqcUpSSE81S2o5RXdLVzREODJvP2U9WEdNa1FB",
     "turbo-cup":      "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQB7PJXtfzNsT74lTYhWpOeXASFcmpB96L1OpYL_E6HBMM0?e=UsRrMb",
     "newport-invite": "https://onedrive.live.com/download?resid=6F253EF3AFCFE1C8!66694&authkey=!AO8pyWY0qwL2sYE",
     "jo-quals":       "",  # update when schedule is posted
