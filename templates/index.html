@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=0.25, maximum-scale=5.0">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="TT Scheduler">
+  <meta name="apple-mobile-web-app-title" content="Trojan WP">
   <meta name="theme-color" content="#111111">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <link rel="icon" type="image/png" href="/static/apple-touch-icon.png">
@@ -1381,11 +1381,11 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
       </div>`;
     }).join('');
 
-    const teamRows = (data.all_teams || []).map((t, i) =>
+    const teamRows = (data.predicted_standings || []).map(t =>
       `<div class="predictor-team-row">
-        <div class="predictor-team-rank">${i + 1}</div>
+        <div class="predictor-team-rank">${t.predicted_rank}</div>
         <div class="predictor-team-name${t.is_mine ? ' mine' : ''}">${t.team}</div>
-        <div class="predictor-team-rec">${t.wins}W · ${t.losses}L</div>
+        <div class="predictor-team-rec">${t.pct}%</div>
       </div>`
     ).join('');
 
@@ -1482,9 +1482,10 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
   if (g.is_current) {
     bannerHtml = `<div class="path-banner live-game"><span class="live-dot"></span>Current Game</div>`;
   } else {
+    const ordSuffix = n => { const s=['th','st','nd','rd']; const v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); };
     bannerHtml = g.path === 'win'  ? `<div class="path-banner win-path">${winLabel}</div>`
       : g.path === 'lose' ? `<div class="path-banner lose-path">${loseLabel}</div>`
-      : poolRank !== null ? `<div class="path-banner ${poolRank <= 2 ? 'win-path' : 'lose-path'}">${poolRank <= 2 ? winLabel : loseLabel}</div>`
+      : poolRank !== null ? `<div class="path-banner ${poolRank <= 2 ? 'win-path' : 'lose-path'}">${ordSuffix(poolRank)} Place Game</div>`
       : '';
   }
 

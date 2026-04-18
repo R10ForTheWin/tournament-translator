@@ -244,7 +244,7 @@ def h2h_key(raw: str) -> str:
 
 # ── Team friendly-name helpers ─────────────────────────────────────────────────
 
-_TIER_ORDER = {"gold": 0, "cardinal": 1, "platinum": 0, "silver": 2, "bronze": 3}
+_TIER_ORDER = {"cardinal": 0, "gold": 1, "platinum": 1, "silver": 2, "bronze": 3}
 _AGE_WORDS   = re.compile(r"(\d{1,2})U", re.IGNORECASE)
 _GENDER_BOYS = re.compile(r"\bBOYS?\b", re.IGNORECASE)
 _GENDER_GIRLS = re.compile(r"\bGIRLS?\b", re.IGNORECASE)
@@ -288,7 +288,7 @@ def friendly_team_name(team_name: str, sheet: str):
     return f"{name} · {age_gender}" if age_gender else name or None
 
 def _team_sort_key(team: dict):
-    """Sort: Boys before Girls, age desc (18U→10U), tier Gold→Cardinal→Silver."""
+    """Sort: Boys before Girls, age desc (18U→10U), tier Cardinal→Gold→Silver."""
     friendly = team.get("friendly") or ""
     gender_ord = 0 if "Boys" in friendly else (1 if "Girls" in friendly else 2)
     age_m = _AGE_WORDS.search(friendly)
@@ -509,9 +509,9 @@ def _resolve_slot_for_sim(slot: str, group_standings: dict, game_results: dict) 
     return None
 
 
-def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 500) -> dict:
-    """Monte Carlo simulation of final tournament placement (1st through Nth).
-    Returns {placement_int: probability_0_to_1}.
+def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 500) -> tuple:
+    """Monte Carlo simulation of final tournament placement.
+    Returns (our_probs, all_team_probs) where each is {placement_int: probability_0_to_1}.
     """
     all_groups = sorted({
         m.group(1).upper()
@@ -531,7 +531,7 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
 
     our_team = next((t for t in all_pool_teams if team_matches(t, team)), None)
     if not our_team:
-        return {}
+        return {}, {}
 
     # Pool phase games (direct pool games + intra-pool bracket games)
     def _is_pool_slot(g):
@@ -554,6 +554,7 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
                            if g["game_id"] in pool_phase_ids and not g.get("played")]
 
     placement_counts: dict = {}
+    all_placement_counts: dict = {t: {} for t in all_pool_teams}
 
     for _ in range(n_trials):
         pool_outcomes = {g["game_id"]: random.random() < 0.5 for g in unplayed_pool_phase}
@@ -602,12 +603,20 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
             return (-wins, -date_ord, -time_min, pool_rank)
 
         sorted_teams = sorted(all_pool_teams.keys(), key=_rank_key)
+        for i, t in enumerate(sorted_teams):
+            p = i + 1
+            all_placement_counts[t][p] = all_placement_counts[t].get(p, 0) + 1
         placement = next((i + 1 for i, t in enumerate(sorted_teams) if t == our_team), None)
         if placement is not None:
             placement_counts[placement] = placement_counts.get(placement, 0) + 1
 
     total = sum(placement_counts.values())
-    return {p: c / total for p, c in placement_counts.items()} if total else {}
+    our_probs = {p: c / total for p, c in placement_counts.items()} if total else {}
+    all_probs = {
+        t: {p: c / total for p, c in counts.items()}
+        for t, counts in all_placement_counts.items()
+    } if total else {}
+    return our_probs, all_probs
 
 
 @app.route("/api/place-predictor/<tournament_id>/<path:team>")
@@ -627,7 +636,7 @@ def api_place_predictor(tournament_id, team):
     standings    = _standings_for_group(group, division_games)
     current_rank = next((i + 1 for i, s in enumerate(standings) if team_matches(s["team"], team)), None)
     team_stats   = next((s for s in standings if team_matches(s["team"], team)), {})
-    finish_probs = _tournament_finish_probs(team, division_games)
+    finish_probs, all_team_probs = _tournament_finish_probs(team, division_games)
 
     all_groups = {
         m.group(1).upper()
@@ -636,6 +645,18 @@ def api_place_predictor(tournament_id, team):
         if (m := _POOL_SLOT_RE.match(slot.strip()))
     }
     total_div_teams = sum(len(_pool_teams_for_group(g, division_games)) for g in all_groups)
+
+    def _modal_placement(probs):
+        return max(probs.items(), key=lambda x: x[1])[0] if probs else 999
+
+    predicted_standings = sorted(
+        [{"team": t,
+          "predicted_rank": _modal_placement(all_team_probs.get(t, {})),
+          "pct": round(max(all_team_probs.get(t, {}).values(), default=0) * 100),
+          "is_mine": team_matches(t, team)}
+         for t in all_team_probs],
+        key=lambda x: x["predicted_rank"],
+    )
 
     return jsonify({
         "pool": {
@@ -650,11 +671,7 @@ def api_place_predictor(tournament_id, team):
             for r, p in sorted(finish_probs.items())
         ],
         "total_div_teams": total_div_teams,
-        "all_teams": [
-            {"team": s["team"], "wins": s["wins"], "losses": s["losses"],
-             "gf": s["gf"], "ga": s["ga"], "is_mine": team_matches(s["team"], team)}
-            for s in standings
-        ],
+        "predicted_standings": predicted_standings,
     })
 
 
@@ -1515,15 +1532,20 @@ def api_games(tournament_id, team):
             our_rec = trec.get(our_key)
             opp_rec = trec.get(opp_key)
 
+        opponent_label = describe_slot(opp_sl, dg)
+        # Skip games where the opponent resolves to our own team (W#N self-play artifact)
+        if team_matches(opponent_label, team):
+            continue
+
         base = {
             "game_id":    gid,
             "date":       _fmt_date(g["date"]),
             "time":       _fmt_time(g["time"]),
             "location":   g["location"],
-            "opponent":   describe_slot(opp_sl, dg),
+            "opponent":   opponent_label,
             "your_color": color,
             "game_num":    game_num,
-            "path":        bracket_path.get(gid) or (f"pool_{g.get('pool_rank')}" if g.get('pool_rank') else None),
+            "path":        (f"pool_{g.get('pool_rank')}" if g.get('pool_rank') else None) or bracket_path.get(gid),
             "placeholder": g.get("placeholder", False),
             "our_record":  our_rec,
             "opp_record":  opp_rec,
