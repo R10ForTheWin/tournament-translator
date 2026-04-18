@@ -268,19 +268,21 @@
     .bracket-stair-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -16px; padding: 0 16px 32px; }
     .bracket-stair-inner { position: relative; }
     .bracket-step { width: 340px; margin-bottom: 6px; }
-    .bracket-day-header { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); padding: 16px 0 8px; border-top: 1px solid var(--border); margin-top: 8px; }
-    .bracket-step.first-step .bracket-day-header { margin-top: 0; border-top: none; padding-top: 4px; }
+    .bracket-day-header { display: inline-block; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.12em; color: #000; background: var(--gold); border-radius: 6px; padding: 4px 10px; margin: 14px 0 10px; }
+    .bracket-step.first-step .bracket-day-header { margin-top: 4px; }
     .bracket-game-num-header { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); padding: 0 0 6px; }
 
     /* ── Place Predictor button on team list ── */
-    .predict-btn { background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 6px 8px; color: var(--gold); cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin-right: 8px; }
-    .predict-btn:active { background: rgba(255,255,255,0.14); }
+    .team-action-btn { background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 6px 8px; color: var(--gold); cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin-right: 8px; }
+    .team-action-btn:active { background: rgba(255,255,255,0.14); }
 
     /* ── Place Predictor bottom sheet ── */
     .pred-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 200; display: flex; align-items: flex-end; }
-    .pred-sheet { background: #1c1c1e; border-radius: 16px 16px 0 0; width: 100%; max-height: 80vh; overflow-y: auto; padding-bottom: env(safe-area-inset-bottom, 16px); }
+    .pred-sheet { background: #1c1c1e; border-radius: 16px 16px 0 0; width: 100%; max-height: 80vh; overflow-y: auto; padding-bottom: env(safe-area-inset-bottom, 16px); transition: transform 0.25s ease; touch-action: none; }
     .pred-sheet-handle { width: 36px; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; margin: 10px auto 0; }
-    .pred-sheet-header { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+    .pred-sheet-header { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 8px; }
+    .pred-sheet-header-text { flex: 1; }
+    .pred-sheet-close { background: none; border: none; color: var(--muted); font-size: 22px; line-height: 1; padding: 0 0 2px; cursor: pointer; flex-shrink: 0; }
     .pred-sheet-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); }
     .pred-sheet-team { font-size: 15px; font-weight: 700; color: var(--white); margin-top: 2px; }
     .pred-sheet-standing { font-size: 12px; color: var(--muted); margin-top: 2px; }
@@ -773,17 +775,30 @@ async function loadTeams(tournament) {
           ${subLabel ? `<div class="list-card-sub" style="font-size:12px;color:var(--muted);margin-top:2px">${subLabel}</div>` : ''}
         </div>
       </div>
-      <button class="predict-btn" title="Place Predictor">
+      <button class="team-action-btn predict-btn" title="Place Predictor">
         <svg width="15" height="13" viewBox="0 0 15 13" fill="currentColor">
           <rect x="0" y="7" width="4" height="6" rx="1"/>
           <rect x="5.5" y="3.5" width="4" height="9.5" rx="1"/>
           <rect x="11" y="0" width="4" height="13" rx="1"/>
         </svg>
       </button>
-      <span class="list-arrow">›</span>`;
+      <button class="team-action-btn bracket-btn" title="View Schedule">
+        <svg width="15" height="13" viewBox="0 0 15 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="0.8" y="0.8" width="5" height="4" rx="0.8"/>
+          <rect x="0.8" y="7.8" width="5" height="4" rx="0.8"/>
+          <rect x="8.2" y="3.8" width="5" height="4" rx="0.8"/>
+          <line x1="5.8" y1="2.8" x2="8.2" y2="5.8"/>
+          <line x1="5.8" y1="9.8" x2="8.2" y2="7.8"/>
+        </svg>
+      </button>`;
     card.querySelector('.predict-btn').addEventListener('click', e => {
       e.stopPropagation();
       showPredictorSheet(tournament.id, t.name, t.sheet, t.friendly || mainLabel);
+    });
+    card.querySelector('.bracket-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
+      loadGames(tournament.id, t.name, t.sheet);
     });
     card.onclick = () => {
       state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
@@ -1020,7 +1035,7 @@ function buildBracketView(allGames, tournamentId, team, h2h) {
         if (dur) {
           const bt = document.createElement('div');
           bt.className = 'break-tile';
-          bt.innerHTML = `<div class="break-inner"><div class="break-label">Break</div><div class="break-duration">${dur}</div></div>`;
+          bt.innerHTML = `<div class="break-inner"><div class="break-duration">${dur}</div></div>`;
           step.appendChild(bt);
         }
       }
@@ -1151,7 +1166,8 @@ function drawBracketLines(inner, rounds, roundNums) {
         fromCard.dataset.gameDate, toCard.dataset.gameDate
       );
       if (pillDur) {
-        pendingPills.push({ mx: gx, my: (sy + ty) / 2, label: `BREAK ${pillDur}` });
+        // Position pill at 25% along the connector (near source) to avoid the GAME label at top of target column
+        pendingPills.push({ mx: gx, my: sy + (ty - sy) * 0.25, label: pillDur });
       }
     });
   }
@@ -1198,16 +1214,18 @@ function parseTimeMin(t) {
 
 function breakDuration(t1, t2, d1, d2) {
   if (!t1 || !t2) return null;
-  if (d1 !== d2) return null;  // different days — no break tile
+  if (d1 && d2 && d1 !== d2) {
+    const dayName = (d2.split(',')[0] || '').toUpperCase();
+    return dayName ? `→ ${dayName}` : '→ NEXT DAY';
+  }
   const m1 = parseTimeMin(t1), m2 = parseTimeMin(t2);
   if (m1 === null || m2 === null) return null;
-  const GAME_DURATION = 60; // assume each game takes 1 hour
+  const GAME_DURATION = 60;
   const diff = m2 - m1 - GAME_DURATION;
-  if (diff <= 0 || diff > 300) return null;  // no break or over 5 hours = skip
+  if (diff <= 0 || diff > 300) return null;
   const h = Math.floor(diff / 60), m = diff % 60;
-  if (h > 0 && m > 0) return `${h}h ${m}min`;
-  if (h > 0) return `${h}h`;
-  return `${m}min`;
+  const dur = h > 0 && m > 0 ? `${h}h ${m}min` : h > 0 ? `${h}h` : `${m}min`;
+  return `BREAK ${dur}`;
 }
 
 async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
@@ -1217,9 +1235,12 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
     <div class="pred-sheet">
       <div class="pred-sheet-handle"></div>
       <div class="pred-sheet-header">
-        <div class="pred-sheet-title">Place Predictor</div>
-        <div class="pred-sheet-team">${friendlyName}</div>
-        <div class="pred-sheet-standing" id="pred-standing">Loading…</div>
+        <div class="pred-sheet-header-text">
+          <div class="pred-sheet-title">Place Predictor</div>
+          <div class="pred-sheet-team">${friendlyName}</div>
+          <div class="pred-sheet-standing" id="pred-standing">Loading…</div>
+        </div>
+        <button class="pred-sheet-close" aria-label="Close">×</button>
       </div>
       <div class="pred-sheet-body" id="pred-body">
         <div class="pred-sheet-msg">
@@ -1227,7 +1248,42 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
         </div>
       </div>
     </div>`;
-  backdrop.addEventListener('click', e => { if (e.target === backdrop) backdrop.remove(); });
+
+  const sheet = backdrop.querySelector('.pred-sheet');
+
+  function dismissSheet() {
+    sheet.style.transition = 'transform 0.25s ease';
+    sheet.style.transform = 'translateY(100%)';
+    backdrop.style.transition = 'opacity 0.25s ease';
+    backdrop.style.opacity = '0';
+    setTimeout(() => backdrop.remove(), 250);
+  }
+
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) dismissSheet(); });
+  backdrop.querySelector('.pred-sheet-close').addEventListener('click', dismissSheet);
+
+  // Swipe-down to dismiss
+  let startY = 0, dragging = false;
+  sheet.addEventListener('touchstart', e => {
+    startY = e.touches[0].clientY;
+    dragging = true;
+    sheet.style.transition = 'none';
+  }, { passive: true });
+  sheet.addEventListener('touchmove', e => {
+    if (!dragging) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy > 0) sheet.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  sheet.addEventListener('touchend', e => {
+    if (!dragging) return;
+    dragging = false;
+    const dy = e.changedTouches[0].clientY - startY;
+    if (dy > 80) { dismissSheet(); } else {
+      sheet.style.transition = 'transform 0.2s ease';
+      sheet.style.transform = 'translateY(0)';
+    }
+  }, { passive: true });
+
   document.body.appendChild(backdrop);
 
   try {
@@ -1315,7 +1371,7 @@ function buildUpcomingCard(g, tournamentId, team, h2h) {
   const _ord = n => ['','1st','2nd','3rd'][n] || `${n}th`;
   const pathBanner = g.path === 'win'  ? `<div class="path-banner win-path">↑ If We Win</div>`
     : g.path === 'lose' ? `<div class="path-banner lose-path">↓ If We Lose</div>`
-    : g.path?.startsWith('pool_') ? `<div class="path-banner pool-path">If ${_ord(+g.path.split('_')[1])} in Pool</div>`
+    : g.path?.startsWith('pool_') ? `<div class="path-banner pool-path">If ${_ord(+g.path.split('_')[1])} Place</div>`
     : '';
 
   let body = `${pathBanner}
