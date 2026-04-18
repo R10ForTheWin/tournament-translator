@@ -1374,8 +1374,8 @@ function buildUpcomingCard(g, tournamentId, team, h2h) {
   card.className = `game-card ${dayClass(g.date)}${g.placeholder ? ' placeholder' : ''}${isBranch ? ' branch-card' : ''}`;
 
   const _ord = n => ['','1st','2nd','3rd'][n] || `${n}th`;
-  const pathBanner = g.path === 'win'  ? `<div class="path-banner win-path">↑ If We Win</div>`
-    : g.path === 'lose' ? `<div class="path-banner lose-path">↓ If We Lose</div>`
+  const pathBanner = g.path === 'win'  ? `<div class="path-banner win-path">If We Win</div>`
+    : g.path === 'lose' ? `<div class="path-banner lose-path">If We Lose</div>`
     : g.path?.startsWith('pool_') ? `<div class="path-banner pool-path">If ${_ord(+g.path.split('_')[1])} Place</div>`
     : '';
 
