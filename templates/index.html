@@ -1095,6 +1095,8 @@ function drawBracketLines(inner, rounds, roundNums) {
   const steps = inner.querySelectorAll('.bracket-step');
   const stepArr = Array.from(steps);
 
+  const pendingPills = [];
+
   for (let i = 0; i < stepArr.length - 1; i++) {
     const fromStep = stepArr[i];
     const toStep   = stepArr[i + 1];
@@ -1104,16 +1106,13 @@ function drawBracketLines(inner, rounds, roundNums) {
 
     const fromCard = fromCards[fromCards.length - 1];
     const fromRect = fromCard.getBoundingClientRect();
-    // Exit from right-center of source card
     const sx = fromRect.right - innerRect.left;
     const sy = fromRect.top - innerRect.top + fromRect.height / 2;
-    // Vertical highway runs in the center of the 80px column gap
     const gx = sx + 40;
-    const R = 7; // corner radius
+    const R = 7;
 
-    toCards.forEach((toCard, toIdx) => {
+    toCards.forEach((toCard) => {
       const toRect = toCard.getBoundingClientRect();
-      // Enter at left-center of target card
       const tx = toRect.left - innerRect.left;
       const ty = toRect.top - innerRect.top + toRect.height / 2;
 
@@ -1133,41 +1132,43 @@ function drawBracketLines(inner, rounds, roundNums) {
       path.setAttribute('stroke-width', '2.5');
       svg.appendChild(path);
 
-      // Draw a break pill on each connector, computed for that specific target's time
       const pillDur = breakDuration(
         fromCard.dataset.gameTime, toCard.dataset.gameTime,
         fromCard.dataset.gameDate, toCard.dataset.gameDate
       );
       if (pillDur) {
-        const mx = gx;
-        const my = (sy + ty) / 2;
-        const pillW = (`BREAK ${pillDur}`).length * 6.5 + 16;
-        const pillH = 18;
-
-        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        rect.setAttribute('x', mx - pillW / 2);
-        rect.setAttribute('y', my - pillH / 2);
-        rect.setAttribute('width', pillW);
-        rect.setAttribute('height', pillH);
-        rect.setAttribute('rx', 9);
-        rect.setAttribute('fill', '#1a1a1a');
-        rect.setAttribute('stroke', 'rgba(255,255,255,0.2)');
-        rect.setAttribute('stroke-width', '1');
-        svg.appendChild(rect);
-
-        const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        txt.setAttribute('x', mx);
-        txt.setAttribute('y', my + 4);
-        txt.setAttribute('text-anchor', 'middle');
-        txt.setAttribute('font-size', '10');
-        txt.setAttribute('font-weight', '700');
-        txt.setAttribute('font-family', '-apple-system, sans-serif');
-        txt.setAttribute('fill', 'rgba(255,255,255,0.6)');
-        txt.setAttribute('letter-spacing', '0.03em');
-        txt.textContent = `BREAK ${pillDur}`;
-        svg.appendChild(txt);
+        pendingPills.push({ mx: gx, my: (sy + ty) / 2, label: `BREAK ${pillDur}` });
       }
     });
+  }
+
+  // Draw all pills after all paths so they always render on top
+  for (const { mx, my, label } of pendingPills) {
+    const pillW = label.length * 6.5 + 16;
+    const pillH = 18;
+
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', mx - pillW / 2);
+    rect.setAttribute('y', my - pillH / 2);
+    rect.setAttribute('width', pillW);
+    rect.setAttribute('height', pillH);
+    rect.setAttribute('rx', 9);
+    rect.setAttribute('fill', '#1a1a1a');
+    rect.setAttribute('stroke', 'rgba(255,255,255,0.2)');
+    rect.setAttribute('stroke-width', '1');
+    svg.appendChild(rect);
+
+    const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    txt.setAttribute('x', mx);
+    txt.setAttribute('y', my + 4);
+    txt.setAttribute('text-anchor', 'middle');
+    txt.setAttribute('font-size', '10');
+    txt.setAttribute('font-weight', '700');
+    txt.setAttribute('font-family', '-apple-system, sans-serif');
+    txt.setAttribute('fill', 'rgba(255,255,255,0.6)');
+    txt.setAttribute('letter-spacing', '0.03em');
+    txt.textContent = label;
+    svg.appendChild(txt);
   }
 }
 
@@ -1186,8 +1187,9 @@ function breakDuration(t1, t2, d1, d2) {
   if (d1 !== d2) return null;  // different days — no break tile
   const m1 = parseTimeMin(t1), m2 = parseTimeMin(t2);
   if (m1 === null || m2 === null) return null;
-  const diff = m2 - m1;
-  if (diff <= 0 || diff > 300) return null;  // negative or over 5 hours = skip
+  const GAME_DURATION = 60; // assume each game takes 1 hour
+  const diff = m2 - m1 - GAME_DURATION;
+  if (diff <= 0 || diff > 300) return null;  // no break or over 5 hours = skip
   const h = Math.floor(diff / 60), m = diff % 60;
   if (h > 0 && m > 0) return `${h}h ${m}min`;
   if (h > 0) return `${h}h`;
@@ -1290,7 +1292,7 @@ function buildUpcomingCard(g, tournamentId, team, h2h) {
     <div class="game-card-body">
       <div class="game-opponent"><span class="vs">vs</span><span class="opponent-name">${g.opponent}</span></div>
       ${h2hSummary(h2h, g.opponent)}
-      ${g.comments ? `<div class="game-tags"><span class="tag">${g.comments}</span></div>` : ''}`;
+      `;
 
   if (g.next) {
     body += `

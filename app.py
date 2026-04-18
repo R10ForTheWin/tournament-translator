@@ -1242,7 +1242,6 @@ def api_games(tournament_id, team):
             "location":   g["location"],
             "opponent":   describe_slot(opp_sl, dg),
             "your_color": color,
-            "comments":   g["comments"],
             "game_num":    game_num,
             "path":        bracket_path.get(gid) or (f"pool_{g.get('pool_rank')}" if g.get('pool_rank') else None),
             "placeholder": g.get("placeholder", False),
