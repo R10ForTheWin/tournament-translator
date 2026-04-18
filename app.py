@@ -343,13 +343,17 @@ def _find_team_pool_group(team: str, division_games: list):
     return None
 
 def _standings_for_group(group: str, division_games: list, extra_outcomes: dict = None) -> list:
-    """Pool standings with optional simulated outcomes for unplayed games."""
+    """Pool standings with optional simulated outcomes for unplayed games.
+    Handles both direct pool-slot games and W#/L# bracket games within the pool."""
     extra_outcomes = extra_outcomes or {}
-    pool_games, team_stats = [], {}
+    team_stats: dict = {}
 
-    # Pre-populate all known pool members so no team is missing from standings
     for name in _pool_teams_for_group(group, division_games):
         team_stats[name] = {"team": name, "wins": 0, "losses": 0, "gf": 0, "ga": 0}
+
+    # Pass 1: direct pool-slot games (B1-X vs B2-Y format)
+    direct_ids: set = set()
+    game_results: dict = {}  # game_id -> (winner_key, loser_key) for W#/L# resolution
 
     for g in division_games:
         wm = _POOL_SLOT_RE.match(g["white_team"].strip())
@@ -358,11 +362,7 @@ def _standings_for_group(group: str, division_games: list, extra_outcomes: dict 
             continue
         if wm.group(1).upper() != group.upper() or dm.group(1).upper() != group.upper():
             continue
-        pool_games.append(g)
-
-    for g in pool_games:
-        wm = _POOL_SLOT_RE.match(g["white_team"].strip())
-        dm = _POOL_SLOT_RE.match(g["dark_team"].strip())
+        direct_ids.add(g["game_id"])
         wt, dt = wm.group(3).strip(), dm.group(3).strip()
         ws, ds = g.get("white_score"), g.get("dark_score")
         gid = g["game_id"]
@@ -380,25 +380,92 @@ def _standings_for_group(group: str, division_games: list, extra_outcomes: dict 
             continue
 
         if white_wins:
-            team_stats[wkey]["wins"]  += 1; team_stats[dkey]["losses"] += 1
+            team_stats[wkey]["wins"] += 1; team_stats[dkey]["losses"] += 1
         else:
-            team_stats[dkey]["wins"]  += 1; team_stats[wkey]["losses"] += 1
+            team_stats[dkey]["wins"] += 1; team_stats[wkey]["losses"] += 1
         team_stats[wkey]["gf"] += wgf; team_stats[wkey]["ga"] += dgf
         team_stats[dkey]["gf"] += dgf; team_stats[dkey]["ga"] += wgf
+        game_results[gid] = (wkey if white_wins else dkey, dkey if white_wins else wkey)
+
+    # Pass 2: W#/L# bracket games within the pool (e.g. L#2 vs L#4 tiebreaker games)
+    def _resolve_wl(slot: str) -> str | None:
+        wm = _WL_SLOT_RE.match(slot.strip())
+        if not wm:
+            return None
+        ref = re.search(r'(\d+)$', wm.group(1))
+        if not ref:
+            return None
+        ref_num = str(int(ref.group(1)))
+        ref_gid = next((gid for gid in direct_ids if _game_num(gid) == ref_num), None)
+        if not ref_gid or ref_gid not in game_results:
+            return None
+        winner, loser = game_results[ref_gid]
+        return winner if slot.strip()[0].upper() == 'W' else loser
+
+    for g in division_games:
+        if g["game_id"] in direct_ids:
+            continue
+        wt = _resolve_wl(g["white_team"])
+        dt = _resolve_wl(g["dark_team"])
+        if not wt or not dt:
+            continue
+        ws, ds = g.get("white_score"), g.get("dark_score")
+        gid = g["game_id"]
+
+        if g.get("played") and ws is not None and ds is not None:
+            white_wins, wgf, dgf = ws > ds, ws, ds
+        elif gid in extra_outcomes:
+            white_wins, wgf, dgf = extra_outcomes[gid], 0, 0
+        else:
+            continue
+
+        if white_wins:
+            team_stats[wt]["wins"] += 1; team_stats[dt]["losses"] += 1
+        else:
+            team_stats[dt]["wins"] += 1; team_stats[wt]["losses"] += 1
+        team_stats[wt]["gf"] += wgf; team_stats[wt]["ga"] += dgf
+        team_stats[dt]["gf"] += dgf; team_stats[dt]["ga"] += wgf
 
     return sorted(team_stats.values(),
                   key=lambda s: (-s["wins"], -(s["gf"] - s["ga"]), -s["gf"]))
 
 
+def _pool_bracket_games(group: str, division_games: list) -> list:
+    """Return W#/L# games within the pool: both slots reference direct pool games."""
+    direct_ids = {
+        g["game_id"] for g in division_games
+        if (m := _POOL_SLOT_RE.match(g["white_team"].strip())) and
+           (_POOL_SLOT_RE.match(g["dark_team"].strip())) and
+           m.group(1).upper() == group.upper()
+    }
+
+    def _refs_direct(slot: str) -> bool:
+        wm = _WL_SLOT_RE.match(slot.strip())
+        if not wm:
+            return False
+        ref = re.search(r'(\d+)$', wm.group(1))
+        if not ref:
+            return False
+        ref_num = str(int(ref.group(1)))
+        return any(_game_num(gid) == ref_num for gid in direct_ids)
+
+    return [g for g in division_games
+            if g["game_id"] not in direct_ids
+            and _refs_direct(g["white_team"]) and _refs_direct(g["dark_team"])]
+
+
 def _pool_finish_probs(team: str, group: str, division_games: list) -> dict:
     """Returns {rank (int): probability 0-1} for all possible pool finishes."""
-    def _in_group(g):
+    def _is_direct(g):
         wm = _POOL_SLOT_RE.match(g["white_team"].strip())
         dm = _POOL_SLOT_RE.match(g["dark_team"].strip())
         return (wm and dm and wm.group(1).upper() == group.upper()
                 and dm.group(1).upper() == group.upper())
-    pool_games = [g for g in division_games if _in_group(g)]
-    remaining = [g for g in pool_games if not g.get("played")]
+
+    direct_games  = [g for g in division_games if _is_direct(g)]
+    bracket_games = _pool_bracket_games(group, division_games)
+    all_pool_games = direct_games + bracket_games
+    remaining = [g for g in all_pool_games if not g.get("played")]
 
     if not remaining:
         standings = _standings_for_group(group, division_games)
