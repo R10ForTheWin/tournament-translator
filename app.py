@@ -38,6 +38,8 @@ USER_URLS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"
 _URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
 URL_CACHE_TTL      = 300  # re-fetch at most every 5 minutes
 
+_LIVE_SCORES: dict = {}   # {(tournament_id, game_id): {our_score, opp_score, quarter, updated_at}}
+
 _MONTH_MAP = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
               "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
 _RE_YEAR   = re.compile(r"(\d{4})")
@@ -1495,6 +1497,8 @@ def api_games(tournament_id, team):
         for sk, sg in div_map.items():
             sheet_records[sk] = _tournament_records(sg)
 
+    now_la = datetime.now(ZoneInfo('America/Los_Angeles')).replace(tzinfo=None)
+
     for g in my_games:
         game_num = _game_num_map.get(g["game_id"], 1)
         dg     = div_map.get(g["sheet"], [])
@@ -1528,7 +1532,11 @@ def api_games(tournament_id, team):
         winner_next, loser_next = find_next_games(g, dg)
 
         if g["played"]:
-            base["score"]  = _fmt_score(g)
+            ws = g.get("white_score") or 0
+            ds = g.get("dark_score")  or 0
+            base["score"]     = _fmt_score(g)
+            base["our_score"] = ws if color == "WHITE" else ds
+            base["opp_score"] = ds if color == "WHITE" else ws
             result = _result_str(g, team)
             base["result"] = result
             next_game = winner_next if result == "win" else loser_next if result == "loss" else None
@@ -1536,6 +1544,17 @@ def api_games(tournament_id, team):
                 base["next"] = _next_summary(next_game, team, dg)
             played_out.append(base)
         else:
+            # Detect if this game is currently in progress (window: -15 min to +2 hr from start)
+            is_current = False
+            if g.get("date") and g.get("time"):
+                game_dt = datetime.combine(g["date"], g["time"])
+                elapsed_s = (now_la - game_dt).total_seconds()
+                is_current = -900 <= elapsed_s <= 7200
+            base["is_current"] = is_current
+            live = _LIVE_SCORES.get((tournament_id, gid))
+            if live:
+                base["live_score"] = live
+                base["is_current"] = True
             scenarios = {}
             # Suppress a scenario if that game is already shown as its own card
             if winner_next and winner_next["game_id"] not in my_game_ids:
@@ -1574,8 +1593,16 @@ def api_games(tournament_id, team):
             excel.seek(0)
         cumulative_division, cumulative_standings = _read_futures_cumulative_standings(excel, team, sheet)
 
+    our_team_name = team.title()
+    if my_games:
+        sname = my_games[0].get("sheet", "")
+        fn = friendly_team_name(team, sname)
+        if fn:
+            our_team_name = fn.split("·")[0].strip()
+
     return jsonify({
         "team":                 team,
+        "our_team_name":        our_team_name,
         "played":               played_out,
         "upcoming":             upcoming_out,
         "placement":            placement,
@@ -1585,6 +1612,23 @@ def api_games(tournament_id, team):
         "cache_age_s":          _cache_age(tournament_id),
         "cache_ttl_s":          URL_CACHE_TTL,
     })
+
+
+@app.route("/api/live-score/<tournament_id>/<game_id>", methods=["GET"])
+def api_live_score_get(tournament_id, game_id):
+    return jsonify(_LIVE_SCORES.get((tournament_id, game_id)))
+
+
+@app.route("/api/live-score/<tournament_id>/<game_id>", methods=["POST"])
+def api_live_score_post(tournament_id, game_id):
+    body = request.get_json(force=True)
+    _LIVE_SCORES[(tournament_id, game_id)] = {
+        "our_score": max(0, int(body.get("our_score", 0))),
+        "opp_score": max(0, int(body.get("opp_score", 0))),
+        "quarter":   max(1, min(5, int(body.get("quarter", 1)))),
+        "updated_at": time.time(),
+    }
+    return jsonify({"ok": True})
 
 
 @app.route("/api/result/<tournament_id>/<game_id>", methods=["POST"])

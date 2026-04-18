@@ -333,6 +333,36 @@
     .next-game-meta { font-size: 13px; color: var(--muted); margin-top: 3px; }
     .correct-link { font-size: 12px; color: var(--muted); text-decoration: underline; cursor: pointer; display: inline-block; margin-top: 4px; }
 
+    /* ── Live Score / Unified Card Layout ── */
+    .path-banner.result-win  { background: var(--win-bg);  color: var(--win-text); border-bottom: 1px solid rgba(40,160,70,0.2); }
+    .path-banner.result-loss { background: var(--loss-bg); color: var(--loss-text); border-bottom: 1px solid rgba(157,34,53,0.25); }
+    .path-banner.result-tie  { background: var(--tie-bg);  color: var(--tie-text);  border-bottom: 1px solid rgba(255,215,0,0.15); }
+    .path-banner.live-game   { background: rgba(10,40,80,0.55); color: rgba(150,200,255,0.92); border-bottom: 1px solid rgba(100,160,255,0.2); }
+    .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--cardinal); margin-right: 8px; vertical-align: middle; animation: pulse-dot 1.6s ease-in-out infinite; }
+    @keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.45;transform:scale(0.75)} }
+    .team-matchup { }
+    .team-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; }
+    .team-row + .team-row { border-top: 1px solid var(--border); }
+    .team-row-name { font-size: 18px; font-weight: 800; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .team-row-name .vs { font-size: 12px; font-weight: 400; color: var(--muted); margin-right: 5px; }
+    .team-row-name.ours { color: var(--gold); }
+    .team-row-score { font-size: 30px; font-weight: 900; letter-spacing: -1px; flex-shrink: 0; }
+    .team-row-score.ours   { color: var(--gold); }
+    .team-row-score.theirs { color: var(--white); }
+    .team-row-record { font-size: 11px; color: var(--muted); padding-bottom: 6px; }
+    .score-controls { display: flex; align-items: center; gap: 9px; flex-shrink: 0; }
+    .score-btn { width: 32px; height: 32px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.07); color: var(--white); font-size: 20px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+    .score-btn:active { background: rgba(255,255,255,0.18); }
+    .score-num { font-size: 30px; font-weight: 900; letter-spacing: -1px; min-width: 28px; text-align: center; }
+    .score-num.ours   { color: var(--gold); }
+    .score-num.theirs { color: var(--white); }
+    .quarter-strip { display: flex; gap: 5px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+    .quarter-btn { flex: 1; padding: 7px 2px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 11px; font-weight: 700; cursor: pointer; text-align: center; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+    .quarter-btn.active { background: var(--gold); color: #000; border-color: var(--gold); }
+    .live-footer { font-size: 10px; color: var(--muted); text-align: center; margin-top: 8px; opacity: 0.65; letter-spacing: 0.02em; }
+    .final-score-box { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+    .final-score-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 6px; }
+
     /* ── Upload sheet ── */
     .upload-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 200; align-items: flex-end; justify-content: center; backdrop-filter: blur(4px); }
     .upload-overlay.visible { display: flex; }
@@ -918,7 +948,38 @@ async function loadGames(tournamentId, team, sheet) {
 
   // Staircase bracket — all games
   const allGames = [...(data.played || []), ...(data.upcoming || [])];
-  el.appendChild(buildBracketView(allGames, tournamentId, team));
+  const ourName  = data.our_team_name || team;
+  el.appendChild(buildBracketView(allGames, tournamentId, team, ourName));
+
+  // Live score polling — refresh every 45s for any in-progress games
+  if (window._liveScoreInterval) clearInterval(window._liveScoreInterval);
+  const liveGames = (data.upcoming || []).filter(g => g.is_current);
+  if (liveGames.length) {
+    window._liveScoreInterval = setInterval(async () => {
+      for (const g of liveGames) {
+        try {
+          const res = await fetch(`/api/live-score/${encodeURIComponent(tournamentId)}/${g.game_id}`);
+          if (!res.ok) continue;
+          const ls = await res.json();
+          if (!ls) continue;
+          const matchup = document.querySelector(`[data-live-game="${g.game_id}"]`);
+          if (!matchup) continue;
+          matchup.dataset.ourScore = ls.our_score;
+          matchup.dataset.oppScore = ls.opp_score;
+          matchup.dataset.quarter  = ls.quarter;
+          matchup.querySelector('.score-num.ours').textContent   = ls.our_score;
+          matchup.querySelector('.score-num.theirs').textContent = ls.opp_score;
+          matchup.querySelectorAll('.quarter-btn').forEach((btn, i) => {
+            btn.classList.toggle('active', (i + 1) === ls.quarter);
+          });
+          const secs = Math.floor(Date.now() / 1000 - ls.updated_at);
+          const ago  = secs < 60 ? 'just now' : `${Math.floor(secs / 60)} min ago`;
+          const foot = matchup.querySelector('.live-footer');
+          if (foot) foot.textContent = `Unofficial · Updated ${ago}`;
+        } catch(e) {}
+      }
+    }, 45000);
+  }
 
   // Futures season standings table
   if (data.cumulative_standings && data.cumulative_standings.length) {
@@ -966,7 +1027,7 @@ function _dayNum(d) {
   return 2;
 }
 
-function buildBracketView(allGames, tournamentId, team) {
+function buildBracketView(allGames, tournamentId, team, ourName) {
   const vw = window.innerWidth;
   const CARD_W = vw >= 1100 ? 480 : vw >= 860 ? 420 : 340;
   const STEP   = CARD_W + 80;
@@ -1036,8 +1097,8 @@ function buildBracketView(allGames, tournamentId, team) {
         }
       }
       const card = g.result
-        ? buildResultCard(g)
-        : buildUpcomingCard(g, tournamentId, team);
+        ? buildResultCard(g, ourName)
+        : buildUpcomingCard(g, tournamentId, team, ourName);
       card.dataset.gameTime = g.time || '';
       card.dataset.gameDate = g.date || '';
       step.appendChild(card);
@@ -1342,44 +1403,172 @@ function dayClass(dateStr) {
   return 'day-sat';
 }
 
-function buildResultCard(g) {
+async function liveScoreBtn(tournamentId, gameId, field, delta) {
+  const m = document.querySelector(`[data-live-game="${gameId}"]`);
+  if (!m) return;
+  let our = Math.max(0, +(m.dataset.ourScore || 0) + (field === 'our' ? delta : 0));
+  let opp = Math.max(0, +(m.dataset.oppScore || 0) + (field === 'opp' ? delta : 0));
+  const q = +(m.dataset.quarter || 1);
+  m.dataset.ourScore = our; m.dataset.oppScore = opp;
+  m.querySelector('.score-num.ours').textContent   = our;
+  m.querySelector('.score-num.theirs').textContent = opp;
+  try { await fetch(`/api/live-score/${tournamentId}/${gameId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({our_score:our, opp_score:opp, quarter:q}) }); } catch(e) {}
+}
+
+async function liveQuarterBtn(tournamentId, gameId, quarter) {
+  const m = document.querySelector(`[data-live-game="${gameId}"]`);
+  if (!m) return;
+  m.dataset.quarter = quarter;
+  m.querySelectorAll('.quarter-btn').forEach((btn, i) => btn.classList.toggle('active', (i+1) === quarter));
+  const our = +(m.dataset.ourScore||0), opp = +(m.dataset.oppScore||0);
+  try { await fetch(`/api/live-score/${tournamentId}/${gameId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({our_score:our, opp_score:opp, quarter}) }); } catch(e) {}
+}
+
+function buildResultCard(g, ourName) {
   const card = document.createElement('div');
   card.className = `game-card ${dayClass(g.date)}`;
   const cls   = g.result === 'win' ? 'win' : g.result === 'loss' ? 'loss' : 'tie';
-  const label = g.result === 'win' ? 'Win'  : g.result === 'loss' ? 'Loss' : 'Tie';
+  const label = g.result === 'win' ? 'WIN'  : g.result === 'loss' ? 'LOSS' : 'TIE';
+  const ourRec  = fmtRec(g.our_record);
+  const oppRec  = fmtRec(g.opp_record);
+  const nextBox = g.next ? `
+    <div class="next-game-box" style="margin-top:8px">
+      <div class="next-game-label">Next Game</div>
+      <div class="next-game-opponent">vs ${g.next.opponent}</div>
+      <div class="next-game-meta">${g.next.date} · ${g.next.time}</div>
+      ${locationHtml(g.next.location)}
+    </div>` : '';
   card.innerHTML = `
+    <div class="path-banner result-${cls}">${label}</div>
     <div class="game-card-header">
       <div class="game-card-meta">
         <div class="game-card-datetime">${g.time || g.date}</div>
         ${locationHtml(g.location)}
       </div>
-      <span class="result-pill ${cls}">${label}</span>
     </div>
     <div class="game-card-body">
-      <div class="game-opponent"><span class="vs">vs</span><span class="opponent-name">${g.opponent}</span></div>
-      ${recordLine(g)}
-      <div class="game-score">${g.score}</div>
+      <div class="team-matchup">
+        <div class="team-row">
+          <span class="team-row-name ours">${ourName || ''}</span>
+          <span class="team-row-score ours">${g.our_score ?? ''}</span>
+        </div>
+        ${ourRec ? `<div class="team-row-record">${ourRec}</div>` : ''}
+        <div class="team-row">
+          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}</span>
+          <span class="team-row-score theirs">${g.opp_score ?? ''}</span>
+        </div>
+        ${oppRec ? `<div class="team-row-record">${oppRec}</div>` : ''}
+      </div>
+      <div class="final-score-box">
+        <div class="final-score-label">Final Score</div>
+        ${nextBox}
+      </div>
     </div>`;
   return card;
 }
 
-function buildUpcomingCard(g, tournamentId, team) {
+function buildUpcomingCard(g, tournamentId, team, ourName) {
   const card = document.createElement('div');
   const isBranch = !!g.path;
   card.className = `game-card ${dayClass(g.date)}${g.placeholder ? ' placeholder' : ''}${isBranch ? ' branch-card' : ''}`;
 
-  const _ord = n => ['','1st','2nd','3rd'][n] || `${n}th`;
   const opp = g.opponent || '';
   const confirmed = g.placeholder === false;
   const winLabel  = (confirmed || /winner of game/i.test(opp)) ? 'Winners Bracket'     : 'If We Win';
   const loseLabel = (confirmed || /loser of game/i.test(opp))  ? 'Consolation Bracket' : 'If We Lose';
-  const poolRank = g.path?.startsWith('pool_') ? +g.path.split('_')[1] : null;
-  const pathBanner = g.path === 'win'  ? `<div class="path-banner win-path">${winLabel}</div>`
-    : g.path === 'lose' ? `<div class="path-banner lose-path">${loseLabel}</div>`
-    : poolRank !== null ? `<div class="path-banner ${poolRank <= 2 ? 'win-path' : 'lose-path'}">${poolRank <= 2 ? winLabel : loseLabel}</div>`
-    : '';
+  const poolRank  = g.path?.startsWith('pool_') ? +g.path.split('_')[1] : null;
 
-  let body = `${pathBanner}
+  let bannerHtml;
+  if (g.is_current) {
+    bannerHtml = `<div class="path-banner live-game"><span class="live-dot"></span>Current Game</div>`;
+  } else {
+    bannerHtml = g.path === 'win'  ? `<div class="path-banner win-path">${winLabel}</div>`
+      : g.path === 'lose' ? `<div class="path-banner lose-path">${loseLabel}</div>`
+      : poolRank !== null ? `<div class="path-banner ${poolRank <= 2 ? 'win-path' : 'lose-path'}">${poolRank <= 2 ? winLabel : loseLabel}</div>`
+      : '';
+  }
+
+  const ourRec = fmtRec(g.our_record);
+  const oppRec = fmtRec(g.opp_record);
+  const ls     = g.live_score || null;
+  const ourScore = ls?.our_score ?? 0;
+  const oppScore = ls?.opp_score ?? 0;
+  const quarter  = ls?.quarter   ?? 1;
+  const gid = g.game_id;
+  const tid = encodeURIComponent(tournamentId);
+
+  let teamSection;
+  if (g.is_current) {
+    const updAgo = ls?.updated_at
+      ? (() => { const s = Math.floor(Date.now()/1000 - ls.updated_at); return s < 60 ? 'just now' : `${Math.floor(s/60)} min ago`; })()
+      : null;
+    const qBtns = [1,2,3,4,5].map(q =>
+      `<button class="quarter-btn${q === quarter ? ' active' : ''}" onclick="liveQuarterBtn('${tid}','${gid}',${q})">${q===5?'OT':'Q'+q}</button>`
+    ).join('');
+    teamSection = `
+      <div class="team-matchup" data-live-game="${gid}" data-our-score="${ourScore}" data-opp-score="${oppScore}" data-quarter="${quarter}">
+        <div class="team-row">
+          <span class="team-row-name ours">${ourName || ''}</span>
+          <div class="score-controls">
+            <button class="score-btn" onclick="liveScoreBtn('${tid}','${gid}','our',-1)">−</button>
+            <span class="score-num ours">${ourScore}</span>
+            <button class="score-btn" onclick="liveScoreBtn('${tid}','${gid}','our',1)">+</button>
+          </div>
+        </div>
+        ${ourRec ? `<div class="team-row-record">${ourRec}</div>` : ''}
+        <div class="team-row">
+          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}</span>
+          <div class="score-controls">
+            <button class="score-btn" onclick="liveScoreBtn('${tid}','${gid}','opp',-1)">−</button>
+            <span class="score-num theirs">${oppScore}</span>
+            <button class="score-btn" onclick="liveScoreBtn('${tid}','${gid}','opp',1)">+</button>
+          </div>
+        </div>
+        ${oppRec ? `<div class="team-row-record">${oppRec}</div>` : ''}
+        <div class="quarter-strip">${qBtns}</div>
+        <div class="live-footer">Unofficial${updAgo ? ` · Updated ${updAgo}` : ''}</div>
+      </div>`;
+  } else {
+    teamSection = `
+      <div class="team-matchup">
+        <div class="team-row">
+          <span class="team-row-name ours">${ourName || ''}</span>
+        </div>
+        ${ourRec ? `<div class="team-row-record">${ourRec}</div>` : ''}
+        <div class="team-row">
+          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}</span>
+        </div>
+        ${oppRec ? `<div class="team-row-record">${oppRec}</div>` : ''}
+      </div>`;
+  }
+
+  let bottomSection = '';
+  if (!g.is_current) {
+    if (g.next) {
+      bottomSection += `
+        <div class="next-game-box" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+          <div class="next-game-label">Next Game</div>
+          <div class="next-game-opponent">vs ${g.next.opponent}</div>
+          <div class="next-game-meta">${g.next.date} · ${g.next.time}</div>
+          ${locationHtml(g.next.location)}
+        </div>`;
+    }
+    if (g.scenarios && (g.scenarios.win || g.scenarios.lose)) {
+      let branches = '';
+      if (g.scenarios.win) {
+        const n = g.scenarios.win;
+        branches += `<div class="fork-branch"><div class="fork-content"><div class="fork-label">↗ Win</div><div class="fork-opponent">vs ${n.opponent}</div><div class="fork-when">${n.date} · ${n.time} · ${n.location}</div></div></div>`;
+      }
+      if (g.scenarios.lose) {
+        const n = g.scenarios.lose;
+        branches += `<div class="fork-branch"><div class="fork-content"><div class="fork-label">↘ Lose</div><div class="fork-opponent">vs ${n.opponent}</div><div class="fork-when">${n.date} · ${n.time} · ${n.location}</div></div></div>`;
+      }
+      bottomSection += `<div class="scenarios-box"><div class="scenarios-title">What's Next</div><div class="decision-fork">${branches}</div></div>`;
+    }
+  }
+
+  card.innerHTML = `
+    ${bannerHtml}
     <div class="game-card-header">
       <div class="game-card-meta">
         <div class="game-card-datetime">${g.time || g.date}</div>
@@ -1387,35 +1576,9 @@ function buildUpcomingCard(g, tournamentId, team) {
       </div>
     </div>
     <div class="game-card-body">
-      <div class="game-opponent"><span class="vs">vs</span><span class="opponent-name">${g.opponent}</span></div>
-      ${recordLine(g)}
-      `;
-
-  if (g.next) {
-    body += `
-      <div class="next-game-box" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
-        <div class="next-game-label">Next Game</div>
-        <div class="next-game-opponent">vs ${g.next.opponent}</div>
-        <div class="next-game-meta">${g.next.date} · ${g.next.time}</div>
-        ${locationHtml(g.next.location)}
-      </div>`;
-  }
-
-  // Decision-tree fork for win/lose scenarios
-  if (g.scenarios && (g.scenarios.win || g.scenarios.lose)) {
-    let branches = '';
-    if (g.scenarios.win) {
-      const n = g.scenarios.win;
-      branches += `<div class="fork-branch"><div class="fork-content"><div class="fork-label">↗ Win</div><div class="fork-opponent">vs ${n.opponent}</div><div class="fork-when">${n.date} · ${n.time} · ${n.location}</div></div></div>`;
-    }
-    if (g.scenarios.lose) {
-      const n = g.scenarios.lose;
-      branches += `<div class="fork-branch"><div class="fork-content"><div class="fork-label">↘ Lose</div><div class="fork-opponent">vs ${n.opponent}</div><div class="fork-when">${n.date} · ${n.time} · ${n.location}</div></div></div>`;
-    }
-    body += `<div class="scenarios-box"><div class="scenarios-title">What's Next</div><div class="decision-fork">${branches}</div></div>`;
-  }
-  body += `</div>`;
-  card.innerHTML = body;
+      ${teamSection}
+      ${bottomSection}
+    </div>`;
   return card;
 }
 
