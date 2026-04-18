@@ -151,6 +151,17 @@ def find_excel(tournament_id: str):
     return None
 
 
+def _cache_age(tournament_id: str) -> int | None:
+    """Seconds since the Excel was last fetched, or None if not yet cached."""
+    url = TOURNAMENT_URLS.get(tournament_id) or _load_user_urls().get(tournament_id)
+    if not url:
+        url = FUTURES_SHEETS_URL if tournament_id in WPL_TOURNAMENTS else None
+    if not url:
+        return None
+    cached = _URL_CACHE.get(url)
+    return int(time.time() - cached[0]) if cached else None
+
+
 def _tournament_meta(tournament_id: str):
     """Return the KNOWN_TOURNAMENTS entry for this id, or None."""
     return next((t for t in KNOWN_TOURNAMENTS if t["id"] == tournament_id), None)
@@ -1374,6 +1385,8 @@ def api_games(tournament_id, team):
         "pool_standing":        pool_standing,
         "cumulative_standings": cumulative_standings,
         "cumulative_division":  cumulative_division,
+        "cache_age_s":          _cache_age(tournament_id),
+        "cache_ttl_s":          URL_CACHE_TTL,
     })
 
 
