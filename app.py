@@ -1208,6 +1208,23 @@ def api_games(tournament_id, team):
                 if _succ not in _bfs_round:
                     _bfs_q.append((_succ, _r + 1))
 
+    # Pool-finish bracket games (added via composite slot expansion) have no W#/L# links
+    # so they're not in `connected` yet. Group by pool_rank, sort by time per group,
+    # and assign sequential BFS depths after the max W#/L# depth so they form proper
+    # bracket rounds instead of being counted as isolated time-slot games.
+    pf_by_rank: dict[int, list] = {}
+    for g in my_games:
+        pr = g.get("pool_rank")
+        if pr and g["game_id"] not in connected:
+            pf_by_rank.setdefault(pr, []).append(g)
+    if pf_by_rank:
+        max_wl_depth = max(_bfs_round.values()) if _bfs_round else 0
+        for rank, grp in pf_by_rank.items():
+            grp.sort(key=lambda x: (str(x.get("date") or ""), str(x.get("time") or "")))
+            for i, g in enumerate(grp):
+                _bfs_round[g["game_id"]] = max_wl_depth + 1 + i
+        connected.update(_bfs_round.keys())
+
     # Time-slot ordering for isolated (pool play) games not connected to the bracket
     isolated = [g for g in my_games if g["game_id"] not in connected]
     _slot_num: dict[tuple, int] = {}
