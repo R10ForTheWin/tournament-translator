@@ -460,7 +460,10 @@ def describe_slot(slot: str, division_games: list = None) -> str:
     slot = slot.strip()
     name = strip_prefix(slot)
     if name != slot and name:
-        return name  # team name already embedded in slot
+        # If strip_prefix left us with a W#/L# reference (e.g. "E1(4thB)L#7"), resolve it.
+        if re.match(r'^[WL]#', name, re.IGNORECASE):
+            return describe_slot(name, division_games)
+        return name
 
     if division_games:
         # W#N / L#N → resolve to actual winner/loser if game has been played
@@ -471,8 +474,8 @@ def describe_slot(slot: str, division_games: list = None) -> str:
             if ref:
                 ref_game = _game_by_num(str(int(ref.group(1))), division_games)
                 if ref_game:
-                    t1 = strip_prefix(ref_game["white_team"])
-                    t2 = strip_prefix(ref_game["dark_team"])
+                    t1 = describe_slot(ref_game["white_team"], division_games)
+                    t2 = describe_slot(ref_game["dark_team"], division_games)
                     if ref_game.get("played") and ref_game.get("white_score") is not None:
                         white_won = ref_game["white_score"] > ref_game["dark_score"]
                         resolved = (t1 if white_won else t2) if want_winner else (t2 if white_won else t1)
@@ -1469,16 +1472,6 @@ def api_h2h(team):
         rec["games"].sort(key=lambda x: x["date"] or "")
 
     return jsonify(records)
-
-
-@app.route("/api/raw-slots/<tournament_id>/<sheet_name>")
-def api_raw_slots(tournament_id, sheet_name):
-    """Temp debug: return raw white_team/dark_team for every game in a sheet."""
-    excel = find_excel(tournament_id)
-    if not excel:
-        abort(404)
-    games = [g for g in load_and_parse(excel) if g["sheet"] == sheet_name]
-    return jsonify([{"game_id": g["game_id"], "date": str(g["date"]), "white": g["white_team"], "dark": g["dark_team"]} for g in games])
 
 
 @app.route("/api/status")
