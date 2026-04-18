@@ -1111,13 +1111,6 @@ function drawBracketLines(inner, rounds, roundNums) {
     const gx = sx + 40;
     const R = 7; // corner radius
 
-    // Break pill drawn once per column transition, using the first target card's time
-    const firstToCard = toCards[0];
-    const pillDur = breakDuration(
-      fromCard.dataset.gameTime, firstToCard.dataset.gameTime,
-      fromCard.dataset.gameDate, firstToCard.dataset.gameDate
-    );
-
     toCards.forEach((toCard, toIdx) => {
       const toRect = toCard.getBoundingClientRect();
       // Enter at left-center of target card
@@ -1140,12 +1133,14 @@ function drawBracketLines(inner, rounds, roundNums) {
       path.setAttribute('stroke-width', '2.5');
       svg.appendChild(path);
 
-      // Draw break pill once, on the first connector only
-      if (toIdx === 0 && pillDur) {
-        const firstToRect = firstToCard.getBoundingClientRect();
-        const firstTy = firstToRect.top - innerRect.top + firstToRect.height / 2;
+      // Draw a break pill on each connector, computed for that specific target's time
+      const pillDur = breakDuration(
+        fromCard.dataset.gameTime, toCard.dataset.gameTime,
+        fromCard.dataset.gameDate, toCard.dataset.gameDate
+      );
+      if (pillDur) {
         const mx = gx;
-        const my = (sy + firstTy) / 2;
+        const my = (sy + ty) / 2;
         const pillW = (`BREAK ${pillDur}`).length * 6.5 + 16;
         const pillH = 18;
 
