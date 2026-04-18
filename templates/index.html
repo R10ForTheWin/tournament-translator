@@ -831,52 +831,21 @@ async function loadTeams(tournament) {
   el.appendChild(list);
 }
 
-// ── H2H helpers ────────────────────────────────────────────────────────────────
-const _TROJAN_TIER_JS = {
-  cardinal:'A', red:'A', platinum:'A',
-  gold:'B', blue:'B',
-  silver:'C', white:'C', bronze:'C',
-};
-const _STRIP_PREFIX_JS = /^(?:\d+(?:st|nd|rd|th)[A-Z]-|[A-Z]\d+\([^)]+\)-|[WL]#[^-]+-|[A-Z]\d+-|\d+-)/i;
-const _STRIP_COLOR_JS  = /\s+(gold|silver|cardinal|red|blue|white|platinum|bronze|black|green|orange|purple|maroon|gray|grey)\s*$/i;
 
-function normalizeOpp(raw) {
-  let name = raw.trim().replace(_STRIP_PREFIX_JS, '').trim();
-  if (/TROJAN/i.test(name)) {
-    for (const [color, tier] of Object.entries(_TROJAN_TIER_JS)) {
-      if (new RegExp(`\\b${color}\\b`, 'i').test(name)) return [name.toUpperCase(), tier];
-    }
-    return ['TROJAN', 'A'];
-  }
-  let m = name.match(/^(.*?)\s+\(?([ABC])\)?\s*$/i);
-  if (m) return [m[1].trim().toUpperCase(), m[2].toUpperCase()];
-  m = name.match(/^(.*?)\s+([123])\s*$/);
-  if (m) return [m[1].trim().toUpperCase(), 'ABC'[parseInt(m[2])-1]];
-  const club = name.replace(_STRIP_COLOR_JS, '').trim();
-  return [club.toUpperCase(), null];
+function fmtRec(r) {
+  if (!r) return null;
+  const total = r.wins + r.losses + r.ties;
+  if (total === 0) return null;
+  return `${r.wins}W–${r.losses}L${r.ties ? '–'+r.ties+'T' : ''}`;
 }
-function h2hKey(raw) {
-  const [club, tier] = normalizeOpp(raw);
-  return `${club}|${tier||''}`;
-}
-function h2hSummary(h2h, opponentRaw) {
-  if (!h2h) return '';
-  const key = h2hKey(opponentRaw);
-  // Also try fuzzy: find any key whose club portion is a substring match
-  let rec = h2h[key];
-  if (!rec) {
-    const [club] = normalizeOpp(opponentRaw);
-    for (const [k, v] of Object.entries(h2h)) {
-      const kclub = k.split('|')[0];
-      if (kclub === club || kclub.includes(club) || club.includes(kclub)) { rec = v; break; }
-    }
-  }
-  if (!rec) return '';
-  const total = rec.wins + rec.losses + rec.ties;
-  if (total === 0) return '';
-  const tierLabel = rec.tier ? ` (${rec.tier})` : '';
-  const record = `${rec.wins}W–${rec.losses}L${rec.ties ? '–'+rec.ties+'T' : ''}`;
-  return `<div class="h2h-line">All-time${tierLabel}: ${record} in ${total} game${total>1?'s':''}</div>`;
+function recordLine(g) {
+  const us   = fmtRec(g.our_record);
+  const them = fmtRec(g.opp_record);
+  if (!us && !them) return '';
+  const parts = [];
+  if (us)   parts.push(`Us: ${us}`);
+  if (them) parts.push(`Them: ${them}`);
+  return `<div class="h2h-line">${parts.join(' · ')}</div>`;
 }
 
 // ── Games ──────────────────────────────────────────────────────────────────────
@@ -886,15 +855,11 @@ async function loadGames(tournamentId, team, sheet) {
   showView('view-games');
   updateSubnav();
 
-  let data, h2h;
+  let data;
   try {
-    const [gamesRes, h2hRes] = await Promise.all([
-      fetch(`/api/games/${encodeURIComponent(tournamentId)}/${encodeURIComponent(team)}?sheet=${encodeURIComponent(sheet)}`),
-      fetch(`/api/h2h/${encodeURIComponent(team)}`),
-    ]);
+    const gamesRes = await fetch(`/api/games/${encodeURIComponent(tournamentId)}/${encodeURIComponent(team)}?sheet=${encodeURIComponent(sheet)}`);
     if (!gamesRes.ok) throw new Error(`Server error ${gamesRes.status}`);
     data = await gamesRes.json();
-    h2h  = h2hRes.ok ? await h2hRes.json() : null;
   } catch(e) {
     el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted)">This app is in beta — something went wrong loading games. If this keeps happening, shoot DJ a note on WhatsApp.</div>`;
     return;
@@ -939,7 +904,7 @@ async function loadGames(tournamentId, team, sheet) {
 
   // Staircase bracket — all games
   const allGames = [...(data.played || []), ...(data.upcoming || [])];
-  el.appendChild(buildBracketView(allGames, tournamentId, team, h2h));
+  el.appendChild(buildBracketView(allGames, tournamentId, team));
 
   // Futures season standings table
   if (data.cumulative_standings && data.cumulative_standings.length) {
@@ -987,7 +952,7 @@ function _dayNum(d) {
   return 2;
 }
 
-function buildBracketView(allGames, tournamentId, team, h2h) {
+function buildBracketView(allGames, tournamentId, team) {
   const vw = window.innerWidth;
   const CARD_W = vw >= 1100 ? 480 : vw >= 860 ? 420 : 340;
   const STEP   = CARD_W + 80;
@@ -1057,8 +1022,8 @@ function buildBracketView(allGames, tournamentId, team, h2h) {
         }
       }
       const card = g.result
-        ? buildResultCard(g, h2h)
-        : buildUpcomingCard(g, tournamentId, team, h2h);
+        ? buildResultCard(g)
+        : buildUpcomingCard(g, tournamentId, team);
       card.dataset.gameTime = g.time || '';
       card.dataset.gameDate = g.date || '';
       step.appendChild(card);
@@ -1363,7 +1328,7 @@ function dayClass(dateStr) {
   return 'day-sat';
 }
 
-function buildResultCard(g, h2h) {
+function buildResultCard(g) {
   const card = document.createElement('div');
   card.className = `game-card ${dayClass(g.date)}`;
   const cls   = g.result === 'win' ? 'win' : g.result === 'loss' ? 'loss' : 'tie';
@@ -1378,13 +1343,13 @@ function buildResultCard(g, h2h) {
     </div>
     <div class="game-card-body">
       <div class="game-opponent"><span class="vs">vs</span><span class="opponent-name">${g.opponent}</span></div>
-      ${h2hSummary(h2h, g.opponent)}
+      ${recordLine(g)}
       <div class="game-score">${g.score}</div>
     </div>`;
   return card;
 }
 
-function buildUpcomingCard(g, tournamentId, team, h2h) {
+function buildUpcomingCard(g, tournamentId, team) {
   const card = document.createElement('div');
   const isBranch = !!g.path;
   card.className = `game-card ${dayClass(g.date)}${g.placeholder ? ' placeholder' : ''}${isBranch ? ' branch-card' : ''}`;
@@ -1408,7 +1373,7 @@ function buildUpcomingCard(g, tournamentId, team, h2h) {
     </div>
     <div class="game-card-body">
       <div class="game-opponent"><span class="vs">vs</span><span class="opponent-name">${g.opponent}</span></div>
-      ${h2hSummary(h2h, g.opponent)}
+      ${recordLine(g)}
       `;
 
   if (g.next) {

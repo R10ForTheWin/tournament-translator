@@ -916,6 +916,28 @@ def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
     return label, standings
 
 
+def _tournament_records(division_games: list) -> dict:
+    """W/L/T record keyed by uppercase team name for all played games in the division."""
+    records: dict = {}
+    for g in division_games:
+        if not g.get("played") or g.get("white_score") is None:
+            continue
+        wt = strip_prefix(g["white_team"]).upper()
+        dt = strip_prefix(g["dark_team"]).upper()
+        if not wt or not dt:
+            continue
+        ws, ds = g["white_score"], g["dark_score"]
+        for t in (wt, dt):
+            records.setdefault(t, {"wins": 0, "losses": 0, "ties": 0})
+        if ws > ds:
+            records[wt]["wins"] += 1; records[dt]["losses"] += 1
+        elif ds > ws:
+            records[dt]["wins"] += 1; records[wt]["losses"] += 1
+        else:
+            records[wt]["ties"] += 1; records[dt]["ties"] += 1
+    return records
+
+
 def _infer_placement(played_out: list) -> str | None:
     """Parse the last played game's comment for an ordinal (e.g. '3rd', '13th').
     Win → that place; Loss → that place + 1."""
@@ -1259,12 +1281,27 @@ def api_games(tournament_id, team):
             key = (g["date"], g["time"])
             _game_num_map[gid] = _slot_num.get(key, 1)
 
+    show_records = tournament_id not in WPL_TOURNAMENTS
+    sheet_records: dict = {}
+    if show_records:
+        for sk, sg in div_map.items():
+            sheet_records[sk] = _tournament_records(sg)
+
     for g in my_games:
         game_num = _game_num_map.get(g["game_id"], 1)
         dg     = div_map.get(g["sheet"], [])
         gid    = g["game_id"]
         opp_sl = g["dark_team"] if team_matches(g["white_team"], team) else g["white_team"]
         color  = "WHITE" if team_matches(g["white_team"], team) else "DARK"
+
+        our_rec  = None
+        opp_rec  = None
+        if show_records:
+            trec    = sheet_records.get(g["sheet"], {})
+            our_key = strip_prefix(g["white_team"] if color == "WHITE" else g["dark_team"]).upper()
+            opp_key = strip_prefix(opp_sl).upper()
+            our_rec = trec.get(our_key)
+            opp_rec = trec.get(opp_key)
 
         base = {
             "game_id":    gid,
@@ -1276,6 +1313,8 @@ def api_games(tournament_id, team):
             "game_num":    game_num,
             "path":        bracket_path.get(gid) or (f"pool_{g.get('pool_rank')}" if g.get('pool_rank') else None),
             "placeholder": g.get("placeholder", False),
+            "our_record":  our_rec,
+            "opp_record":  opp_rec,
         }
 
         winner_next, loser_next = find_next_games(g, dg)
