@@ -1526,6 +1526,15 @@ def api_h2h(team):
     return jsonify(records)
 
 
+@app.route("/api/raw-slots/<tournament_id>/<sheet_name>")
+def api_raw_slots(tournament_id, sheet_name):
+    excel = find_excel(tournament_id)
+    if not excel:
+        abort(404)
+    games = [g for g in load_and_parse(excel) if g["sheet"] == sheet_name]
+    return jsonify([{"game_id": g["game_id"], "date": str(g["date"]), "white": g["white_team"], "dark": g["dark_team"], "ws": g.get("white_score"), "ds": g.get("dark_score")} for g in games])
+
+
 @app.route("/api/status")
 def api_status():
     """Diagnostic endpoint: Excel fetch health, cache state, game counts."""
