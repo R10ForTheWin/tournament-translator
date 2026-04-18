@@ -272,12 +272,20 @@
     .bracket-step.first-step .bracket-day-header { margin-top: 0; border-top: none; padding-top: 4px; }
     .bracket-game-num-header { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); padding: 0 0 6px; }
 
-    /* ── Place Predictor tile ── */
-    .predictor-tile { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-top: 24px; }
-    .predictor-header { padding: 12px 16px 10px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: baseline; }
-    .predictor-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); }
-    .predictor-standing { font-size: 12px; color: var(--muted); }
-    .predictor-body { padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 7px; }
+    /* ── Place Predictor button on team list ── */
+    .predict-btn { background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 6px 8px; color: var(--gold); cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin-right: 8px; }
+    .predict-btn:active { background: rgba(255,255,255,0.14); }
+
+    /* ── Place Predictor bottom sheet ── */
+    .pred-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 200; display: flex; align-items: flex-end; }
+    .pred-sheet { background: #1c1c1e; border-radius: 16px 16px 0 0; width: 100%; max-height: 80vh; overflow-y: auto; padding-bottom: env(safe-area-inset-bottom, 16px); }
+    .pred-sheet-handle { width: 36px; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; margin: 10px auto 0; }
+    .pred-sheet-header { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+    .pred-sheet-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); }
+    .pred-sheet-team { font-size: 15px; font-weight: 700; color: var(--white); margin-top: 2px; }
+    .pred-sheet-standing { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .pred-sheet-body { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
+    .pred-sheet-msg { font-size: 14px; color: var(--muted); text-align: center; padding: 24px 0; }
     .predictor-row { display: flex; align-items: center; gap: 10px; }
     .predictor-rank { font-size: 14px; font-weight: 700; color: var(--white); width: 72px; flex-shrink: 0; }
     .predictor-bar-wrap { flex: 1; height: 13px; background: rgba(255,255,255,0.07); border-radius: 2px; overflow: hidden; }
@@ -286,8 +294,8 @@
     .predictor-row.current .predictor-rank { color: var(--gold); font-weight: 800; }
     .predictor-row.current .predictor-bar { background: var(--gold); }
     .predictor-row.current .predictor-pct { color: var(--gold); }
-    .predictor-note { font-size: 11px; color: var(--muted); padding: 8px 14px 10px; border-top: 1px solid var(--border); }
-    .predictor-all-teams { padding: 6px 14px 10px; border-top: 1px solid var(--border); }
+    .predictor-note { font-size: 11px; color: var(--muted); padding-top: 8px; border-top: 1px solid var(--border); }
+    .predictor-all-teams { padding-top: 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
     .predictor-team-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
     .predictor-team-rank { width: 20px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
     .predictor-team-name { flex: 1; font-weight: 500; }
@@ -765,7 +773,18 @@ async function loadTeams(tournament) {
           ${subLabel ? `<div class="list-card-sub" style="font-size:12px;color:var(--muted);margin-top:2px">${subLabel}</div>` : ''}
         </div>
       </div>
+      <button class="predict-btn" title="Place Predictor">
+        <svg width="15" height="13" viewBox="0 0 15 13" fill="currentColor">
+          <rect x="0" y="7" width="4" height="6" rx="1"/>
+          <rect x="5.5" y="3.5" width="4" height="9.5" rx="1"/>
+          <rect x="11" y="0" width="4" height="13" rx="1"/>
+        </svg>
+      </button>
       <span class="list-arrow">›</span>`;
+    card.querySelector('.predict-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      showPredictorSheet(tournament.id, t.name, t.sheet, t.friendly || mainLabel);
+    });
     card.onclick = () => {
       state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
       loadGames(tournament.id, t.name, t.sheet);
@@ -877,11 +896,6 @@ async function loadGames(tournamentId, team, sheet) {
   // Staircase bracket — all games
   const allGames = [...(data.played || []), ...(data.upcoming || [])];
   el.appendChild(buildBracketView(allGames, tournamentId, team, h2h));
-
-  // Place Predictor
-  if (data.upcoming && data.upcoming.length) {
-    loadPlacePredictor(el, tournamentId, team, sheet);
-  }
 
   // Futures season standings table
   if (data.cumulative_standings && data.cumulative_standings.length) {
@@ -1196,20 +1210,45 @@ function breakDuration(t1, t2, d1, d2) {
   return `${m}min`;
 }
 
-async function loadPlacePredictor(container, tournamentId, team, sheet) {
+async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'pred-backdrop';
+  backdrop.innerHTML = `
+    <div class="pred-sheet">
+      <div class="pred-sheet-handle"></div>
+      <div class="pred-sheet-header">
+        <div class="pred-sheet-title">Place Predictor</div>
+        <div class="pred-sheet-team">${friendlyName}</div>
+        <div class="pred-sheet-standing" id="pred-standing">Loading…</div>
+      </div>
+      <div class="pred-sheet-body" id="pred-body">
+        <div class="pred-sheet-msg">
+          <svg class="wp-spinner" viewBox="0 0 36 36" width="28" height="28" fill="none" stroke="var(--cardinal)" stroke-linecap="round"><circle cx="18" cy="18" r="15" stroke-width="2" stroke-dasharray="60 35"/></svg>
+        </div>
+      </div>
+    </div>`;
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) backdrop.remove(); });
+  document.body.appendChild(backdrop);
+
   try {
     const qs = sheet ? `?sheet=${encodeURIComponent(sheet)}` : '';
     const res = await fetch(`/api/place-predictor/${tournamentId}/${encodeURIComponent(team)}${qs}`);
-    if (!res.ok) return;
-    const data = await res.json();
-    if (!data.pool || !data.finish_probs.length) return;
+    const data = res.ok ? await res.json() : null;
+
+    const standingEl = backdrop.querySelector('#pred-standing');
+    const bodyEl     = backdrop.querySelector('#pred-body');
+
+    if (!data || !data.pool || !data.finish_probs.length) {
+      standingEl.textContent = '';
+      bodyEl.innerHTML = `<div class="pred-sheet-msg">Pool schedule not posted yet — check back once games are available.</div>`;
+      return;
+    }
 
     const p = data.pool;
     const ordFn = n => { const s=['th','st','nd','rd']; const v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); };
-    const standingLabel = `Currently ${ordFn(p.current_rank)} in Pool ${p.group}`;
-    const record = `${p.wins}W · ${p.losses}L`;
-    const maxPct = Math.max(...data.finish_probs.map(r => r.pct), 1);
+    standingEl.textContent = `Currently ${ordFn(p.current_rank)} in Pool ${p.group} · ${p.wins}W ${p.losses}L`;
 
+    const maxPct = Math.max(...data.finish_probs.map(r => r.pct), 1);
     const rows = data.finish_probs.map(r => {
       const isCurrent = r.rank === p.current_rank;
       const barW = Math.round((r.pct / maxPct) * 100);
@@ -1228,21 +1267,13 @@ async function loadPlacePredictor(container, tournamentId, team, sheet) {
       </div>`
     ).join('');
 
-    const tile = document.createElement('div');
-    tile.className = 'predictor-tile';
-    tile.innerHTML = `
-      <div class="predictor-header">
-        <div class="predictor-title">Place Predictor</div>
-        <div class="predictor-standing">${standingLabel}</div>
-        <div class="predictor-record">${record}</div>
-      </div>
-      <div class="predictor-body">
-        ${rows}
-        ${teamRows ? `<div class="predictor-all-teams">${teamRows}</div>` : ''}
-        <div class="predictor-note">Based on equal probability for remaining pool games</div>
-      </div>`;
-    container.appendChild(tile);
-  } catch (e) { /* silent fail */ }
+    bodyEl.innerHTML = `
+      ${rows}
+      ${teamRows ? `<div class="predictor-all-teams">${teamRows}</div>` : ''}
+      <div class="predictor-note">Based on equal probability for remaining pool games</div>`;
+  } catch (e) {
+    backdrop.querySelector('#pred-body').innerHTML = `<div class="pred-sheet-msg">Unable to load prediction.</div>`;
+  }
 }
 
 function dayClass(dateStr) {
