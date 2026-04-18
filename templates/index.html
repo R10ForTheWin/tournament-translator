@@ -624,8 +624,15 @@ function goTournament() {
 
 // ── Tournaments ────────────────────────────────────────────────────────────────
 async function loadTournaments() {
-  const res  = await fetch('/api/tournaments');
-  const list = await res.json();
+  let res, list;
+  try {
+    res  = await fetch('/api/tournaments');
+    list = await res.json();
+  } catch(e) {
+    document.getElementById('tournament-list-content').innerHTML =
+      `<div style="text-align:center;padding:48px 20px;color:var(--muted)">Unable to load schedule. Please check your connection and refresh.</div>`;
+    return;
+  }
   const upcoming = list.filter(t => !t.past);
   const past     = list.filter(t =>  t.past);
   const el = document.getElementById('tournament-list-content');
@@ -736,8 +743,14 @@ async function loadTeams(tournament) {
   showView('view-teams');
   updateSubnav();
 
-  const res   = await fetch(`/api/trojan-teams/${encodeURIComponent(tournament.id)}`);
-  const teams = await res.json();
+  let res, teams;
+  try {
+    res   = await fetch(`/api/trojan-teams/${encodeURIComponent(tournament.id)}`);
+    teams = await res.json();
+  } catch(e) {
+    el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted)">Unable to load teams. Please check your connection and try again.</div>`;
+    return;
+  }
 
   if (!teams.length) {
     el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted)">No Trojan teams found in this file.</div>`;
@@ -864,12 +877,19 @@ async function loadGames(tournamentId, team, sheet) {
   showView('view-games');
   updateSubnav();
 
-  const [gamesRes, h2hRes] = await Promise.all([
-    fetch(`/api/games/${encodeURIComponent(tournamentId)}/${encodeURIComponent(team)}?sheet=${encodeURIComponent(sheet)}`),
-    fetch(`/api/h2h/${encodeURIComponent(team)}`),
-  ]);
-  const data = await gamesRes.json();
-  const h2h  = h2hRes.ok ? await h2hRes.json() : null;
+  let data, h2h;
+  try {
+    const [gamesRes, h2hRes] = await Promise.all([
+      fetch(`/api/games/${encodeURIComponent(tournamentId)}/${encodeURIComponent(team)}?sheet=${encodeURIComponent(sheet)}`),
+      fetch(`/api/h2h/${encodeURIComponent(team)}`),
+    ]);
+    if (!gamesRes.ok) throw new Error(`Server error ${gamesRes.status}`);
+    data = await gamesRes.json();
+    h2h  = h2hRes.ok ? await h2hRes.json() : null;
+  } catch(e) {
+    el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted)">Unable to load games. Please check your connection and try again.</div>`;
+    return;
+  }
   el.innerHTML = '';
 
   if (!data.played.length && !data.upcoming.length) {
