@@ -1170,7 +1170,7 @@ function drawBracketLines(inner, rounds, roundNums) {
         const isDayChange = fromCard.dataset.gameDate !== toCard.dataset.gameDate;
         // Day-change pill: only once per column transition (on the first connector)
         if (!isDayChange || !dayPillAdded) {
-          pendingPills.push({ mx: gx, my: sy + (ty - sy) * 0.25, label: pillDur });
+          pendingPills.push({ mx: gx, my: sy + (ty - sy) * 0.75, label: pillDur });
           if (isDayChange) dayPillAdded = true;
         }
       }
