@@ -1377,9 +1377,10 @@ function buildUpcomingCard(g, tournamentId, team, h2h) {
   const opp = g.opponent || '';
   const winLabel  = /winner of game/i.test(opp) ? 'Winners Bracket'      : 'If We Win';
   const loseLabel = /loser of game/i.test(opp)  ? 'Consolation Bracket'  : 'If We Lose';
+  const poolRank = g.path?.startsWith('pool_') ? +g.path.split('_')[1] : null;
   const pathBanner = g.path === 'win'  ? `<div class="path-banner win-path">${winLabel}</div>`
     : g.path === 'lose' ? `<div class="path-banner lose-path">${loseLabel}</div>`
-    : g.path?.startsWith('pool_') ? `<div class="path-banner pool-path">If ${_ord(+g.path.split('_')[1])} Place</div>`
+    : poolRank !== null ? `<div class="path-banner ${poolRank <= 2 ? 'win-path' : 'lose-path'}">${poolRank <= 2 ? winLabel : loseLabel}</div>`
     : '';
 
   let body = `${pathBanner}
