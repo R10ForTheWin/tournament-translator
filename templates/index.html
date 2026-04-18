@@ -104,6 +104,15 @@
     @media (orientation: landscape) {
       .bracket-stair-wrap { margin: 0 calc(-1 * max(16px, env(safe-area-inset-left))); padding: 0 max(16px, env(safe-area-inset-left)) 32px; }
     }
+    @media (min-width: 860px) {
+      main { max-width: 820px; }
+      .game-card { margin-bottom: 16px; }
+      .bracket-step { width: 420px; }
+    }
+    @media (min-width: 1100px) {
+      main { max-width: 1040px; }
+      .bracket-step { width: 480px; }
+    }
 
     /* ── Section labels ── */
     .section-label {
@@ -979,8 +988,9 @@ function _dayNum(d) {
 }
 
 function buildBracketView(allGames, tournamentId, team, h2h) {
-  const STEP   = 420; // card width 340 + gap 80
-  const CARD_W = 340;
+  const vw = window.innerWidth;
+  const CARD_W = vw >= 1100 ? 480 : vw >= 860 ? 420 : 340;
+  const STEP   = CARD_W + 80;
 
   const rounds = {};
   allGames.forEach(g => {
