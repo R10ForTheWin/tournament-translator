@@ -630,7 +630,7 @@ async function loadTournaments() {
     list = await res.json();
   } catch(e) {
     document.getElementById('tournament-list-content').innerHTML =
-      `<div style="text-align:center;padding:48px 20px;color:var(--muted)">Unable to load schedule. Please check your connection and refresh.</div>`;
+      `<div style="text-align:center;padding:48px 20px;color:var(--muted)">This app is in beta — something went wrong loading the schedule. If this keeps happening, shoot DJ a note on WhatsApp.</div>`;
     return;
   }
   const upcoming = list.filter(t => !t.past);
@@ -748,7 +748,7 @@ async function loadTeams(tournament) {
     res   = await fetch(`/api/trojan-teams/${encodeURIComponent(tournament.id)}`);
     teams = await res.json();
   } catch(e) {
-    el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted)">Unable to load teams. Please check your connection and try again.</div>`;
+    el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted)">This app is in beta — something went wrong loading teams. If this keeps happening, shoot DJ a note on WhatsApp.</div>`;
     return;
   }
 
@@ -887,7 +887,7 @@ async function loadGames(tournamentId, team, sheet) {
     data = await gamesRes.json();
     h2h  = h2hRes.ok ? await h2hRes.json() : null;
   } catch(e) {
-    el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted)">Unable to load games. Please check your connection and try again.</div>`;
+    el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted)">This app is in beta — something went wrong loading games. If this keeps happening, shoot DJ a note on WhatsApp.</div>`;
     return;
   }
   el.innerHTML = '';
@@ -1153,7 +1153,9 @@ function drawBracketLines(inner, rounds, roundNums) {
     const toCards   = toStep.querySelectorAll('.game-card');
     if (!fromCards.length || !toCards.length) continue;
 
-    const fromCard = fromCards[fromCards.length - 1];
+    // Prefer a confirmed (non-scenario) card as the connector source.
+    // If all are scenarios, use the first (win path) not the last (lose path).
+    const fromCard = Array.from(fromCards).find(c => !c.closest('.branch-card')) || fromCards[0];
     const fromRect = fromCard.getBoundingClientRect();
     const sx = fromRect.right - innerRect.left;
     const sy = fromRect.top - innerRect.top + fromRect.height / 2;

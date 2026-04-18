@@ -1471,6 +1471,49 @@ def api_h2h(team):
     return jsonify(records)
 
 
+@app.route("/api/status")
+def api_status():
+    """Diagnostic endpoint: Excel fetch health, cache state, game counts."""
+    import datetime as dt
+    now = time.time()
+    results = []
+    for t in KNOWN_TOURNAMENTS:
+        tid = t["id"]
+        url = TOURNAMENT_URLS.get(tid) or _load_user_urls().get(tid)
+        cached = _URL_CACHE.get(url) if url else None
+        fetched_at = dt.datetime.utcfromtimestamp(cached[0]).strftime("%H:%M:%S UTC") if cached else None
+        age_s = int(now - cached[0]) if cached else None
+        stale = age_s is not None and age_s > URL_CACHE_TTL
+
+        game_count = None
+        sheet_count = None
+        error = None
+        try:
+            excel = find_excel(tid)
+            if excel:
+                games = load_and_parse(excel)
+                game_count = len(games)
+                sheet_count = len({g["sheet"] for g in games})
+            else:
+                error = "no excel"
+        except Exception as e:
+            error = str(e)[:120]
+
+        results.append({
+            "id":          tid,
+            "name":        t["name"],
+            "has_url":     bool(url),
+            "cached":      cached is not None,
+            "fetched_at":  fetched_at,
+            "cache_age_s": age_s,
+            "stale":       stale,
+            "games":       game_count,
+            "sheets":      sheet_count,
+            "error":       error,
+        })
+    return jsonify({"server_time": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), "tournaments": results})
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
     app.run(host="0.0.0.0", port=port, debug=False)
