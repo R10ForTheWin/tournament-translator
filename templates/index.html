@@ -274,7 +274,7 @@
     .break-duration { font-size: 15px; font-weight: 700; color: var(--white); line-height: 1.1; }
 
     /* ── Bracket staircase view ── */
-    .cache-tag { font-size: 10px; color: var(--muted); text-align: center; margin-top: 8px; opacity: 0.6; letter-spacing: 0.03em; }
+    .cache-tag { font-size: 10px; color: var(--muted); text-align: center; margin-bottom: 8px; opacity: 0.6; letter-spacing: 0.03em; }
     .bracket-stair-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -16px; padding: 0 16px 32px; }
     .bracket-stair-inner { position: relative; }
     .bracket-step { width: 340px; margin-bottom: 6px; }
@@ -903,11 +903,7 @@ async function loadGames(tournamentId, team, sheet) {
     el.appendChild(banner);
   }
 
-  // Staircase bracket — all games
-  const allGames = [...(data.played || []), ...(data.upcoming || [])];
-  el.appendChild(buildBracketView(allGames, tournamentId, team));
-
-  // Last-updated tag
+  // Last-updated tag — top of bracket
   if (data.cache_age_s != null) {
     const ttl = data.cache_ttl_s || 300;
     const ageMin = Math.floor(data.cache_age_s / 60);
@@ -919,6 +915,10 @@ async function loadGames(tournamentId, team, sheet) {
     tag.textContent = `Schedule last fetched ${ageLabel} · ${nextLabel}`;
     el.appendChild(tag);
   }
+
+  // Staircase bracket — all games
+  const allGames = [...(data.played || []), ...(data.upcoming || [])];
+  el.appendChild(buildBracketView(allGames, tournamentId, team));
 
   // Futures season standings table
   if (data.cumulative_standings && data.cumulative_standings.length) {
