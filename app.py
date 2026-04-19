@@ -748,24 +748,35 @@ def _game_num(game_id: str):
 
 
 def _build_division_rounds(division_games: list) -> dict[str, int]:
-    """Assign bracket round numbers to every game in a division via topological sort.
+    """Assign round numbers to all games in a division via two-pass topological sort.
 
-    W#/L# linked games form a DAG — topological sort gives each game a round number
-    equal to 1 + max(predecessor rounds). Root games (no predecessors) = round 1.
-    Composite-slot placement games (no W#/L# predecessors) are grouped by time slot
-    and assigned rounds after the deepest W#/L# round, in chronological order.
+    The standard tournament structure has a gap between W#/L# bracket games and
+    composite-slot placement games (Sunday AM) — no explicit W#/L# link bridges
+    them. A single Kahn's pass puts composite games at round 1 (wrong). Fix:
+
+    Pass 1  — Kahn's on non-composite games with no composite predecessors.
+    Middle  — Composite-slot games assigned after Pass 1 max, sorted by time.
+    Pass 2  — Remaining non-composite games (Sunday PM W#/L# referencing Sunday
+              AM composite games) assigned after their now-known predecessors.
 
     Returns: game_id -> round (1-indexed).
     """
-    by_num: dict[str, str] = {}   # game_num_str -> game_id
+    by_num: dict[str, str] = {}
     for g in division_games:
         n = _game_num(g["game_id"])
         if n:
             by_num[n] = g["game_id"]
 
+    def _is_composite(g) -> bool:
+        for slot in (g["white_team"], g["dark_team"]):
+            s = slot.strip()
+            if _FINISH_SLOT_RE.match(s) or _COMPOSITE_SLOT_RE.search(s):
+                return True
+        return False
+
+    # Build full W#/L# predecessor/successor maps
     preds: dict[str, set] = {g["game_id"]: set() for g in division_games}
     succs: dict[str, list] = {g["game_id"]: []   for g in division_games}
-
     for g in division_games:
         for slot in (g["white_team"], g["dark_team"]):
             s = slot.strip()
@@ -773,39 +784,54 @@ def _build_division_rounds(division_games: list) -> dict[str, int]:
             if wm:
                 ref = re.search(r"(\d+)$", wm.group(1))
                 if ref:
-                    pred_id = by_num.get(str(int(ref.group(1))))
-                    if pred_id and pred_id != g["game_id"]:
-                        preds[g["game_id"]].add(pred_id)
-                        succs[pred_id].append(g["game_id"])
+                    pid = by_num.get(str(int(ref.group(1))))
+                    if pid and pid != g["game_id"]:
+                        preds[g["game_id"]].add(pid)
+                        succs[pid].append(g["game_id"])
 
-    # Kahn's algorithm — process games whose predecessors are all resolved
+    comp_ids    = {g["game_id"] for g in division_games if _is_composite(g)}
+    non_comp    = {g["game_id"] for g in division_games} - comp_ids
+    # Pass 1: non-composite games whose predecessors are all non-composite
+    pass1       = {gid for gid in non_comp if not any(p in comp_ids for p in preds[gid])}
+
     rounds: dict[str, int] = {}
-    in_deg = {gid: len(p) for gid, p in preds.items()}
-    queue = [gid for gid, d in in_deg.items() if d == 0]
+    in_deg = {gid: sum(1 for p in preds[gid] if p in pass1) for gid in pass1}
+    queue  = [gid for gid, d in in_deg.items() if d == 0]
     while queue:
         gid = queue.pop(0)
         pred_r = [rounds[p] for p in preds[gid] if p in rounds]
         rounds[gid] = (max(pred_r) + 1) if pred_r else 1
         for succ in succs[gid]:
-            in_deg[succ] -= 1
-            if in_deg[succ] == 0:
-                queue.append(succ)
+            if succ in pass1 and succ not in rounds:
+                in_deg[succ] -= 1
+                if in_deg[succ] == 0:
+                    queue.append(succ)
 
-    # Composite-slot games not reached by W#/L# links: sort by (date, time),
-    # group same-time games into the same round.
-    max_wl = max(rounds.values(), default=0)
-    composite = sorted(
-        [g for g in division_games if g["game_id"] not in rounds],
+    # Middle: composite-slot games sorted by (date, time); same time → same round
+    max_p1 = max(rounds.values(), default=0)
+    comp_sorted = sorted(
+        [g for g in division_games if g["game_id"] in comp_ids],
         key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
     )
-    slot_round: dict[tuple, int] = {}
-    offset = 0
-    for g in composite:
+    slot_r: dict[tuple, int] = {}
+    off = 0
+    for g in comp_sorted:
         key = (g.get("date"), g.get("time"))
-        if key not in slot_round:
-            slot_round[key] = max_wl + 1 + offset
-            offset += 1
-        rounds[g["game_id"]] = slot_round[key]
+        if key not in slot_r:
+            slot_r[key] = max_p1 + 1 + off
+            off += 1
+        rounds[g["game_id"]] = slot_r[key]
+
+    # Pass 2: non-composite games with composite predecessors (Sunday PM W#/L#)
+    pass2 = non_comp - pass1
+    changed = True
+    while changed:
+        changed = False
+        for gid in list(pass2):
+            if gid not in rounds and all(p in rounds for p in preds[gid]):
+                pred_r = [rounds[p] for p in preds[gid] if p in rounds]
+                rounds[gid] = (max(pred_r) + 1) if pred_r else max_p1 + 1
+                changed = True
 
     return rounds
 
