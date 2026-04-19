@@ -1506,13 +1506,18 @@ def api_games(tournament_id, team):
         (_game_num_map[gid] for gid in connected if gid in _game_num_map),
         default=pool_count,
     )
-    pf_by_rank: dict[int, list] = {}
-    for g in my_games:
-        if g["game_id"] not in _game_num_map and g.get("pool_rank"):
-            pf_by_rank.setdefault(g["pool_rank"], []).append(g)
-    for offset, rank in enumerate(sorted(pf_by_rank.keys())):
-        for g in pf_by_rank[rank]:
-            _game_num_map[g["game_id"]] = max_wl_num + 1 + offset
+    # Sort pool-finish games by time so game_nums are chronological, not rank-ordered.
+    # Games at the same (date, time) share a game_num — they're scenario alternatives.
+    pf_unassigned = [g for g in my_games if g["game_id"] not in _game_num_map and g.get("pool_rank")]
+    pf_unassigned.sort(key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()))
+    pf_slot: dict[tuple, int] = {}
+    pf_offset = 0
+    for g in pf_unassigned:
+        key = (g.get("date"), g.get("time"))
+        if key not in pf_slot:
+            pf_slot[key] = max_wl_num + 1 + pf_offset
+            pf_offset += 1
+        _game_num_map[g["game_id"]] = pf_slot[key]
 
     show_records = tournament_id not in WPL_TOURNAMENTS
     sheet_records: dict = {}
