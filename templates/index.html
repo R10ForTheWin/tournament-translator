@@ -1431,13 +1431,6 @@ function buildResultCard(g, ourName) {
   const label = g.result === 'win' ? 'WIN'  : g.result === 'loss' ? 'LOSS' : 'TIE';
   const ourRec  = fmtRec(g.our_record);
   const oppRec  = fmtRec(g.opp_record);
-  const nextBox = g.next ? `
-    <div class="next-game-box" style="margin-top:8px">
-      <div class="next-game-label">Next Game</div>
-      <div class="next-game-opponent">vs ${g.next.opponent}</div>
-      <div class="next-game-meta">${g.next.date} · ${g.next.time}</div>
-      ${locationHtml(g.next.location)}
-    </div>` : '';
   card.innerHTML = `
     <div class="path-banner result-${cls}">${label}</div>
     <div class="game-card-header">
@@ -1461,7 +1454,6 @@ function buildResultCard(g, ourName) {
       </div>
       <div class="final-score-box">
         <div class="final-score-label">Final Score</div>
-        ${nextBox}
       </div>
     </div>`;
   return card;
