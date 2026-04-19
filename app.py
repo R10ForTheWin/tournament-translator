@@ -1477,9 +1477,11 @@ def api_games(tournament_id, team):
     # Game numbers represent "which game of the day is this for the team"
     # (1 = first game, 2 = second, etc.) regardless of Excel game IDs.
     #
-    # Step 1: Isolated pool-play games (not W#/L# linked) sorted by time → 1, 2, 3…
+    # Step 1: Isolated pool-play games (not W#/L# linked, no pool_rank) → 1, 2, 3…
+    # pool_rank games (composite-slot Sunday placement games) are also not in
+    # `connected` but must NOT count toward pool_count — they're handled in Step 3.
     isolated = sorted(
-        [g for g in my_games if g["game_id"] not in connected],
+        [g for g in my_games if g["game_id"] not in connected and not g.get("pool_rank")],
         key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
     )
     _game_num_map: dict[str, int] = {}
