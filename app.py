@@ -785,6 +785,27 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             if m and team_matches(slot, team):
                 groups.add(m.group(1).upper())
 
+    # Determine team's actual pool finish per group if pool play is complete.
+    # Used to prune composite-slot Sunday games for ranks we didn't finish.
+    grp_pool_games: dict[str, list] = {}
+    for g in division_games:
+        wm = _POOL_SLOT_RE.match(g["white_team"].strip())
+        dm = _POOL_SLOT_RE.match(g["dark_team"].strip())
+        if wm and dm:
+            grp_pool_games.setdefault(wm.group(1).upper(), []).append(g)
+    team_pool_ranks: dict[str, int] = {}
+    for grp in groups:
+        pool_games = grp_pool_games.get(grp, [])
+        if pool_games and all(
+            g.get("white_score") is not None and g.get("dark_score") is not None
+            for g in pool_games
+        ):
+            standings = _standings_for_group(grp, division_games)
+            for i, s in enumerate(standings):
+                if team_matches(s["team"], team):
+                    team_pool_ranks[grp] = i + 1
+                    break
+
     # game_num -> (game_dict, is_placeholder)
     reachable: dict[str, tuple] = {}
     for g in direct_games:
@@ -809,8 +830,14 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                 # Pool-finish bracket (1stA-, K4(1stG), etc.)
                 fm = _FINISH_SLOT_RE.match(s) or _COMPOSITE_SLOT_RE.search(s)
                 if fm and fm.group(1).upper() in groups:
-                    rank_m = re.search(r'(\d+)', s)
-                    add_pool_rank = int(rank_m.group(1)) if rank_m else None
+                    grp = fm.group(1).upper()
+                    rank_m = re.search(r'(\d+)', fm.group(0))
+                    rank = int(rank_m.group(1)) if rank_m else None
+                    # If pool play is complete and this rank doesn't match our actual
+                    # finish, skip this game — it's a path we can't reach.
+                    if rank and grp in team_pool_ranks and team_pool_ranks[grp] != rank:
+                        break
+                    add_pool_rank = rank
                     add_placeholder = True
                     break
 
@@ -1470,22 +1497,17 @@ def api_games(tournament_id, team):
         if pr and g["game_id"] not in connected:
             pf_by_rank.setdefault(pr, []).append(g)
     if pf_by_rank:
-        # Build a time-sorted list of (date, time, round) for already-connected games
-        # so we can find where each rank group falls in the bracket chronologically.
-        connected_timeline = sorted(
-            ((g.get("date") or date.min, g.get("time") or datetime.min.time(), _bfs_round[g["game_id"]])
-             for g in my_games if g["game_id"] in _bfs_round),
-        )
-        for rank, grp in pf_by_rank.items():
+        # Pool-finish games always come after all W#/L# bracket rounds.
+        # Use the global max bfs_round so they're never assigned a depth lower
+        # than a Saturday bracket game (which broke game numbering when dates
+        # were missing or the time comparison found no earlier connected game).
+        max_wl_depth = max(_bfs_round.values(), default=0)
+        for offset, rank in enumerate(sorted(pf_by_rank.keys())):
+            grp = pf_by_rank[rank]
             grp.sort(key=lambda x: (x.get("date") or date.min, x.get("time") or datetime.min.time()))
-            # Base depth = max round of connected games occurring before the first game
-            # in this rank group. This places the group correctly even when the W#/L#
-            # chain is deeper than the orphan games' chronological position.
-            first_dt = (grp[0].get("date") or date.min, grp[0].get("time") or datetime.min.time())
-            prev_max = max((cr for cd, ct, cr in connected_timeline if (cd, ct) < first_dt), default=0)
-            start_depth = prev_max + 1
-            for i, g in enumerate(grp):
-                _bfs_round[g["game_id"]] = start_depth + i
+            depth = max_wl_depth + 1 + offset
+            for g in grp:
+                _bfs_round[g["game_id"]] = depth
         connected.update(_bfs_round.keys())
 
     # Time-slot ordering for isolated (pool play) games not connected to the bracket
