@@ -1470,65 +1470,47 @@ def api_games(tournament_id, team):
         if succs:
             _adj[g["game_id"]] = succs
 
-    # Games that are connected in the bracket graph (have a predecessor or successor)
+    # Games connected in the bracket graph via W#/L# links (have a predecessor or successor)
     connected = {gid for gid in my_game_ids if gid in bracket_path or gid in _adj}
 
-    # BFS from bracket roots to assign bracket rounds
-    _bfs_round: dict[str, int] = {}
-    if connected:
-        _bfs_roots = [gid for gid in connected if gid not in bracket_path]
-        _bfs_q = [(gid, 1) for gid in _bfs_roots]
-        while _bfs_q:
-            _gid, _r = _bfs_q.pop(0)
-            if _gid in _bfs_round:
-                continue
-            _bfs_round[_gid] = _r
-            for _succ in _adj.get(_gid, []):
-                if _succ not in _bfs_round:
-                    _bfs_q.append((_succ, _r + 1))
+    # ── Team-centric sequential game numbering ────────────────────────────────
+    # Game numbers represent "which game of the day is this for the team"
+    # (1 = first game, 2 = second, etc.) regardless of Excel game IDs.
+    #
+    # Step 1: Isolated pool-play games (not W#/L# linked) sorted by time → 1, 2, 3…
+    isolated = sorted(
+        [g for g in my_games if g["game_id"] not in connected],
+        key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
+    )
+    _game_num_map: dict[str, int] = {}
+    for i, g in enumerate(isolated):
+        _game_num_map[g["game_id"]] = i + 1
+    pool_count = len(isolated)
 
-    # Pool-finish bracket games (added via composite slot expansion) have no W#/L# links
-    # so they're not in `connected` yet. Group by pool_rank, sort by time per group,
-    # and assign sequential BFS depths after the max W#/L# depth so they form proper
-    # bracket rounds instead of being counted as isolated time-slot games.
+    # Step 2: W#/L# bracket games — BFS from roots, depth offset by pool game count
+    wl_roots = [gid for gid in connected if gid not in bracket_path]
+    _bfs_q = [(gid, pool_count + 1) for gid in wl_roots]
+    while _bfs_q:
+        _gid, _num = _bfs_q.pop(0)
+        if _gid in _game_num_map:
+            continue
+        _game_num_map[_gid] = _num
+        for _succ in _adj.get(_gid, []):
+            if _succ not in _game_num_map:
+                _bfs_q.append((_succ, _num + 1))
+
+    # Step 3: Pool-finish games (composite slots, no W#/L# links) come last
+    max_wl_num = max(
+        (_game_num_map[gid] for gid in connected if gid in _game_num_map),
+        default=pool_count,
+    )
     pf_by_rank: dict[int, list] = {}
     for g in my_games:
-        pr = g.get("pool_rank")
-        if pr and g["game_id"] not in connected:
-            pf_by_rank.setdefault(pr, []).append(g)
-    if pf_by_rank:
-        # Pool-finish games always come after all W#/L# bracket rounds.
-        # Use the global max bfs_round so they're never assigned a depth lower
-        # than a Saturday bracket game (which broke game numbering when dates
-        # were missing or the time comparison found no earlier connected game).
-        max_wl_depth = max(_bfs_round.values(), default=0)
-        for offset, rank in enumerate(sorted(pf_by_rank.keys())):
-            grp = pf_by_rank[rank]
-            grp.sort(key=lambda x: (x.get("date") or date.min, x.get("time") or datetime.min.time()))
-            depth = max_wl_depth + 1 + offset
-            for g in grp:
-                _bfs_round[g["game_id"]] = depth
-        connected.update(_bfs_round.keys())
-
-    # Time-slot ordering for isolated (pool play) games not connected to the bracket
-    isolated = [g for g in my_games if g["game_id"] not in connected]
-    _slot_num: dict[tuple, int] = {}
-    _slot_ctr = 0
-    for g in sorted(isolated, key=lambda g: (g.get("date", ""), g.get("time", "") or "")):
-        key = (g["date"], g["time"])
-        if key not in _slot_num:
-            _slot_ctr += 1
-            _slot_num[key] = _slot_ctr
-
-    # Combine: pool slots first, then bracket rounds start after
-    _game_num_map: dict[str, int] = {}
-    for g in my_games:
-        gid = g["game_id"]
-        if gid in _bfs_round:
-            _game_num_map[gid] = _slot_ctr + _bfs_round[gid]
-        else:
-            key = (g["date"], g["time"])
-            _game_num_map[gid] = _slot_num.get(key, 1)
+        if g["game_id"] not in _game_num_map and g.get("pool_rank"):
+            pf_by_rank.setdefault(g["pool_rank"], []).append(g)
+    for offset, rank in enumerate(sorted(pf_by_rank.keys())):
+        for g in pf_by_rank[rank]:
+            _game_num_map[g["game_id"]] = max_wl_num + 1 + offset
 
     show_records = tournament_id not in WPL_TOURNAMENTS
     sheet_records: dict = {}
