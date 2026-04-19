@@ -895,12 +895,13 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     team_pool_ranks[grp] = i + 1
                     break
 
-    # game_num -> (game_dict, is_placeholder)
+    # game_num -> (game_dict, is_placeholder, ph_depth)
+    # ph_depth: 0=confirmed, 1=one level of uncertainty, 2=stop expanding
     reachable: dict[str, tuple] = {}
     for g in direct_games:
         n = _game_num(g["game_id"])
         if n:
-            reachable[n] = (g, False)
+            reachable[n] = (g, False, 0)
 
     extras = []
     changed = True
@@ -910,7 +911,7 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             if g["game_id"] in seen_ids:
                 continue
             add_placeholder = None
-
+            add_ph_depth = 1
             add_pool_rank = None
 
             for slot in (g["white_team"], g["dark_team"]):
@@ -922,12 +923,11 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     grp = fm.group(1).upper()
                     rank_m = re.search(r'(\d+)', fm.group(0))
                     rank = int(rank_m.group(1)) if rank_m else None
-                    # If pool play is complete and this rank doesn't match our actual
-                    # finish, skip this game — it's a path we can't reach.
                     if rank and grp in team_pool_ranks and team_pool_ranks[grp] != rank:
                         break
                     add_pool_rank = rank
                     add_placeholder = True
+                    add_ph_depth = 2  # composite games don't expand further
                     break
 
                 # W#/L# bracket
@@ -939,7 +939,9 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     ref_num = str(int(ref.group(1)))
                     if ref_num not in reachable:
                         continue
-                    src_game, src_ph = reachable[ref_num]
+                    src_game, src_ph, src_depth = reachable[ref_num]
+                    if src_depth >= 2:
+                        continue  # stop expanding beyond 2 levels of uncertainty
                     is_win_slot = s[0].upper() == 'W'
                     won = _team_won(team, src_game)
 
@@ -949,6 +951,7 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
 
                     ph = src_ph or (won is None)
                     add_placeholder = ph if add_placeholder is None else (add_placeholder and ph)
+                    add_ph_depth = (src_depth + 1) if ph else 0
                     break
 
             if add_placeholder is not None:
@@ -960,7 +963,7 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                 seen_ids.add(g["game_id"])
                 n = _game_num(g["game_id"])
                 if n:
-                    reachable[n] = (g_copy, add_placeholder)
+                    reachable[n] = (g_copy, add_placeholder, add_ph_depth)
                 changed = True
 
     return extras
