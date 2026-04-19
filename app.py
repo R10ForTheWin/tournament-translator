@@ -746,6 +746,69 @@ def _game_num(game_id: str):
     m = re.search(r"(\d+)$", game_id)
     return str(int(m.group(1))) if m else None
 
+
+def _build_division_rounds(division_games: list) -> dict[str, int]:
+    """Assign bracket round numbers to every game in a division via topological sort.
+
+    W#/L# linked games form a DAG — topological sort gives each game a round number
+    equal to 1 + max(predecessor rounds). Root games (no predecessors) = round 1.
+    Composite-slot placement games (no W#/L# predecessors) are grouped by time slot
+    and assigned rounds after the deepest W#/L# round, in chronological order.
+
+    Returns: game_id -> round (1-indexed).
+    """
+    by_num: dict[str, str] = {}   # game_num_str -> game_id
+    for g in division_games:
+        n = _game_num(g["game_id"])
+        if n:
+            by_num[n] = g["game_id"]
+
+    preds: dict[str, set] = {g["game_id"]: set() for g in division_games}
+    succs: dict[str, list] = {g["game_id"]: []   for g in division_games}
+
+    for g in division_games:
+        for slot in (g["white_team"], g["dark_team"]):
+            s = slot.strip()
+            wm = _WL_SLOT_RE.match(s)
+            if wm:
+                ref = re.search(r"(\d+)$", wm.group(1))
+                if ref:
+                    pred_id = by_num.get(str(int(ref.group(1))))
+                    if pred_id and pred_id != g["game_id"]:
+                        preds[g["game_id"]].add(pred_id)
+                        succs[pred_id].append(g["game_id"])
+
+    # Kahn's algorithm — process games whose predecessors are all resolved
+    rounds: dict[str, int] = {}
+    in_deg = {gid: len(p) for gid, p in preds.items()}
+    queue = [gid for gid, d in in_deg.items() if d == 0]
+    while queue:
+        gid = queue.pop(0)
+        pred_r = [rounds[p] for p in preds[gid] if p in rounds]
+        rounds[gid] = (max(pred_r) + 1) if pred_r else 1
+        for succ in succs[gid]:
+            in_deg[succ] -= 1
+            if in_deg[succ] == 0:
+                queue.append(succ)
+
+    # Composite-slot games not reached by W#/L# links: sort by (date, time),
+    # group same-time games into the same round.
+    max_wl = max(rounds.values(), default=0)
+    composite = sorted(
+        [g for g in division_games if g["game_id"] not in rounds],
+        key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
+    )
+    slot_round: dict[tuple, int] = {}
+    offset = 0
+    for g in composite:
+        key = (g.get("date"), g.get("time"))
+        if key not in slot_round:
+            slot_round[key] = max_wl + 1 + offset
+            offset += 1
+        rounds[g["game_id"]] = slot_round[key]
+
+    return rounds
+
 _POOL_SLOT_RE    = re.compile(r'^([A-Z])(\d+)-(.+)', re.IGNORECASE)
 _WL_SLOT_RE      = re.compile(r'^[WL]#([^-\s]+)', re.IGNORECASE)   # dash optional (bare W#2 before scores)
 _FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)([A-Z])-', re.IGNORECASE)
@@ -1470,54 +1533,32 @@ def api_games(tournament_id, team):
         if succs:
             _adj[g["game_id"]] = succs
 
-    # Games connected in the bracket graph via W#/L# links (have a predecessor or successor)
-    connected = {gid for gid in my_game_ids if gid in bracket_path or gid in _adj}
+    # ── Division-DAG game numbering ───────────────────────────────────────────
+    # Build the full bracket DAG for each division sheet, get round numbers for
+    # every game via topological sort. The team's game_num = their DAG round.
+    # Games at the same (round, date, time) share a game_num — scenario alts.
+    div_rounds: dict[str, dict[str, int]] = {}
+    for sk, sg in div_map.items():
+        div_rounds[sk] = _build_division_rounds(sg)
 
-    # ── Team-centric sequential game numbering ────────────────────────────────
-    # Game numbers represent "which game of the day is this for the team"
-    # (1 = first game, 2 = second, etc.) regardless of Excel game IDs.
-    #
-    # Step 1: Isolated pool-play games (not W#/L# linked, no pool_rank) → 1, 2, 3…
-    # pool_rank games (composite-slot Sunday placement games) are also not in
-    # `connected` but must NOT count toward pool_count — they're handled in Step 3.
-    isolated = sorted(
-        [g for g in my_games if g["game_id"] not in connected and not g.get("pool_rank")],
-        key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
+    my_games_ranked = sorted(
+        my_games,
+        key=lambda g: (
+            div_rounds.get(g["sheet"], {}).get(g["game_id"], 999),
+            g.get("date") or date.min,
+            g.get("time") or datetime.min.time(),
+        ),
     )
     _game_num_map: dict[str, int] = {}
-    for i, g in enumerate(isolated):
-        _game_num_map[g["game_id"]] = i + 1
-    pool_count = len(isolated)
-
-    # Step 2: W#/L# bracket games — BFS from roots, depth offset by pool game count
-    wl_roots = [gid for gid in connected if gid not in bracket_path]
-    _bfs_q = [(gid, pool_count + 1) for gid in wl_roots]
-    while _bfs_q:
-        _gid, _num = _bfs_q.pop(0)
-        if _gid in _game_num_map:
-            continue
-        _game_num_map[_gid] = _num
-        for _succ in _adj.get(_gid, []):
-            if _succ not in _game_num_map:
-                _bfs_q.append((_succ, _num + 1))
-
-    # Step 3: Pool-finish games (composite slots, no W#/L# links) come last
-    max_wl_num = max(
-        (_game_num_map[gid] for gid in connected if gid in _game_num_map),
-        default=pool_count,
-    )
-    # Sort pool-finish games by time so game_nums are chronological, not rank-ordered.
-    # Games at the same (date, time) share a game_num — they're scenario alternatives.
-    pf_unassigned = [g for g in my_games if g["game_id"] not in _game_num_map and g.get("pool_rank")]
-    pf_unassigned.sort(key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()))
-    pf_slot: dict[tuple, int] = {}
-    pf_offset = 0
-    for g in pf_unassigned:
-        key = (g.get("date"), g.get("time"))
-        if key not in pf_slot:
-            pf_slot[key] = max_wl_num + 1 + pf_offset
-            pf_offset += 1
-        _game_num_map[g["game_id"]] = pf_slot[key]
+    slot_to_num: dict[tuple, int] = {}
+    counter = 0
+    for g in my_games_ranked:
+        r = div_rounds.get(g["sheet"], {}).get(g["game_id"], 999)
+        key = (r, g.get("date"), g.get("time"))
+        if key not in slot_to_num:
+            counter += 1
+            slot_to_num[key] = counter
+        _game_num_map[g["game_id"]] = slot_to_num[key]
 
     show_records = tournament_id not in WPL_TOURNAMENTS
     sheet_records: dict = {}
