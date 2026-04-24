@@ -1,6 +1,7 @@
 """
 Tournament Translator — Flask app
 """
+from __future__ import annotations
 import os, re, json, glob, io, time, base64, random
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
@@ -896,14 +897,34 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     break
 
     # game_num -> (game_dict, is_placeholder, ph_depth)
-    # ph_depth: 0=confirmed, 1=one level of uncertainty, 2=stop expanding
+    # ph_depth: 0=pool slot, 1=composite slot, 2=W#/L# slot (stop expanding)
+    def _direct_depth(g: dict) -> int:
+        for slot in (g["white_team"], g["dark_team"]):
+            if not team_matches(slot, team):
+                continue
+            s = slot.strip()
+            if _WL_SLOT_RE.match(s):
+                return 2
+            if _FINISH_SLOT_RE.match(s) or _COMPOSITE_SLOT_RE.search(s):
+                return 1
+        return 0
+
     reachable: dict[str, tuple] = {}
     for g in direct_games:
         n = _game_num(g["game_id"])
         if n:
-            reachable[n] = (g, False, 0)
+            d = _direct_depth(g)
+            reachable[n] = (g, d > 0, d)
 
     extras = []
+    # Pre-populate from direct composite games so we don't add duplicates
+    composite_added: set = set()
+    for g in direct_games:
+        for slot in (g["white_team"], g["dark_team"]):
+            s = slot.strip()
+            fm = _FINISH_SLOT_RE.match(s) or _COMPOSITE_SLOT_RE.search(s)
+            if fm and fm.group(1).upper() in groups:
+                composite_added.add(fm.group(1).upper())
     changed = True
     while changed:
         changed = False
@@ -913,6 +934,7 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             add_placeholder = None
             add_ph_depth = 1
             add_pool_rank = None
+            add_grp = None
 
             for slot in (g["white_team"], g["dark_team"]):
                 s = slot.strip()
@@ -925,7 +947,11 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     rank = int(rank_m.group(1)) if rank_m else None
                     if rank and grp in team_pool_ranks and team_pool_ranks[grp] != rank:
                         break
+                    # When pool play is incomplete, show only one composite placeholder per group
+                    if grp not in team_pool_ranks and grp in composite_added:
+                        break
                     add_pool_rank = rank
+                    add_grp = grp
                     add_placeholder = True
                     add_ph_depth = 2  # composite games don't expand further
                     break
@@ -959,6 +985,8 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                 g_copy["placeholder"] = add_placeholder
                 if add_pool_rank:
                     g_copy["pool_rank"] = add_pool_rank
+                if add_grp:
+                    composite_added.add(add_grp)
                 extras.append(g_copy)
                 seen_ids.add(g["game_id"])
                 n = _game_num(g["game_id"])
@@ -1562,28 +1590,18 @@ def api_games(tournament_id, team):
         if succs:
             _adj[g["game_id"]] = succs
 
-    # ── Division-DAG game numbering ───────────────────────────────────────────
-    # Build the full bracket DAG for each division sheet, get round numbers for
-    # every game via topological sort. The team's game_num = their DAG round.
-    # Games at the same (round, date, time) share a game_num — scenario alts.
-    div_rounds: dict[str, dict[str, int]] = {}
-    for sk, sg in div_map.items():
-        div_rounds[sk] = _build_division_rounds(sg)
-
+    # ── Game numbering: chronological time-slot order ───────────────────────
+    # Each unique (date, time) gets the next sequential game number.
+    # Games at the same time slot (alternate bracket paths) share a number.
     my_games_ranked = sorted(
         my_games,
-        key=lambda g: (
-            div_rounds.get(g["sheet"], {}).get(g["game_id"], 999),
-            g.get("date") or date.min,
-            g.get("time") or datetime.min.time(),
-        ),
+        key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
     )
     _game_num_map: dict[str, int] = {}
     slot_to_num: dict[tuple, int] = {}
     counter = 0
     for g in my_games_ranked:
-        r = div_rounds.get(g["sheet"], {}).get(g["game_id"], 999)
-        key = (r, g.get("date"), g.get("time"))
+        key = (g.get("date"), g.get("time"))
         if key not in slot_to_num:
             counter += 1
             slot_to_num[key] = counter
