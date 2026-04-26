@@ -155,14 +155,16 @@ def find_excel(tournament_id: str):
         data = _fetch_url(user_url)
         if data:
             return io.BytesIO(data)
+    # WPL tournaments always fetch live from Google Sheets — never use a
+    # local file, which would be a stale snapshot from a past weekend.
+    if tournament_id in WPL_TOURNAMENTS:
+        data = _fetch_url(FUTURES_SHEETS_URL)
+        return io.BytesIO(data) if data else None
     keyword = FILE_MAP.get(tournament_id, "")
     if keyword:
         for f in os.listdir(EXCEL_DIR):
             if f.endswith(".xlsx") and keyword.lower() in f.lower():
                 return os.path.join(EXCEL_DIR, f)
-    if tournament_id in WPL_TOURNAMENTS:
-        data = _fetch_url(FUTURES_SHEETS_URL)
-        return io.BytesIO(data) if data else None
     preset = TOURNAMENT_URLS.get(tournament_id, "")
     if preset:
         data = _fetch_url(preset)
@@ -1480,23 +1482,6 @@ def save_results(tournament_id: str, data: dict):
 @app.route("/")
 def index():
     return render_template("index.html")
-
-@app.route("/api/debug/futures4")
-def debug_futures4():
-    excel = find_excel("futures-4")
-    if not excel:
-        return jsonify({"error": "find_excel returned None"})
-    games = load_and_parse(excel)
-    from collections import Counter
-    dates = dict(Counter(str(g.get("date")) for g in games))
-    filtered = _filter_by_dates(games, "futures-4")
-    return jsonify({
-        "total_games": len(games),
-        "filtered_games": len(filtered),
-        "dates": dates,
-        "format": games[0].get("format") if games else None,
-        "excel_type": type(excel).__name__,
-    })
 
 
 @app.route("/api/tournaments")
