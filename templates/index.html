@@ -288,8 +288,8 @@
 
     /* ── Place Predictor bottom sheet ── */
     .pred-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 200; display: flex; align-items: flex-end; }
-    .pred-sheet { background: #1c1c1e; border-radius: 16px 16px 0 0; width: 100%; max-height: 80vh; overflow-y: auto; padding-bottom: env(safe-area-inset-bottom, 16px); transition: transform 0.25s ease; touch-action: none; }
-    .pred-sheet-handle { width: 36px; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; margin: 10px auto 0; }
+    .pred-sheet { background: #1c1c1e; border-radius: 16px 16px 0 0; width: 100%; max-height: 80vh; overflow-y: auto; padding-bottom: env(safe-area-inset-bottom, 16px); transition: transform 0.25s ease; touch-action: pan-y; }
+    .pred-sheet-handle { width: 36px; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; margin: 10px auto 0; touch-action: none; cursor: grab; }
     .pred-sheet-header { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 8px; }
     .pred-sheet-header-text { flex: 1; }
     .pred-sheet-close { background: none; border: none; color: var(--muted); font-size: 22px; line-height: 1; padding: 0 0 2px; cursor: pointer; flex-shrink: 0; }
@@ -1339,19 +1339,20 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
   backdrop.addEventListener('click', e => { if (e.target === backdrop) dismissSheet(); });
   backdrop.querySelector('.pred-sheet-close').addEventListener('click', dismissSheet);
 
-  // Swipe-down to dismiss
+  // Swipe-down handle to dismiss (handle only — lets sheet body scroll freely)
+  const handleEl = sheetEl.querySelector('.pred-sheet-handle');
   let startY = 0, dragging = false;
-  sheetEl.addEventListener('touchstart', e => {
+  handleEl.addEventListener('touchstart', e => {
     startY = e.touches[0].clientY;
     dragging = true;
     sheetEl.style.transition = 'none';
   }, { passive: true });
-  sheetEl.addEventListener('touchmove', e => {
+  handleEl.addEventListener('touchmove', e => {
     if (!dragging) return;
     const dy = e.touches[0].clientY - startY;
     if (dy > 0) sheetEl.style.transform = `translateY(${dy}px)`;
-  }, { passive: true });
-  sheetEl.addEventListener('touchend', e => {
+  }, { passive: false });
+  handleEl.addEventListener('touchend', e => {
     if (!dragging) return;
     dragging = false;
     const dy = e.changedTouches[0].clientY - startY;
