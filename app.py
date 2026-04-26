@@ -9,7 +9,23 @@ from functools import lru_cache
 import requests
 from flask import Flask, render_template, jsonify, request, abort
 
-from parsers.detect import load_and_parse
+from parsers.detect import load_and_parse as _load_and_parse
+
+_parse_cache: dict[str, tuple[float, list]] = {}
+
+def load_and_parse(filepath) -> list[dict]:
+    """Cached wrapper: re-parses only when the file changes on disk."""
+    key = str(filepath)
+    try:
+        mtime = os.path.getmtime(key)
+    except OSError:
+        return _load_and_parse(filepath)
+    cached = _parse_cache.get(key)
+    if cached and cached[0] == mtime:
+        return list(cached[1])
+    games = _load_and_parse(filepath)
+    _parse_cache[key] = (mtime, games)
+    return list(games)
 
 app = Flask(__name__)
 
