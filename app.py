@@ -1481,6 +1481,23 @@ def save_results(tournament_id: str, data: dict):
 def index():
     return render_template("index.html")
 
+@app.route("/api/debug/futures4")
+def debug_futures4():
+    excel = find_excel("futures-4")
+    if not excel:
+        return jsonify({"error": "find_excel returned None"})
+    games = load_and_parse(excel)
+    from collections import Counter
+    dates = dict(Counter(str(g.get("date")) for g in games))
+    filtered = _filter_by_dates(games, "futures-4")
+    return jsonify({
+        "total_games": len(games),
+        "filtered_games": len(filtered),
+        "dates": dates,
+        "format": games[0].get("format") if games else None,
+        "excel_type": type(excel).__name__,
+    })
+
 
 @app.route("/api/tournaments")
 def api_tournaments():
