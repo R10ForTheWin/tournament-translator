@@ -29,19 +29,7 @@ def detect_format(wb) -> str:
 def load_and_parse(filepath: str) -> list[dict]:
     wb = openpyxl.load_workbook(filepath, data_only=True)
 
-    # AI parser runs first — it understands column layout from context rather
-    # than assuming fixed positions, so it handles novel formats reliably.
-    try:
-        from parsers.format_ai import parse as parse_ai
-        games = parse_ai(wb)
-        if games:
-            for g in games:
-                g["format"] = "AI"
-            return games
-    except Exception as exc:
-        print(f"[AI parser] failed, falling back to heuristic parsers: {exc}")
-
-    # Heuristic parsers as fallback (API down, no key, etc.)
+    # Heuristic parsers first — fast, no API calls, covers all known formats.
     from parsers.format_a import parse as parse_a
     games = parse_a(wb)
     if games:
@@ -51,6 +39,21 @@ def load_and_parse(filepath: str) -> list[dict]:
 
     from parsers.format_b import parse as parse_b
     games = parse_b(wb)
-    for g in games:
-        g["format"] = "B"
-    return games
+    if games:
+        for g in games:
+            g["format"] = "B"
+        return games
+
+    # AI parser as last resort — handles novel/unknown layouts via Claude Haiku.
+    # Only runs when both heuristics return zero games.
+    try:
+        from parsers.format_ai import parse as parse_ai
+        games = parse_ai(wb)
+        if games:
+            for g in games:
+                g["format"] = "AI"
+            return games
+    except Exception as exc:
+        print(f"[AI parser] failed: {exc}")
+
+    return []
