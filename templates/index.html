@@ -993,12 +993,12 @@ async function loadGames(tournamentId, team, sheet) {
       extraRow = `<div class="standings-gap">···</div>`;
       visible = [...visible, mine];
     }
-    const recStr = s => [
-      s.reg_wins         ? `${s.reg_wins}W`   : null,
-      s.shootout_wins    ? `${s.shootout_wins}SW`  : null,
-      s.shootout_losses  ? `${s.shootout_losses}SL` : null,
-      s.reg_losses       ? `${s.reg_losses}L`  : null,
-    ].filter(Boolean).join('–');
+    const recStr = s => {
+      const parts = [`${s.reg_wins}W–${s.reg_losses}L`];
+      if (s.shootout_wins)   parts.push(`${s.shootout_wins}SW`);
+      if (s.shootout_losses) parts.push(`${s.shootout_losses}SL`);
+      return parts.join('–');
+    };
     const mkRow = s => {
       return `<div class="standings-row${s.is_mine ? ' mine' : ''}">
         <div class="standings-rank">${s.rank}</div>
