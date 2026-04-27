@@ -828,13 +828,13 @@ async function loadTeams(tournament) {
           ${subLabel ? `<div class="list-card-sub" style="font-size:12px;color:var(--muted);margin-top:2px">${subLabel}</div>` : ''}
         </div>
       </div>
-      <button class="team-action-btn predict-btn" title="Place Predictor">
+      ${!tournament.id.startsWith('futures') ? `<button class="team-action-btn predict-btn" title="Place Predictor">
         <svg width="15" height="13" viewBox="0 0 15 13" fill="currentColor">
           <rect x="0" y="7" width="4" height="6" rx="1"/>
           <rect x="5.5" y="3.5" width="4" height="9.5" rx="1"/>
           <rect x="11" y="0" width="4" height="13" rx="1"/>
         </svg>
-      </button>
+      </button>` : ''}
       <button class="team-action-btn bracket-btn" title="View Schedule">
         <svg width="15" height="13" viewBox="0 0 15 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
           <rect x="0.8" y="0.8" width="5" height="4" rx="0.8"/>
@@ -844,7 +844,7 @@ async function loadTeams(tournament) {
           <line x1="5.8" y1="9.8" x2="8.2" y2="7.8"/>
         </svg>
       </button>`;
-    card.querySelector('.predict-btn').addEventListener('click', e => {
+    card.querySelector('.predict-btn')?.addEventListener('click', e => {
       e.stopPropagation();
       showPredictorSheet(tournament.id, t.name, t.sheet, t.friendly || mainLabel);
     });
