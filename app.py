@@ -320,7 +320,7 @@ def _team_sort_key(team: dict):
 # ── Game helpers ───────────────────────────────────────────────────────────────
 
 _PREFIX_RE = re.compile(
-    r"^(?:\d+(?:st|nd|rd|th)[A-Z]-|[A-Z]\d+\([^)]+\)-?|[WL]#[^-\s]+-?|[A-Z]\d+-|\d+-)(.*)",
+    r"^(?:\d+(?:st|nd|rd|th)[A-Z]-|[A-Z]\d+\([^)]+\)-?|[WL]#[^-\s]+-?|[A-Z]\d+\s*-\s*|\d+\s*-\s*)(.*)",
     re.IGNORECASE,
 )
 

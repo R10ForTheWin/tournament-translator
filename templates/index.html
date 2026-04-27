@@ -869,6 +869,10 @@ function fmtRec(r) {
   if (total === 0) return null;
   return `${r.wins}W–${r.losses}L${r.ties ? '–'+r.ties+'T' : ''}`;
 }
+function seasonRec(name) {
+  if (!name || !window._seasonRec) return null;
+  return window._seasonRec[name.toUpperCase()] || null;
+}
 function recordLine(g) {
   const us   = fmtRec(g.our_record);
   const them = fmtRec(g.opp_record);
@@ -993,12 +997,15 @@ async function loadGames(tournamentId, team, sheet) {
       extraRow = `<div class="standings-gap">···</div>`;
       visible = [...visible, mine];
     }
+    // Build season-record lookup for game tiles: UPPERCASE name → record string
+    window._seasonRec = {};
     const recStr = s => {
       const parts = [`${s.reg_wins}W–${s.reg_losses}L`];
-      if (s.shootout_wins)   parts.push(`${s.shootout_wins}SW`);
-      if (s.shootout_losses) parts.push(`${s.shootout_losses}SL`);
+      if (s.shootout_wins)   parts.push(`${s.shootout_wins}SO-W`);
+      if (s.shootout_losses) parts.push(`${s.shootout_losses}SO-L`);
       return parts.join('–');
     };
+    all.forEach(s => { window._seasonRec[s.name.toUpperCase()] = recStr(s); });
     const mkRow = s => {
       return `<div class="standings-row${s.is_mine ? ' mine' : ''}">
         <div class="standings-rank">${s.rank}</div>
@@ -1446,8 +1453,8 @@ function buildResultCard(g, ourName) {
   card.className = `game-card ${dayClass(g.date)}`;
   const cls   = g.result === 'win' ? 'win' : g.result === 'loss' ? 'loss' : 'tie';
   const label = g.result === 'win' ? 'WIN'  : g.result === 'loss' ? 'LOSS' : 'TIE';
-  const ourRec  = fmtRec(g.our_record);
-  const oppRec  = fmtRec(g.opp_record);
+  const ourRec  = fmtRec(g.our_record)  || seasonRec(ourName);
+  const oppRec  = fmtRec(g.opp_record)  || seasonRec(g.opponent);
   card.innerHTML = `
     <div class="path-banner result-${cls}">${label}</div>
     <div class="game-card-header">
@@ -1498,8 +1505,8 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
       : '';
   }
 
-  const ourRec = fmtRec(g.our_record);
-  const oppRec = fmtRec(g.opp_record);
+  const ourRec = fmtRec(g.our_record) || seasonRec(ourName);
+  const oppRec = fmtRec(g.opp_record) || seasonRec(g.opponent);
   const ls     = g.live_score || null;
   const ourScore = ls?.our_score ?? 0;
   const oppScore = ls?.opp_score ?? 0;
