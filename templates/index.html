@@ -1031,7 +1031,7 @@ async function loadGames(tournamentId, team, sheet) {
     const grp = document.createElement('div');
     grp.className = 'games-group';
     grp.innerHTML = `<div class="standings-wrap">
-      <div class="standings-title">${data.cumulative_division || 'Season Standings'} · ${all.length} teams</div>
+      <div class="standings-title">${data.cumulative_division || 'Season Standings'} · ${all.length} teams<span style="float:right;letter-spacing:0.04em">PTS &nbsp;&nbsp;&nbsp;&nbsp; W–L</span></div>
       ${rowsHtml}
     </div>`;
     el.appendChild(grp);
