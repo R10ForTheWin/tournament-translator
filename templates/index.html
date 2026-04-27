@@ -1000,10 +1000,9 @@ async function loadGames(tournamentId, team, sheet) {
     // Build season-record lookup for game tiles: UPPERCASE name → record string
     window._seasonRec = {};
     const recStr = s => {
-      const parts = [`${s.reg_wins}W–${s.reg_losses}L`];
-      if (s.shootout_wins)   parts.push(`${s.shootout_wins}SO-W`);
-      if (s.shootout_losses) parts.push(`${s.shootout_losses}SO-L`);
-      return parts.join('–');
+      const w = (s.reg_wins || 0) + (s.shootout_wins || 0);
+      const l = (s.reg_losses || 0) + (s.shootout_losses || 0);
+      return `${w}W–${l}L`;
     };
     all.forEach(s => { window._seasonRec[s.name.toUpperCase()] = recStr(s); });
     const mkRow = s => {
