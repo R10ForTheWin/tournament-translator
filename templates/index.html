@@ -1386,12 +1386,14 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
 
     const p = data.pool;
     const ordFn = n => { const s=['th','st','nd','rd']; const v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); };
-    standingEl.textContent = `Pool ${p.group} · ${p.wins}W ${p.losses}L`;
-
-    if (p.wins === 0 && p.losses === 0) {
-      bodyEl.innerHTML = `<div class="pred-sheet-msg">Check back after your first pool game.</div>`;
-      return;
-    }
+    // Show season record in subtitle if available, otherwise weekend pool record
+    const seasonRecStr = window._seasonRec && friendlyName
+      ? (window._seasonRec[friendlyName.toUpperCase()] || null)
+      : null;
+    const poolSubtitle = seasonRecStr
+      ? `Pool ${p.group} · Season: ${seasonRecStr}`
+      : `Pool ${p.group} · ${p.wins}W–${p.losses}L`;
+    standingEl.textContent = poolSubtitle;
 
     const maxPct = Math.max(...data.finish_probs.map(r => r.pct), 1);
     const rows = data.finish_probs.map(r => {
@@ -1415,7 +1417,7 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
     bodyEl.innerHTML = `
       ${rows}
       ${teamRows ? `<div class="predictor-all-teams">${teamRows}</div>` : ''}
-      <div class="predictor-note">Based on equal win probability for all remaining games · ${data.total_div_teams || ''} teams in division</div>`;
+      <div class="predictor-note">Weekend placement prediction · equal win probability for remaining games · ${data.total_div_teams || ''} teams in division</div>`;
   } catch (e) {
     backdrop.querySelector('#pred-body').innerHTML = `<div class="pred-sheet-msg">Unable to load prediction.</div>`;
   }
