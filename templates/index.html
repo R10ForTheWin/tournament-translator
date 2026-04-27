@@ -873,6 +873,15 @@ function seasonRec(name) {
   if (!name || !window._seasonRec) return null;
   return window._seasonRec[name.toUpperCase()] || null;
 }
+function seasonRank(name) {
+  if (!name || !window._seasonRank) return null;
+  return window._seasonRank[name.toUpperCase()] || null;
+}
+function withRank(name, cssClass) {
+  const r = seasonRank(name);
+  const rank = r ? ` <span style="font-size:13px;font-weight:500;opacity:0.6">(#${r})</span>` : '';
+  return `<span class="${cssClass}">${name}${rank}</span>`;
+}
 function recordLine(g) {
   const us   = fmtRec(g.our_record);
   const them = fmtRec(g.opp_record);
@@ -999,12 +1008,16 @@ async function loadGames(tournamentId, team, sheet) {
     }
     // Build season-record lookup for game tiles: UPPERCASE name → record string
     window._seasonRec = {};
+    window._seasonRank = {};
     const recStr = s => {
       const w = (s.reg_wins || 0) + (s.shootout_wins || 0);
       const l = (s.reg_losses || 0) + (s.shootout_losses || 0);
       return `${w}W–${l}L`;
     };
-    all.forEach(s => { window._seasonRec[s.name.toUpperCase()] = recStr(s); });
+    all.forEach(s => {
+      window._seasonRec[s.name.toUpperCase()]  = recStr(s);
+      window._seasonRank[s.name.toUpperCase()] = s.rank;
+    });
     const mkRow = s => {
       return `<div class="standings-row${s.is_mine ? ' mine' : ''}">
         <div class="standings-rank">${s.rank}</div>
@@ -1467,12 +1480,12 @@ function buildResultCard(g, ourName) {
     <div class="game-card-body">
       <div class="team-matchup">
         <div class="team-row">
-          <span class="team-row-name ours">${ourName || ''}</span>
+          ${withRank(ourName || '', 'team-row-name ours')}
           <span class="team-row-score ours">${g.our_score ?? ''}</span>
         </div>
         ${ourRec ? `<div class="team-row-record">${ourRec}</div>` : ''}
         <div class="team-row">
-          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}</span>
+          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${seasonRank(g.opponent) ? ` <span style="font-size:13px;font-weight:500;opacity:0.6">(#${seasonRank(g.opponent)})</span>` : ''}</span>
           <span class="team-row-score theirs">${g.opp_score ?? ''}</span>
         </div>
         ${oppRec ? `<div class="team-row-record">${oppRec}</div>` : ''}
@@ -1526,7 +1539,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
     teamSection = `
       <div class="team-matchup" data-live-game="${gid}" data-our-score="${ourScore}" data-opp-score="${oppScore}" data-quarter="${quarter}">
         <div class="team-row">
-          <span class="team-row-name ours">${ourName || ''}</span>
+          ${withRank(ourName || '', 'team-row-name ours')}
           <div class="score-controls">
             <button class="score-btn" onclick="liveScoreBtn('${tid}','${gid}','our',-1)">−</button>
             <span class="score-num ours">${ourScore}</span>
@@ -1535,7 +1548,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
         </div>
         ${ourRec ? `<div class="team-row-record">${ourRec}</div>` : ''}
         <div class="team-row">
-          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}</span>
+          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${seasonRank(g.opponent) ? ` <span style="font-size:13px;font-weight:500;opacity:0.6">(#${seasonRank(g.opponent)})</span>` : ''}</span>
           <div class="score-controls">
             <button class="score-btn" onclick="liveScoreBtn('${tid}','${gid}','opp',-1)">−</button>
             <span class="score-num theirs">${oppScore}</span>
@@ -1550,11 +1563,11 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
     teamSection = `
       <div class="team-matchup">
         <div class="team-row">
-          <span class="team-row-name ours">${ourName || ''}</span>
+          ${withRank(ourName || '', 'team-row-name ours')}
         </div>
         ${ourRec ? `<div class="team-row-record">${ourRec}</div>` : ''}
         <div class="team-row">
-          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}</span>
+          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${seasonRank(g.opponent) ? ` <span style="font-size:13px;font-weight:500;opacity:0.6">(#${seasonRank(g.opponent)})</span>` : ''}</span>
         </div>
         ${oppRec ? `<div class="team-row-record">${oppRec}</div>` : ''}
       </div>`;
