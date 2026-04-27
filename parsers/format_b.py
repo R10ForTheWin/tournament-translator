@@ -60,7 +60,7 @@ def parse(wb) -> list[dict]:
 
             games.append({
                 "date":        current_date,
-                "time":        time_val if hasattr(time_val, "hour") else None,
+                "time":        (time_val.time() if isinstance(time_val, datetime) else time_val) if hasattr(time_val, "hour") else None,
                 "location":    "TBD",
                 "game_id":     str(game_id).strip(),
                 "white_team":  _normalize_team(str(white).strip()),
