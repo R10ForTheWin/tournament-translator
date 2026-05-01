@@ -2060,6 +2060,8 @@ def api_cache_schema(tournament_id):
     try:
         if isinstance(excel, (bytes, bytearray)):
             data = excel
+        elif hasattr(excel, "read"):
+            data = excel.read()
         elif isinstance(excel, str) and excel.startswith("http"):
             data = _fetch_url(excel)
         else:
