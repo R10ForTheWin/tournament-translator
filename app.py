@@ -2058,7 +2058,12 @@ def api_cache_schema(tournament_id):
     if not excel:
         return jsonify({"error": "no excel found"}), 404
     try:
-        data = _fetch_url(excel) if excel.startswith("http") else open(excel, "rb").read()
+        if isinstance(excel, (bytes, bytearray)):
+            data = excel
+        elif isinstance(excel, str) and excel.startswith("http"):
+            data = _fetch_url(excel)
+        else:
+            data = open(excel, "rb").read()
         import io, openpyxl
         wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
         from parsers.format_ai import parse as parse_ai, _sample_rows, _hash_rows, _load_disk_schema, SKIP_SHEETS
