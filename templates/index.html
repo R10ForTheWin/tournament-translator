@@ -204,6 +204,7 @@
     .standings-record { font-size: 11px; color: var(--muted); width: 54px; text-align: right; flex-shrink: 0; }
     .standings-div { font-size: 10px; font-weight: 700; color: var(--muted); background: rgba(255,255,255,0.07); border-radius: 4px; padding: 1px 5px; flex-shrink: 0; }
     .standings-gap { text-align: center; color: var(--muted); font-size: 12px; padding: 4px; border-top: 1px solid var(--border); }
+    .standings-div-header { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 14px 6px; border-top: 1px solid var(--border); background: rgba(255,255,255,0.03); }
 
     .game-card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; margin-bottom: 12px; border: 1px solid var(--border); border-left: 3px solid var(--cardinal); }
     .game-card.day-sun { border-left-color: var(--gold); }
@@ -817,7 +818,7 @@ async function loadTeams(tournament) {
   teams.forEach(t => {
     const teamName = t.name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
     const mainLabel = t.age_gender ? `${t.age_gender}, ${teamName}` : teamName;
-    const subLabel  = t.tier ? `${t.tier} Division` : (t.friendly || '');
+    const subLabel  = t.wpl_div != null ? `Division ${t.wpl_div}` : (t.tier ? `${t.tier} Division` : (t.friendly || ''));
     const card = document.createElement('div');
     card.className = 'list-card';
     card.innerHTML = `
@@ -997,15 +998,7 @@ async function loadGames(tournamentId, team, sheet) {
   // Futures season standings table
   if (data.cumulative_standings && data.cumulative_standings.length) {
     const all = data.cumulative_standings;
-    const TOP_N = 10;
     const mine = all.find(s => s.is_mine);
-    // Show top 10; if our team is outside top 10 add a gap + their row
-    let visible = all.slice(0, TOP_N);
-    let extraRow = '';
-    if (mine && mine.rank > TOP_N) {
-      extraRow = `<div class="standings-gap">···</div>`;
-      visible = [...visible, mine];
-    }
     // Build season-record lookup for game tiles: UPPERCASE name → record string
     window._seasonRec = {};
     window._seasonRank = {};
@@ -1026,12 +1019,19 @@ async function loadGames(tournamentId, team, sheet) {
         <div class="standings-record">${recStr(s)}</div>
       </div>`;
     };
-    const rowsHtml = all.slice(0, TOP_N).map(mkRow).join('')
-      + (mine && mine.rank > TOP_N ? `<div class="standings-gap">· · ·</div>${mkRow(mine)}` : '');
+    // Group by division, render each division with its own header
+    const divs = [...new Set(all.map(s => s.division || 'Unknown'))];
+    let rowsHtml = '';
+    divs.forEach(div => {
+      const divTeams = all.filter(s => (s.division || 'Unknown') === div);
+      const hasMine  = divTeams.some(s => s.is_mine);
+      rowsHtml += `<div class="standings-div-header">${div}<span style="float:right;font-weight:400;opacity:0.6">${divTeams.length} teams</span></div>`;
+      rowsHtml += divTeams.map(mkRow).join('');
+    });
     const grp = document.createElement('div');
     grp.className = 'games-group';
     grp.innerHTML = `<div class="standings-wrap">
-      <div class="standings-title">${data.cumulative_division || 'Season Standings'} · ${all.length} teams<span style="float:right;letter-spacing:0.04em">PTS &nbsp;&nbsp;&nbsp;&nbsp; W–L</span></div>
+      <div class="standings-title">${data.cumulative_division || 'Season Standings'}<span style="float:right;letter-spacing:0.04em">PTS &nbsp;&nbsp;&nbsp;&nbsp; W–L</span></div>
       ${rowsHtml}
     </div>`;
     el.appendChild(grp);

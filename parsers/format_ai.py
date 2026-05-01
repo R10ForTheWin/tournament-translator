@@ -17,17 +17,27 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import re
 import anthropic
 from datetime import datetime, date as date_type, timedelta
 from typing import Optional
+
+from parsers.normalize import normalize_team_slot
 
 # ---------------------------------------------------------------------------
 # In-memory schema cache — keyed by hash of the sampled rows.
 # Prevents redundant API calls when the same sheet is analyzed more than once.
 # ---------------------------------------------------------------------------
 _client: Optional[anthropic.Anthropic] = None
-_schema_cache: dict[str, dict] = {}
+_schema_cache: dict = {}  # type: ignore[type-arg]
+
+# Disk cache directory — survives server restarts.
+# Lives at <project_root>/data/schema_cache/
+_CACHE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "schema_cache",
+)
 
 SKIP_SHEETS = {
     "inforules", "divisionsstandings", "team listing and brackets",
@@ -231,15 +241,51 @@ def _sample_rows(all_rows: list, sample_size: int = 45) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Disk-cache helpers
+# ---------------------------------------------------------------------------
+
+def _disk_cache_path(cache_key: str) -> str:
+    return os.path.join(_CACHE_DIR, f"{cache_key}.json")
+
+
+def _load_disk_schema(cache_key: str):
+    """Return cached schema dict from disk, or None if not present / unreadable."""
+    path = _disk_cache_path(cache_key)
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+
+def _save_disk_schema(cache_key: str, schema: dict) -> None:
+    os.makedirs(_CACHE_DIR, exist_ok=True)
+    path = _disk_cache_path(cache_key)
+    with open(path, "w") as f:
+        json.dump(schema, f, indent=2)
+
+
+# ---------------------------------------------------------------------------
 # Schema detection via Claude
 # ---------------------------------------------------------------------------
 
 def _get_schema(sheet_name: str, all_rows: list) -> dict:
     sample = _sample_rows(all_rows)
     cache_key = _hash_rows(sample)
+
+    # 1. Memory cache (fastest)
     if cache_key in _schema_cache:
         return _schema_cache[cache_key]
 
+    # 2. Disk cache (survives restarts — no API call)
+    schema = _load_disk_schema(cache_key)
+    if schema is not None:
+        _schema_cache[cache_key] = schema
+        return schema
+
+    # 3. API call — only for truly new/unseen layouts
     rows_text = _rows_to_text(sample)
     client = _get_client()
 
@@ -274,6 +320,9 @@ def _get_schema(sheet_name: str, all_rows: list) -> dict:
 
     schema = json.loads(text)
     schema.setdefault("default_division", sheet_name)
+
+    # Persist to disk so next restart skips the API call
+    _save_disk_schema(cache_key, schema)
     _schema_cache[cache_key] = schema
     return schema
 
@@ -342,9 +391,9 @@ def _extract_games_from_row(
         "time":        time_raw if hasattr(time_raw, "hour") else None,
         "location":    str(location_val).strip() if location_val else current_location,
         "game_id":     str(game_id).strip(),
-        "white_team":  str(white).strip(),
+        "white_team":  normalize_team_slot(str(white).strip()),
         "white_score": _to_int(w_score),
-        "dark_team":   str(dark).strip(),
+        "dark_team":   normalize_team_slot(str(dark).strip()),
         "dark_score":  _to_int(d_score),
         "comments":    "",
         "division":    str(division_val).strip() if division_val else schema.get("default_division", sheet_name),
@@ -419,8 +468,48 @@ def _parse_sheet(all_rows: list, schema: dict, sheet_name: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Public entry point
+# Public entry points
 # ---------------------------------------------------------------------------
+
+def parse_cached(wb) -> list[dict]:
+    """Parse using only cached schemas (memory or disk) — no API calls.
+
+    Returns [] if any non-skipped sheet lacks a cached schema, signalling
+    detect.py to fall back to the heuristic parsers instead.
+    """
+    games = []
+    for sheet_name in wb.sheetnames:
+        if sheet_name.lower().strip() in SKIP_SHEETS:
+            continue
+        ws = wb[sheet_name]
+        all_rows = list(ws.iter_rows(values_only=True))
+        if not all_rows:
+            continue
+
+        sample = _sample_rows(all_rows)
+        cache_key = _hash_rows(sample)
+
+        # Try memory cache first, then disk cache
+        schema = _schema_cache.get(cache_key) or _load_disk_schema(cache_key)
+        if schema is None:
+            # Unknown layout — signal caller to use heuristic parsers
+            return []
+
+        # Warm the memory cache for future calls in the same process
+        if cache_key not in _schema_cache:
+            _schema_cache[cache_key] = schema
+
+        if schema.get("skip"):
+            continue
+
+        try:
+            sheet_games = _parse_sheet(all_rows, schema, sheet_name)
+            games.extend(sheet_games)
+        except Exception as exc:
+            print(f"[AI parser] parse_cached failed for '{sheet_name}': {exc}")
+
+    return games
+
 
 def parse(wb) -> list[dict]:
     games = []

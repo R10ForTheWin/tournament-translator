@@ -935,14 +935,15 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             reachable[n] = (g, d > 0, d)
 
     extras = []
-    # Pre-populate from direct composite games so we don't add duplicates
+    # Only deduplicate true composite slots (e.g. "K4(1stG)") — simple finish slots
+    # like "1stE-" can appear in multiple distinct games (WPL has 2 Sunday games per finish).
     composite_added: set = set()
     for g in direct_games:
         for slot in (g["white_team"], g["dark_team"]):
             s = slot.strip()
-            fm = _FINISH_SLOT_RE.match(s) or _COMPOSITE_SLOT_RE.search(s)
-            if fm and fm.group(1).upper() in groups:
-                composite_added.add(fm.group(1).upper())
+            cm = _COMPOSITE_SLOT_RE.search(s)
+            if cm and cm.group(1).upper() in groups:
+                composite_added.add(cm.group(1).upper())
     changed = True
     while changed:
         changed = False
@@ -965,8 +966,10 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     rank = int(rank_m.group(1)) if rank_m else None
                     if rank and grp in team_pool_ranks and team_pool_ranks[grp] != rank:
                         break
-                    # When pool play is incomplete, show only one composite placeholder per group
-                    if grp not in team_pool_ranks and grp in composite_added:
+                    # For true composite slots, show only one per group to avoid clutter.
+                    # Simple finish slots (1stE-, 2ndE-, …) are allowed multiple times.
+                    is_composite = bool(_COMPOSITE_SLOT_RE.search(s))
+                    if is_composite and grp not in team_pool_ranks and grp in composite_added:
                         break
                     add_pool_rank = rank
                     add_grp = grp
@@ -1172,6 +1175,78 @@ def _read_futures_pool_standing(excel_src, weekend_num: int, team: str, sheet_na
     }
 
 
+def _read_futures_team_div_map(excel_src) -> dict:
+    """Return {(AGE_UPPER, GENDER_UPPER, CLEAN_NAME_UPPER): div_num} from DivisionsStandings.
+
+    Keyed by age+gender+name so that e.g. 'Trojan Gold' in 16U Boys and 18U Boys
+    are tracked separately. Most-recent weekend wins per key.
+    """
+    try:
+        if hasattr(excel_src, 'seek'):
+            excel_src.seek(0)
+        import openpyxl
+        wb = openpyxl.load_workbook(excel_src, data_only=True, read_only=True)
+        if 'DivisionsStandings' not in wb.sheetnames:
+            return {}
+        ws = wb['DivisionsStandings']
+        rows = list(ws.iter_rows(max_row=800, values_only=True))
+    except Exception:
+        return {}
+
+    team_div: dict = {}   # (age, gender, clean) → (weekend_num, div_num)
+    current_weekend = None
+    current_div = None
+    current_age = None
+    current_gender = None
+
+    for row in rows:
+        if not row:
+            continue
+        cell0 = row[0] if len(row) > 0 else None
+        if isinstance(cell0, str):
+            c0 = cell0.strip()
+            if not c0:
+                continue
+            wm = re.search(r'Weekend\s*(\d+)', c0, re.I)
+            am = _AGE_WORDS.search(c0)
+            if wm and am and re.search(r'BOYS|GIRLS|COED', c0, re.I):
+                current_weekend = int(wm.group(1))
+                current_age = f"{am.group(1)}U".upper()
+                current_gender = ("GIRLS" if re.search(r'GIRLS', c0, re.I)
+                                  else "COED" if re.search(r'COED', c0, re.I)
+                                  else "BOYS")
+                current_div = None
+                continue
+            dm = re.match(r'\d+u?\s*(boys|girls|coed)\s*-\s*D(\d+)', c0, re.I)
+            if dm:
+                current_div = int(dm.group(2))
+                continue
+        if current_weekend is None or current_div is None or current_age is None:
+            continue
+        for start_col in (0, 7):
+            if len(row) <= start_col:
+                continue
+            v = row[start_col]
+            if not isinstance(v, str):
+                continue
+            c = v.strip()
+            if not c:
+                continue
+            if (re.search(r'\d+U\s*(BOYS|GIRLS)', c, re.I) or
+                    re.match(r'\d+u?\s*(boys|girls)\s*-\s*D\d+', c, re.I) or
+                    re.search(r'Regulation|Shootout', c, re.I)):
+                continue
+            clean = strip_prefix(c).upper().strip()
+            if not clean:
+                continue
+            key = (current_age, current_gender, clean)
+            prev = team_div.get(key)
+            if prev is None or current_weekend >= prev[0]:
+                team_div[key] = (current_weekend, current_div)
+
+    return {k: v[1] for k, v in team_div.items()}
+
+
 def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
     """Aggregate season standings for all teams in the same age/gender group across all Futures weekends.
 
@@ -1296,14 +1371,21 @@ def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
     for clean, t in totals.items():
         div_num = team_div.get(clean, (None, None))[1]
         row_out = dict(t, is_mine=(clean == my_clean),
-                       division=f"D{div_num}" if div_num else None)
+                       division=f"D{div_num}" if div_num else None,
+                       div_num=div_num if div_num is not None else 99)
         standings.append(row_out)
 
-    standings.sort(key=lambda x: (-x['points'], -x['reg_wins']))
-    total = len(standings)
-    for i, s in enumerate(standings):
-        s['rank'] = i + 1
-        s['total'] = total
+    standings.sort(key=lambda x: (x['div_num'], -x['points'], -x['reg_wins']))
+
+    # Assign rank and total within each division separately
+    from collections import Counter
+    div_counts = Counter(s['div_num'] for s in standings)
+    div_rank: dict = {}
+    for s in standings:
+        dn = s['div_num']
+        div_rank[dn] = div_rank.get(dn, 0) + 1
+        s['rank'] = div_rank[dn]
+        s['total'] = div_counts[dn]
 
     return label, standings
 
@@ -1546,12 +1628,21 @@ def api_trojan_teams(tournament_id):
         if key not in deduped or t["_count"] > deduped[key]["_count"]:
             deduped[key] = t
 
+    div_map = {}
+    if tournament_id in WPL_TOURNAMENTS and excel:
+        if hasattr(excel, 'seek'):
+            excel.seek(0)
+        div_map = _read_futures_team_div_map(excel)
+
     def _team_fields(t):
         gender, age = _parse_sheet(t["sheet"])
-        tier = _parse_tier(t["sheet"]) or _parse_tier(t["name"])
+        tier = _parse_tier(t["sheet"])
         age_gender = " ".join(p for p in [gender, age] if p) or None
+        clean = strip_prefix(t["name"]).upper().strip()
+        key = (age.upper() if age else "", (gender.upper() if gender else ""), clean)
+        wpl_div = div_map.get(key)
         return {"name": t["name"], "sheet": t["sheet"], "friendly": t["friendly"],
-                "age_gender": age_gender, "tier": tier}
+                "age_gender": age_gender, "tier": tier, "wpl_div": wpl_div}
 
     teams = [_team_fields(t) for t in deduped.values()]
     teams.sort(key=_team_sort_key)
@@ -1956,6 +2047,41 @@ def api_status():
             "error":       error,
         })
     return jsonify({"server_time": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), "tournaments": results})
+
+
+@app.route("/api/admin/cache-schema/<tournament_id>", methods=["POST"])
+def api_cache_schema(tournament_id):
+    """One-time endpoint: analyze the tournament Excel with Claude and cache the
+    layout schema to disk. After this runs, all subsequent parses are instant
+    (no further API calls). Safe to call multiple times — no-ops if already cached."""
+    excel = find_excel(tournament_id)
+    if not excel:
+        return jsonify({"error": "no excel found"}), 404
+    try:
+        data = _fetch_url(excel) if excel.startswith("http") else open(excel, "rb").read()
+        import io, openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+        from parsers.format_ai import parse as parse_ai, _sample_rows, _hash_rows, _load_disk_schema, SKIP_SHEETS
+        results = {}
+        for sheet_name in wb.sheetnames:
+            if sheet_name.lower().strip() in SKIP_SHEETS:
+                results[sheet_name] = "skipped"
+                continue
+            ws = wb[sheet_name]
+            rows = list(ws.iter_rows(max_row=60, values_only=True))
+            sample = _sample_rows(rows)
+            key = _hash_rows(sample)
+            if _load_disk_schema(key):
+                results[sheet_name] = f"already cached ({key})"
+            else:
+                results[sheet_name] = f"analyzing..."
+        # Run full AI parse to build all schemas
+        wb.close()
+        wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+        games = parse_ai(wb)
+        return jsonify({"tournament": tournament_id, "games_found": len(games), "sheets": results})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
