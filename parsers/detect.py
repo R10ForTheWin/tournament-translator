@@ -43,8 +43,22 @@ def load_and_parse(filepath_or_bytes) -> list[dict]:
     else:
         wb = openpyxl.load_workbook(filepath_or_bytes, data_only=True)
 
-    # 1. Cached AI schema — instant (no API call).
-    #    Returns [] if any sheet is unknown, so we fall through safely.
+    # 1. Heuristic parsers — fast, no API call, cover all known formats.
+    from parsers.format_a import parse as parse_a
+    games = parse_a(wb)
+    if games:
+        for g in games:
+            g["format"] = "A"
+        return games
+
+    from parsers.format_b import parse as parse_b
+    games = parse_b(wb)
+    if games:
+        for g in games:
+            g["format"] = "B"
+        return games
+
+    # 2. Cached AI schema — instant if disk cache exists, no API call.
     try:
         from parsers.format_ai import parse_cached
         games = parse_cached(wb)
@@ -54,23 +68,6 @@ def load_and_parse(filepath_or_bytes) -> list[dict]:
             return games
     except Exception:
         pass
-
-    # 2. Heuristic parsers — cover all previously known formats.
-    from parsers.format_a import parse as parse_a
-    games = parse_a(wb)
-    if games:
-        for g in games:
-            g["format"] = "A"
-        _queue_schema_cache(wb)
-        return games
-
-    from parsers.format_b import parse as parse_b
-    games = parse_b(wb)
-    if games:
-        for g in games:
-            g["format"] = "B"
-        _queue_schema_cache(wb)
-        return games
 
     # 3. AI parser — makes one API call for unknown layouts, caches result.
     try:

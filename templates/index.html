@@ -1019,19 +1019,15 @@ async function loadGames(tournamentId, team, sheet) {
         <div class="standings-record">${recStr(s)}</div>
       </div>`;
     };
-    // Group by division, render each division with its own header
-    const divs = [...new Set(all.map(s => s.division || 'Unknown'))];
-    let rowsHtml = '';
-    divs.forEach(div => {
-      const divTeams = all.filter(s => (s.division || 'Unknown') === div);
-      const hasMine  = divTeams.some(s => s.is_mine);
-      rowsHtml += `<div class="standings-div-header">${div}<span style="float:right;font-weight:400;opacity:0.6">${divTeams.length} teams</span></div>`;
-      rowsHtml += divTeams.map(mkRow).join('');
-    });
+    // Only show the division that "mine" is in
+    const myDiv = mine ? (mine.division || 'Unknown') : null;
+    const divTeams = myDiv ? all.filter(s => (s.division || 'Unknown') === myDiv) : all;
+    const divLabel = myDiv || 'Season Standings';
+    const rowsHtml = divTeams.map(mkRow).join('');
     const grp = document.createElement('div');
     grp.className = 'games-group';
     grp.innerHTML = `<div class="standings-wrap">
-      <div class="standings-title">${data.cumulative_division || 'Season Standings'}<span style="float:right;letter-spacing:0.04em">PTS &nbsp;&nbsp;&nbsp;&nbsp; W–L</span></div>
+      <div class="standings-title">${data.cumulative_division || 'Season'} · ${divLabel} · ${divTeams.length} teams<span style="float:right;letter-spacing:0.04em">PTS &nbsp;&nbsp;&nbsp;&nbsp; W–L</span></div>
       ${rowsHtml}
     </div>`;
     el.appendChild(grp);
