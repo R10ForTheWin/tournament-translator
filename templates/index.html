@@ -1395,7 +1395,7 @@ function wplBracketToStaircase(bracket) {
     [n.win_next_ids, n.lose_next_ids].forEach(ids => {
       if (!ids || ids.length < 2) return;
       const sorted = ids.map(id => gameMap[id]).filter(Boolean)
-        .sort((a, b) => (a.date||'').localeCompare(b.date||'') || (a.time||'').localeCompare(b.time||''));
+        .sort((a, b) => (_dayNum(a.date) - _dayNum(b.date)) || ((parseTimeMin(a.time) || 0) - (parseTimeMin(b.time) || 0)));
       sorted.slice(1).forEach(g => secondaryIds.add(g.game_id));
     });
   });
