@@ -1059,7 +1059,7 @@ async function loadGames(tournamentId, team, sheet) {
   if (data.wpl_bracket && data.wpl_bracket.length) {
     // Convert WPL tree nodes to the column/path format buildBracketView expects,
     // then reuse the existing horizontal scroll + pinch-zoom staircase.
-    const allGames = [...(data.played || []), ...wplBracketToStaircase(data.wpl_bracket)];
+    const allGames = wplBracketToStaircase(data.wpl_bracket);
     el.appendChild(buildBracketView(allGames, tournamentId, team, ourName));
   } else {
     const allGames = [...(data.played || []), ...(data.upcoming || [])];
