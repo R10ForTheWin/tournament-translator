@@ -1057,7 +1057,10 @@ async function loadGames(tournamentId, team, sheet) {
   // Bracket — WPL crossover tree or standard staircase
   const ourName  = data.our_team_name || team;
   if (data.wpl_bracket && data.wpl_bracket.length) {
-    el.appendChild(buildWplTree(data, tournamentId, team, ourName));
+    // Convert WPL tree nodes to the column/path format buildBracketView expects,
+    // then reuse the existing horizontal scroll + pinch-zoom staircase.
+    const allGames = [...(data.played || []), ...wplBracketToStaircase(data.wpl_bracket)];
+    el.appendChild(buildBracketView(allGames, tournamentId, team, ourName));
   } else {
     const allGames = [...(data.played || []), ...(data.upcoming || [])];
     el.appendChild(buildBracketView(allGames, tournamentId, team, ourName));
@@ -1362,6 +1365,71 @@ function buildWplTree(data, tournamentId, team, ourName) {
   return wrap;
 }
 
+
+/**
+ * Convert WPL bracket tree nodes (from data.wpl_bracket) into the flat
+ * game-list format that buildBracketView expects, with game_num (column)
+ * and path ("win"/"lose") assigned so the horizontal staircase renders correctly.
+ *
+ * Bracket format (Trojan Gold):
+ *   col 1: root game
+ *   col 2: Saturday W/L bracket games
+ *   col 3: Sunday morning games (1 per path)
+ *   col 4: Sunday afternoon pair games (1st/4th place doubles)
+ *
+ * Round-robin format (Trojan Cardinal):
+ *   col 1..N: named games in order
+ *   col N+1:  placement game alternatives
+ */
+function wplBracketToStaircase(bracket) {
+  if (!bracket || !bracket.length) return [];
+  const gameMap = {};
+  bracket.forEach(n => { gameMap[n.game_id] = n; });
+  const root = bracket.find(n => !n.src_game_id);
+  if (!root) return bracket;
+
+  // Find "secondary" games — where a parent has multiple next_ids, the
+  // later one(s) go one column deeper (Sunday afternoon pair games).
+  const secondaryIds = new Set();
+  bracket.forEach(n => {
+    [n.win_next_ids, n.lose_next_ids].forEach(ids => {
+      if (!ids || ids.length < 2) return;
+      const sorted = ids.map(id => gameMap[id]).filter(Boolean)
+        .sort((a, b) => (a.date||'').localeCompare(b.date||'') || (a.time||'').localeCompare(b.time||''));
+      sorted.slice(1).forEach(g => secondaryIds.add(g.game_id));
+    });
+  });
+
+  const result = [];
+  const visited = new Set();
+  // queue: {id, depth, branch}
+  // branch = "win"/"lose" = which side of game-1 this node is on (for vertical ordering)
+  const queue = [{id: root.game_id, depth: 1, branch: undefined}];
+
+  while (queue.length) {
+    const {id, depth, branch} = queue.shift();
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const node = gameMap[id];
+    if (!node) continue;
+
+    const actualDepth = secondaryIds.has(id) ? depth + 1 : depth;
+    result.push(Object.assign({}, node, {
+      game_num: actualDepth,
+      path:     branch,
+    }));
+
+    // Children inherit the branch from game-1 level:
+    // if this node was reached via "win" from root → all descendants are "win" column
+    // if via "lose" → all descendants are "lose" column
+    const winBranch  = branch !== undefined ? branch : 'win';
+    const loseBranch = branch !== undefined ? branch : 'lose';
+
+    (node.win_next_ids  || []).forEach(cid => { if (!visited.has(cid)) queue.push({id: cid, depth: actualDepth + 1, branch: winBranch}); });
+    (node.lose_next_ids || []).forEach(cid => { if (!visited.has(cid)) queue.push({id: cid, depth: actualDepth + 1, branch: loseBranch}); });
+  }
+  return result;
+}
 
 function buildBracketView(allGames, tournamentId, team, ourName) {
   const vw = window.innerWidth;
