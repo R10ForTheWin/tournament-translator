@@ -1019,103 +1019,28 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
 
 
 def _build_wpl_game_tree(team: str, division_games: list) -> list:
-    """Build a WPL crossover game tree for a team.
+    """Build a WPL weekend game tree for a team.
 
-    Returns a list of game dicts in BFS order (root first), each augmented with:
-      placeholder    – bool (True = path not yet confirmed)
-      src_game_id    – game_id of the game that leads here (None for root)
-      src_path       – "win" | "lose" (None for root)
-      win_next_ids   – list of game_ids if team wins this game (0, 1, or 2 items)
-      lose_next_ids  – list of game_ids if team loses this game (0, 1, or 2 items)
-      sunday_pair_id – game_id of the paired Sunday game (None if not a pair)
+    Handles two formats automatically:
+      - Bracket crossover (e.g. Trojan Gold): 1 named game → W#/L# Saturday bracket → finish-slot Sunday
+      - Round-robin + placement (e.g. Trojan Cardinal): N named games → finish-slot placement game
+
+    Each returned node is a game dict plus:
+      placeholder    – bool
+      src_game_id    – game_id of predecessor (None for root)
+      src_path       – "win" | "lose" | None (None for round-robin chain)
+      win_next_ids   – game_ids if team wins (may equal lose_next_ids in round-robin)
+      lose_next_ids  – game_ids if team loses
+      sunday_pair_id – paired Sunday game_id (for 1st/4th place doubles)
+      tree_format    – "bracket" | "roundrobin"
     """
-    # ── 1. Find Game 1: the pool-slot game where team is directly named ──────
-    root = None
-    for g in division_games:
-        for slot in (g["white_team"], g["dark_team"]):
-            m = _POOL_SLOT_RE.match(slot.strip())
-            if m and team_matches(m.group(3), team):
-                root = g
-                break
-        if root:
-            break
-    if root is None:
-        return []
+    # Sort division games chronologically once
+    sorted_games = sorted(
+        division_games,
+        key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
+    )
 
-    root_num = _game_num(root["game_id"])
-    if not root_num:
-        return []
-
-    # ── 2. Find Saturday bracket games (W#<root_num> and L#<root_num>) ───────
-    win_sat_game = None
-    lose_sat_game = None
-    for g in division_games:
-        if g["game_id"] == root["game_id"]:
-            continue
-        for slot in (g["white_team"], g["dark_team"]):
-            s = slot.strip()
-            wm = _WL_SLOT_RE.match(s)
-            if not wm:
-                continue
-            ref = re.search(r'(\d+)$', wm.group(1))
-            if not ref:
-                continue
-            ref_num = str(int(ref.group(1)))
-            if ref_num != root_num:
-                continue
-            if s[0].upper() == 'W':
-                win_sat_game = g
-            else:
-                lose_sat_game = g
-
-    # ── 3. Determine finish positions for each Saturday outcome ───────────────
-    # Winners bracket (reached via W#): win→1st, lose→2nd
-    # Consolation bracket (reached via L#): win→3rd, lose→4th
-    # Map: (sat2_game_id, outcome) → finish_rank (1-4)
-    finish_map = {}  # game_id -> {win: rank, lose: rank}
-    if win_sat_game:
-        finish_map[win_sat_game["game_id"]] = {"win": 1, "lose": 2}
-    if lose_sat_game:
-        finish_map[lose_sat_game["game_id"]] = {"win": 3, "lose": 4}
-
-    # ── 4. Find Sunday finish-slot games for each finish position ─────────────
-    # Pool group letter from root's team slot
-    pool_group = None
-    for slot in (root["white_team"], root["dark_team"]):
-        m = _POOL_SLOT_RE.match(slot.strip())
-        if m and team_matches(m.group(3), team):
-            pool_group = m.group(1).upper()
-            break
-
-    # Collect Sunday games keyed by finish rank
-    # Sunday games use slots like "1stE-" where E = pool_group
-    sunday_by_rank = {}  # rank -> list of game dicts
-    if pool_group:
-        for g in division_games:
-            if g["game_id"] == root["game_id"]:
-                continue
-            if win_sat_game and g["game_id"] == win_sat_game["game_id"]:
-                continue
-            if lose_sat_game and g["game_id"] == lose_sat_game["game_id"]:
-                continue
-            for slot in (g["white_team"], g["dark_team"]):
-                s = slot.strip()
-                fm = _FINISH_SLOT_RE.match(s)
-                if fm and fm.group(1).upper() == pool_group:
-                    rank_m = re.search(r'^(\d+)', s)
-                    if rank_m:
-                        rank = int(rank_m.group(1))
-                        sunday_by_rank.setdefault(rank, []).append(g)
-                        break
-
-    # ── 5. Determine which paths are confirmed by results ─────────────────────
-    root_result = _team_won(team, root)  # True=won, False=lost, None=unplayed
-
-    # ── 6. Assemble output list ───────────────────────────────────────────────
-    out = []
-    seen = set()
-
-    def _make_node(g, src_game_id, src_path, is_placeholder):
+    def _make_node(g, src_game_id, src_path, is_placeholder, fmt):
         node = dict(g)
         node["placeholder"]    = is_placeholder
         node["src_game_id"]    = src_game_id
@@ -1123,85 +1048,164 @@ def _build_wpl_game_tree(team: str, division_games: list) -> list:
         node["win_next_ids"]   = []
         node["lose_next_ids"]  = []
         node["sunday_pair_id"] = None
+        node["tree_format"]    = fmt
         return node
 
-    # Root (Game 1)
-    root_node = _make_node(root, None, None, False)
-    out.append(root_node)
-    seen.add(root["game_id"])
+    # ── 1. Find ALL explicitly-named pool-slot games for this team ──────────
+    explicit_games = []
+    for g in sorted_games:
+        for slot in (g["white_team"], g["dark_team"]):
+            m = _POOL_SLOT_RE.match(slot.strip())
+            if m and team_matches(m.group(3), team):
+                if g["game_id"] not in {x["game_id"] for x in explicit_games}:
+                    explicit_games.append(g)
+                break
+    if not explicit_games:
+        return []
 
-    sat2_nodes = {}  # game_id -> node
+    root = explicit_games[0]
+    root_num = _game_num(root["game_id"])
+    if not root_num:
+        return []
 
-    # Saturday bracket games
-    for sat2_game, path_from_root in [(win_sat_game, "win"), (lose_sat_game, "lose")]:
-        if sat2_game is None:
+    # Pool group letter (e.g. "E" from "E3-TROJAN GOLD")
+    pool_group = None
+    for slot in (root["white_team"], root["dark_team"]):
+        m = _POOL_SLOT_RE.match(slot.strip())
+        if m and team_matches(m.group(3), team):
+            pool_group = m.group(1).upper()
+            break
+
+    # ── 2. Check for W#/L# bracket games off the root ──────────────────────
+    win_sat_game = lose_sat_game = None
+    for g in sorted_games:
+        if g["game_id"] in {x["game_id"] for x in explicit_games}:
             continue
-        if sat2_game["game_id"] in seen:
-            continue
-        # Placeholder unless root result is known and matches this path
-        if root_result is True:
-            is_ph = (path_from_root == "lose")
-        elif root_result is False:
-            is_ph = (path_from_root == "win")
-        else:
-            is_ph = True
-
-        node = _make_node(sat2_game, root["game_id"], path_from_root, is_ph)
-        out.append(node)
-        seen.add(sat2_game["game_id"])
-        sat2_nodes[sat2_game["game_id"]] = node
-
-        # Wire root → sat2
-        if path_from_root == "win":
-            root_node["win_next_ids"].append(sat2_game["game_id"])
-        else:
-            root_node["lose_next_ids"].append(sat2_game["game_id"])
-
-    # Sunday games
-    for sat2_game, _ in [(win_sat_game, "win"), (lose_sat_game, "lose")]:
-        if sat2_game is None:
-            continue
-        sat2_node = sat2_nodes.get(sat2_game["game_id"])
-        if sat2_node is None:
-            continue
-        sat2_result = _team_won(team, sat2_game)
-        ranks_for_sat2 = finish_map.get(sat2_game["game_id"], {})
-
-        for outcome, rank in ranks_for_sat2.items():
-            # Determine placeholder for this Sunday path
-            sat2_ph = sat2_node["placeholder"]
-            if sat2_result is True:
-                is_sun_ph = sat2_ph or (outcome == "lose")
-            elif sat2_result is False:
-                is_sun_ph = sat2_ph or (outcome == "win")
-            else:
-                is_sun_ph = True
-
-            sun_games = sunday_by_rank.get(rank, [])
-            # Deduplicate
-            new_sun = [g for g in sun_games if g["game_id"] not in seen]
-            if not new_sun:
+        for slot in (g["white_team"], g["dark_team"]):
+            s = slot.strip()
+            wm = _WL_SLOT_RE.match(s)
+            if not wm:
                 continue
-
-            # Add Sunday games and pair them if there are two
-            sun_nodes = []
-            for sg in new_sun:
-                snode = _make_node(sg, sat2_game["game_id"], outcome, is_sun_ph)
-                out.append(snode)
-                seen.add(sg["game_id"])
-                sun_nodes.append(snode)
-
-            # Wire sat2 → Sunday
-            sun_ids = [sn["game_id"] for sn in sun_nodes]
-            if outcome == "win":
-                sat2_node["win_next_ids"].extend(sun_ids)
+            ref = re.search(r'(\d+)$', wm.group(1))
+            if not ref or str(int(ref.group(1))) != root_num:
+                continue
+            if s[0].upper() == 'W':
+                win_sat_game = g
             else:
-                sat2_node["lose_next_ids"].extend(sun_ids)
+                lose_sat_game = g
 
-            # Mark paired Sunday games
-            if len(sun_nodes) == 2:
-                sun_nodes[0]["sunday_pair_id"] = sun_nodes[1]["game_id"]
-                sun_nodes[1]["sunday_pair_id"] = sun_nodes[0]["game_id"]
+    # ── 3. Finish-slot games for this pool group ─────────────────────────────
+    explicit_ids = {x["game_id"] for x in explicit_games}
+    bracket_ids  = {g["game_id"] for g in [win_sat_game, lose_sat_game] if g}
+    sunday_by_rank = {}   # rank(int) → [game, ...]
+    if pool_group:
+        for g in sorted_games:
+            if g["game_id"] in explicit_ids | bracket_ids:
+                continue
+            for slot in (g["white_team"], g["dark_team"]):
+                s = slot.strip()
+                fm = _FINISH_SLOT_RE.match(s)
+                if fm and fm.group(1).upper() == pool_group:
+                    rank_m = re.search(r'^(\d+)', s)
+                    if rank_m:
+                        sunday_by_rank.setdefault(int(rank_m.group(1)), []).append(g)
+                    break
+
+    out  = []
+    seen = set()
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # FORMAT A — Bracket crossover (win/lose Saturday split)
+    # e.g. Trojan Gold: Game 330 → W#330 or L#330 → Sunday finish slots
+    # ═══════════════════════════════════════════════════════════════════════
+    if win_sat_game or lose_sat_game:
+        finish_map = {}
+        if win_sat_game:  finish_map[win_sat_game["game_id"]] = {"win": 1, "lose": 2}
+        if lose_sat_game: finish_map[lose_sat_game["game_id"]] = {"win": 3, "lose": 4}
+
+        root_result = _team_won(team, root)
+
+        root_node = _make_node(root, None, None, False, "bracket")
+        out.append(root_node); seen.add(root["game_id"])
+
+        sat2_nodes = {}
+        for sat2_game, path in [(win_sat_game, "win"), (lose_sat_game, "lose")]:
+            if sat2_game is None or sat2_game["game_id"] in seen:
+                continue
+            if root_result is True:   is_ph = (path == "lose")
+            elif root_result is False: is_ph = (path == "win")
+            else:                      is_ph = True
+
+            node = _make_node(sat2_game, root["game_id"], path, is_ph, "bracket")
+            out.append(node); seen.add(sat2_game["game_id"])
+            sat2_nodes[sat2_game["game_id"]] = node
+            if path == "win": root_node["win_next_ids"].append(sat2_game["game_id"])
+            else:             root_node["lose_next_ids"].append(sat2_game["game_id"])
+
+        for sat2_game, _ in [(win_sat_game, "win"), (lose_sat_game, "lose")]:
+            if sat2_game is None:
+                continue
+            sat2_node   = sat2_nodes.get(sat2_game["game_id"])
+            sat2_result = _team_won(team, sat2_game)
+            for outcome, rank in finish_map.get(sat2_game["game_id"], {}).items():
+                sat2_ph = sat2_node["placeholder"]
+                if sat2_result is True:   is_sun_ph = sat2_ph or (outcome == "lose")
+                elif sat2_result is False: is_sun_ph = sat2_ph or (outcome == "win")
+                else:                      is_sun_ph = True
+                sun_nodes = []
+                for sg in sunday_by_rank.get(rank, []):
+                    if sg["game_id"] in seen: continue
+                    sn = _make_node(sg, sat2_game["game_id"], outcome, is_sun_ph, "bracket")
+                    out.append(sn); seen.add(sg["game_id"]); sun_nodes.append(sn)
+                sun_ids = [sn["game_id"] for sn in sun_nodes]
+                if outcome == "win": sat2_node["win_next_ids"].extend(sun_ids)
+                else:                sat2_node["lose_next_ids"].extend(sun_ids)
+                if len(sun_nodes) == 2:
+                    sun_nodes[0]["sunday_pair_id"] = sun_nodes[1]["game_id"]
+                    sun_nodes[1]["sunday_pair_id"] = sun_nodes[0]["game_id"]
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # FORMAT B — Round-robin + placement (multiple named games, no W#/L# split)
+    # e.g. Trojan Cardinal: Game 307 → Game 310 → Game 351 → placement TBD
+    # ═══════════════════════════════════════════════════════════════════════
+    else:
+        prev_node = None
+        for g in explicit_games:
+            if g["game_id"] in seen: continue
+            node = _make_node(g, prev_node["game_id"] if prev_node else None,
+                              None, False, "roundrobin")
+            if prev_node:
+                # Same next game regardless of result (round-robin)
+                prev_node["win_next_ids"].append(g["game_id"])
+                prev_node["lose_next_ids"].append(g["game_id"])
+            out.append(node); seen.add(g["game_id"])
+            prev_node = node
+
+        # After all round-robin games, one finish-slot placement game
+        if prev_node and pool_group:
+            # Determine actual finish if all explicit games are played
+            all_played = all(g.get("white_score") is not None for g in explicit_games)
+            if all_played:
+                standings = _standings_for_group(pool_group, division_games)
+                rank = next((i + 1 for i, s in enumerate(standings)
+                             if team_matches(s["team"], team)), None)
+                placement_games = sunday_by_rank.get(rank, []) if rank else []
+            else:
+                # Show all possible placement games as placeholders
+                placement_games = []
+                for games_list in sunday_by_rank.values():
+                    placement_games.extend(games_list)
+                placement_games = sorted(
+                    placement_games,
+                    key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
+                )[:4]  # cap at 4 possibilities
+
+            for pg in placement_games:
+                if pg["game_id"] in seen: continue
+                pn = _make_node(pg, prev_node["game_id"], None, True, "roundrobin")
+                prev_node["win_next_ids"].append(pg["game_id"])
+                prev_node["lose_next_ids"].append(pg["game_id"])
+                out.append(pn); seen.add(pg["game_id"])
 
     return out
 
