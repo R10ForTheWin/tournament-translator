@@ -255,7 +255,8 @@
     .path-banner { padding: 10px 14px 8px; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; }
     .path-banner.win-path  { background: rgba(196,160,0,0.15);  color: var(--gold); border-bottom: 1px solid rgba(196,160,0,0.2); }
     .path-banner.lose-path { background: rgba(157,34,53,0.18);  color: rgba(255,200,200,0.85); border-bottom: 1px solid rgba(157,34,53,0.25); }
-    .path-banner.pool-path { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.6); border-bottom: 1px solid rgba(255,255,255,0.1); }
+    .path-banner.pool-path     { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.6); border-bottom: 1px solid rgba(255,255,255,0.1); }
+    .path-banner.placement-path { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.45); border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 11px; }
 
     /* Branch cards indented to show they flow from the game above */
     .game-card.branch-card { margin-left: 16px; }
@@ -1938,7 +1939,8 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
   const confirmed = g.placeholder === false;
   const winLabel  = (confirmed || /winner of game/i.test(opp)) ? 'Winners Bracket'     : 'If We Win';
   const loseLabel = (confirmed || /loser of game/i.test(opp))  ? 'Consolation Bracket' : 'If We Lose';
-  const poolRank  = g.path?.startsWith('pool_') ? +g.path.split('_')[1] : null;
+  const poolRank      = g.path?.startsWith('pool_') ? +g.path.split('_')[1] : null;
+  const placementRank = g.placement_rank ?? null;
 
   let bannerHtml;
   if (g.is_current) {
@@ -1948,6 +1950,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
     bannerHtml = g.path === 'win'  ? `<div class="path-banner win-path">${winLabel}</div>`
       : g.path === 'lose' ? `<div class="path-banner lose-path">${loseLabel}</div>`
       : poolRank !== null ? `<div class="path-banner pool-path">${ordSuffix(poolRank)} Place Game</div>`
+      : placementRank !== null ? `<div class="path-banner placement-path">If ${ordSuffix(placementRank)} in Pool</div>`
       : '';
   }
 

@@ -1189,20 +1189,23 @@ def _build_wpl_game_tree(team: str, division_games: list) -> list:
                 standings = _standings_for_group(pool_group, division_games)
                 rank = next((i + 1 for i, s in enumerate(standings)
                              if team_matches(s["team"], team)), None)
-                placement_games = sunday_by_rank.get(rank, []) if rank else []
+                placement_games = [(pg, rank) for pg in sunday_by_rank.get(rank, [])] if rank else []
             else:
-                # Show all possible placement games as placeholders
+                # Show all possible placement games as placeholders, preserving rank label
                 placement_games = []
-                for games_list in sunday_by_rank.values():
-                    placement_games.extend(games_list)
-                placement_games = sorted(
-                    placement_games,
-                    key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
-                )[:4]  # cap at 4 possibilities
+                for rank_num, games_list in sunday_by_rank.items():
+                    for pg in games_list:
+                        placement_games.append((pg, rank_num))
+                placement_games.sort(
+                    key=lambda x: (x[0].get("date") or date.min, x[0].get("time") or datetime.min.time()),
+                )
+                placement_games = placement_games[:4]
 
-            for pg in placement_games:
+            for pg_item in placement_games:
+                pg, pg_rank = pg_item if isinstance(pg_item, tuple) else (pg_item, None)
                 if pg["game_id"] in seen: continue
                 pn = _make_node(pg, prev_node["game_id"], None, True, "roundrobin")
+                pn["placement_rank"] = pg_rank
                 prev_node["win_next_ids"].append(pg["game_id"])
                 prev_node["lose_next_ids"].append(pg["game_id"])
                 out.append(pn); seen.add(pg["game_id"])
@@ -2028,28 +2031,35 @@ def api_games(tournament_id, team):
                 gid   = node["game_id"]
                 opp_sl = node["dark_team"] if team_matches(node["white_team"], team) else node["white_team"]
                 color  = "WHITE" if team_matches(node["white_team"], team) else "DARK"
+                opp_name = describe_slot(opp_sl, dg)
+                # Guard: if resolved opponent equals our own team, flip to the other slot
+                if team_matches(opp_name, team):
+                    other_sl = node["white_team"] if opp_sl == node["dark_team"] else node["dark_team"]
+                    opp_name = describe_slot(other_sl, dg)
                 is_current = False
-                if node.get("date") and node.get("time"):
+                # Placeholder games (wrong bracket path) are never "current" for this team
+                if not node.get("placeholder") and node.get("date") and node.get("time"):
                     game_dt = datetime.combine(node["date"], node["time"])
                     elapsed_s = (now_la - game_dt).total_seconds()
                     is_current = -900 <= elapsed_s <= 7200
                 live = _LIVE_SCORES.get((tournament_id, gid))
-                if live:
+                if live and not node.get("placeholder"):
                     is_current = True
                 d = {
-                    "game_id":       gid,
-                    "date":          _fmt_date(node["date"]),
-                    "time":          _fmt_time(node["time"]),
-                    "location":      node["location"],
-                    "opponent":      describe_slot(opp_sl, dg),
-                    "your_color":    color,
-                    "placeholder":   node["placeholder"],
-                    "src_game_id":   node["src_game_id"],
-                    "src_path":      node["src_path"],
-                    "win_next_ids":  node["win_next_ids"],
-                    "lose_next_ids": node["lose_next_ids"],
+                    "game_id":        gid,
+                    "date":           _fmt_date(node["date"]),
+                    "time":           _fmt_time(node["time"]),
+                    "location":       node["location"],
+                    "opponent":       opp_name,
+                    "your_color":     color,
+                    "placeholder":    node["placeholder"],
+                    "placement_rank": node.get("placement_rank"),
+                    "src_game_id":    node["src_game_id"],
+                    "src_path":       node["src_path"],
+                    "win_next_ids":   node["win_next_ids"],
+                    "lose_next_ids":  node["lose_next_ids"],
                     "sunday_pair_id": node["sunday_pair_id"],
-                    "is_current":    is_current,
+                    "is_current":     is_current,
                 }
                 if node.get("played"):
                     ws = node.get("white_score") or 0
