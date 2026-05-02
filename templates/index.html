@@ -283,6 +283,100 @@
     .bracket-step.first-step .bracket-day-header { margin-top: 4px; }
     .bracket-game-num-header { font-size: 16px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); padding: 0 0 8px; text-align: center; }
 
+    /* ── WPL crossover game tree ── */
+    .wpl-tree-wrap { padding: 0 0 32px; }
+    .wpl-tree-row { display: flex; flex-direction: column; gap: 0; }
+    .wpl-tree-root { margin-bottom: 0; }
+    /* Branch label row between game rows */
+    .wpl-branch-row {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin: 6px 0;
+    }
+    .wpl-branch-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+    .wpl-branch-label {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin: 0 auto 6px;
+      display: inline-block;
+    }
+    .wpl-branch-label.win  { background: var(--win-bg);  color: var(--win-text); }
+    .wpl-branch-label.lose { background: var(--loss-bg); color: var(--loss-text); }
+    .wpl-game-row {
+      display: flex;
+      gap: 8px;
+      width: 100%;
+      margin-bottom: 0;
+    }
+    .wpl-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+    /* WPL game card (compact) */
+    .wpl-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      width: 100%;
+    }
+    .wpl-card.confirmed { border-color: rgba(255,215,0,0.35); }
+    .wpl-card.placeholder { opacity: 0.72; }
+    .wpl-card-banner {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 5px 10px;
+    }
+    .wpl-card-banner.result-win  { background: var(--win-bg);  color: var(--win-text); }
+    .wpl-card-banner.result-loss { background: var(--loss-bg); color: var(--loss-text); }
+    .wpl-card-banner.result-tie  { background: var(--tie-bg);  color: var(--tie-text); }
+    .wpl-card-banner.live-game   { background: rgba(10,40,80,0.55); color: rgba(150,200,255,0.92); }
+    .wpl-card-body { padding: 9px 10px; }
+    .wpl-card-meta { font-size: 11px; color: var(--muted); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    .wpl-card-meta-loc { font-size: 11px; color: var(--muted); }
+    .wpl-card-opp { font-size: 14px; font-weight: 800; color: var(--white); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .wpl-card-opp .vs { font-size: 11px; font-weight: 400; color: var(--muted); margin-right: 4px; }
+    .wpl-card-rec { font-size: 10px; color: var(--muted); margin-top: 2px; }
+    .wpl-card-score { font-size: 18px; font-weight: 900; color: var(--gold); letter-spacing: -0.5px; margin-top: 4px; }
+    /* Full-width root card */
+    .wpl-root-card { max-width: 100%; }
+    /* Day section header */
+    .wpl-day-header { font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.12em; color: #000; background: var(--gold); border-radius: 6px; padding: 5px 12px; display: inline-block; margin: 14px 0 10px; }
+    /* Connector: the vertical line with arrows between rows */
+    .wpl-connector-row {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin: 2px 0;
+    }
+    .wpl-connector-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .wpl-connector-line {
+      width: 2px;
+      height: 14px;
+      background: rgba(255,255,255,0.2);
+    }
+
     /* ── Place Predictor button on team list ── */
     .team-action-btn { background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 6px 8px; color: var(--gold); cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin-right: 8px; }
     .team-action-btn:active { background: rgba(255,255,255,0.14); }
@@ -960,10 +1054,14 @@ async function loadGames(tournamentId, team, sheet) {
     el.appendChild(tag);
   }
 
-  // Staircase bracket — all games
-  const allGames = [...(data.played || []), ...(data.upcoming || [])];
+  // Bracket — WPL crossover tree or standard staircase
   const ourName  = data.our_team_name || team;
-  el.appendChild(buildBracketView(allGames, tournamentId, team, ourName));
+  if (data.wpl_bracket && data.wpl_bracket.length) {
+    el.appendChild(buildWplTree(data, tournamentId, team, ourName));
+  } else {
+    const allGames = [...(data.played || []), ...(data.upcoming || [])];
+    el.appendChild(buildBracketView(allGames, tournamentId, team, ourName));
+  }
 
   // Live score polling — refresh every 45s for any in-progress games
   if (window._liveScoreInterval) clearInterval(window._liveScoreInterval);
@@ -1041,6 +1139,229 @@ function _dayNum(d) {
   if (dl.startsWith('sun')) return 1;
   return 2;
 }
+
+// ── WPL crossover game tree ───────────────────────────────────────────────────
+function buildWplTree(data, tournamentId, team, ourName) {
+  const nodes  = data.wpl_bracket;
+  const gameMap = {};
+  nodes.forEach(n => { gameMap[n.game_id] = n; });
+
+  const wrap = document.createElement('div');
+  wrap.className = 'wpl-tree-wrap';
+
+  // Build a mini card for a WPL tree node
+  function wplCard(g) {
+    const card = document.createElement('div');
+    const isConfirmed = !g.placeholder;
+    card.className = 'wpl-card' + (isConfirmed ? ' confirmed' : ' placeholder');
+
+    // Banner
+    let banner = '';
+    if (g.result) {
+      const cls   = g.result === 'win' ? 'result-win' : g.result === 'loss' ? 'result-loss' : 'result-tie';
+      const label = g.result === 'win' ? 'WIN'         : g.result === 'loss' ? 'LOSS'         : 'TIE';
+      banner = `<div class="wpl-card-banner ${cls}">${label}</div>`;
+    } else if (g.is_current) {
+      banner = `<div class="wpl-card-banner live-game"><span class="live-dot"></span>Live</div>`;
+    }
+
+    // Score
+    let scoreHtml = '';
+    if (g.result && g.our_score != null) {
+      scoreHtml = `<div class="wpl-card-score">${g.our_score} – ${g.opp_score}</div>`;
+    }
+
+    const locHtml  = g.location ? locationHtml(g.location) : '';
+    const rec      = seasonRec(g.opponent);
+    const rank     = seasonRank(g.opponent);
+    const rankHtml = rank ? ` <span style="font-size:10px;font-weight:500;opacity:0.6">(#${rank})</span>` : '';
+
+    card.innerHTML = `
+      ${banner}
+      <div class="wpl-card-body">
+        <div class="wpl-card-meta">
+          <span>${g.time || g.date || 'TBD'}</span>
+          ${locHtml ? `<span class="wpl-card-meta-loc">${locHtml}</span>` : ''}
+        </div>
+        <div class="wpl-card-opp"><span class="vs">vs</span>${g.opponent || '?'}${rankHtml}</div>
+        ${rec ? `<div class="wpl-card-rec">${rec}</div>` : ''}
+        ${scoreHtml}
+      </div>`;
+    return card;
+  }
+
+  // Render one column (list of game_ids, possibly a pair for Sunday doubles)
+  function renderCol(gameIds, parentDiv) {
+    const col = document.createElement('div');
+    col.className = 'wpl-col';
+    gameIds.forEach(gid => {
+      const g = gameMap[gid];
+      if (!g) return;
+      col.appendChild(wplCard(g));
+    });
+    parentDiv.appendChild(col);
+    return col;
+  }
+
+  // Day header helper
+  let lastDay = null;
+  function maybeAddDayHeader(date) {
+    if (!date || date === lastDay) return;
+    lastDay = date;
+    const h = document.createElement('div');
+    h.className = 'wpl-day-header';
+    h.textContent = date;
+    wrap.appendChild(h);
+  }
+
+  // Connector between rows
+  function addConnectorRow(winIds, loseIds) {
+    const row = document.createElement('div');
+    row.className = 'wpl-connector-row';
+
+    // One connector column per path that has games
+    const paths = [];
+    if (winIds && winIds.length)  paths.push({ ids: winIds,  label: 'WIN',  cls: 'win' });
+    if (loseIds && loseIds.length) paths.push({ ids: loseIds, label: 'LOSE', cls: 'lose' });
+
+    if (paths.length === 0) return;
+
+    if (paths.length === 1) {
+      // Single path (e.g. 2nd or 3rd place — one Sunday game)
+      const col = document.createElement('div');
+      col.className = 'wpl-connector-col';
+      col.innerHTML = `<div class="wpl-connector-line"></div><div class="wpl-branch-label ${paths[0].cls}">${paths[0].label}</div><div class="wpl-connector-line"></div>`;
+      row.appendChild(col);
+    } else {
+      // Two paths
+      paths.forEach(p => {
+        const col = document.createElement('div');
+        col.className = 'wpl-connector-col';
+        col.innerHTML = `<div class="wpl-connector-line"></div><div class="wpl-branch-label ${p.cls}">${p.label}</div><div class="wpl-connector-line"></div>`;
+        row.appendChild(col);
+      });
+    }
+    wrap.appendChild(row);
+  }
+
+  // ── Row 1: root (Game 1, full width) ─────────────────────────────────────
+  const root = nodes[0];
+  maybeAddDayHeader(root.date);
+
+  const rootRow = document.createElement('div');
+  rootRow.className = 'wpl-game-row';
+  const rootCol = document.createElement('div');
+  rootCol.className = 'wpl-col';
+  rootCol.appendChild(wplCard(root));
+  rootRow.appendChild(rootCol);
+  wrap.appendChild(rootRow);
+
+  // ── Row 2: Saturday bracket games (win col | lose col) ───────────────────
+  const winSatIds  = root.win_next_ids  || [];
+  const loseSatIds = root.lose_next_ids || [];
+
+  if (winSatIds.length || loseSatIds.length) {
+    addConnectorRow(winSatIds, loseSatIds);
+
+    const sat2Row = document.createElement('div');
+    sat2Row.className = 'wpl-game-row';
+
+    // Determine the actual Saturday games from win/lose branches
+    const allSat2Ids = [...winSatIds, ...loseSatIds];
+    const sat2Date   = allSat2Ids.map(id => gameMap[id]?.date).find(Boolean) || null;
+    maybeAddDayHeader(sat2Date);
+
+    if (winSatIds.length)  renderCol(winSatIds, sat2Row);
+    if (loseSatIds.length) renderCol(loseSatIds, sat2Row);
+    wrap.appendChild(sat2Row);
+
+    // ── Row 3: Sunday games (per-col win/lose from each Sat2 game) ─────────
+    // Collect Sunday columns: one col per Sat2 branch path
+    // Structure: winSat2→win Sunday, winSat2→lose Sunday, loseSat2→win Sunday, loseSat2→lose Sunday
+    // We display them as two groups (under the win col and under the lose col)
+
+    // For each Sat2 game, collect its own win/lose Sunday children
+    const winSat2SunCols  = [];  // list of {label, ids} under win-sat2 column
+    const loseSat2SunCols = [];  // list of {label, ids} under lose-sat2 column
+
+    winSatIds.forEach(satId => {
+      const satNode = gameMap[satId];
+      if (!satNode) return;
+      if (satNode.win_next_ids?.length)  winSat2SunCols.push({ label: 'WIN',  cls: 'win',  ids: satNode.win_next_ids });
+      if (satNode.lose_next_ids?.length) winSat2SunCols.push({ label: 'LOSE', cls: 'lose', ids: satNode.lose_next_ids });
+    });
+    loseSatIds.forEach(satId => {
+      const satNode = gameMap[satId];
+      if (!satNode) return;
+      if (satNode.win_next_ids?.length)  loseSat2SunCols.push({ label: 'WIN',  cls: 'win',  ids: satNode.win_next_ids });
+      if (satNode.lose_next_ids?.length) loseSat2SunCols.push({ label: 'LOSE', cls: 'lose', ids: satNode.lose_next_ids });
+    });
+
+    const hasSunday = winSat2SunCols.length > 0 || loseSat2SunCols.length > 0;
+    if (hasSunday) {
+      // Connector row: left side shows win/lose for win-sat2, right side for lose-sat2
+      const connRow = document.createElement('div');
+      connRow.className = 'wpl-connector-row';
+
+      function makeSunConnectorCol(sunCols) {
+        const outer = document.createElement('div');
+        outer.className = 'wpl-connector-col';
+        outer.style.flexDirection = 'row';
+        outer.style.justifyContent = 'center';
+        outer.style.gap = '4px';
+        sunCols.forEach(sc => {
+          const inner = document.createElement('div');
+          inner.className = 'wpl-connector-col';
+          inner.innerHTML = `<div class="wpl-connector-line"></div><div class="wpl-branch-label ${sc.cls}">${sc.label}</div><div class="wpl-connector-line"></div>`;
+          outer.appendChild(inner);
+        });
+        return outer;
+      }
+
+      if (winSat2SunCols.length) connRow.appendChild(makeSunConnectorCol(winSat2SunCols));
+      if (loseSat2SunCols.length) connRow.appendChild(makeSunConnectorCol(loseSat2SunCols));
+      wrap.appendChild(connRow);
+
+      // Sunday game row — up to 4 columns (1st, 2nd, 3rd, 4th)
+      // But we group them under their Sat2 parent column
+      const allSunCols = [...winSat2SunCols, ...loseSat2SunCols];
+      const sunDate = allSunCols.flatMap(c => c.ids).map(id => gameMap[id]?.date).find(Boolean) || null;
+      maybeAddDayHeader(sunDate);
+
+      // We render a two-section row: one section per Sat2 column
+      // Each section can have 1 or 2 Sunday game columns
+      const sunRow = document.createElement('div');
+      sunRow.className = 'wpl-game-row';
+      sunRow.style.gap = '8px';
+
+      function renderSunSection(sunCols) {
+        const section = document.createElement('div');
+        section.className = 'wpl-col';
+        section.style.flexDirection = 'row';
+        section.style.gap = '6px';
+        section.style.display = 'flex';
+        sunCols.forEach(sc => {
+          // For Sunday doubles (2 games in one slot), stack vertically in their col
+          const col = document.createElement('div');
+          col.className = 'wpl-col';
+          sc.ids.forEach(gid => {
+            const g = gameMap[gid];
+            if (g) col.appendChild(wplCard(g));
+          });
+          section.appendChild(col);
+        });
+        return section;
+      }
+
+      if (winSat2SunCols.length)  sunRow.appendChild(renderSunSection(winSat2SunCols));
+      if (loseSat2SunCols.length) sunRow.appendChild(renderSunSection(loseSat2SunCols));
+      wrap.appendChild(sunRow);
+    }
+  }
+
+  return wrap;
+}
+
 
 function buildBracketView(allGames, tournamentId, team, ourName) {
   const vw = window.innerWidth;
