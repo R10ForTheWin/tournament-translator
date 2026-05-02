@@ -1042,7 +1042,7 @@ async function loadGames(tournamentId, team, sheet) {
     el.appendChild(banner);
   }
 
-  // Last-updated tag — top of bracket
+  // Last-updated tag + parser confidence badge
   if (data.cache_age_s != null) {
     const ttl = data.cache_ttl_s || 300;
     const ageMin = Math.floor(data.cache_age_s / 60);
@@ -1051,7 +1051,9 @@ async function loadGames(tournamentId, team, sheet) {
     const nextLabel = data.cache_age_s >= ttl ? 'refreshing next load' : `refreshes in ~${nextMin} min`;
     const tag = document.createElement('div');
     tag.className = 'cache-tag';
-    tag.textContent = `Schedule last fetched ${ageLabel} · ${nextLabel}`;
+    const fmtLabels = { 'A': 'Known format', 'B': 'Known format', 'AI-cached': 'Auto-detected', 'AI': 'Auto-detected (new)' };
+    const fmtBadge = data.parse_format ? ` · ${fmtLabels[data.parse_format] || data.parse_format}` : '';
+    tag.textContent = `Schedule last fetched ${ageLabel} · ${nextLabel}${fmtBadge}`;
     el.appendChild(tag);
   }
 

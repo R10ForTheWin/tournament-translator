@@ -153,6 +153,23 @@ def _hash_rows(rows: list) -> str:
     return hashlib.sha256(repr(rows).encode()).hexdigest()[:20]
 
 
+def _hash_schema_key(sheet_name: str, all_rows: list) -> str:
+    """Stable cache key based on sheet name + first non-empty row (structural signature only).
+
+    Hashing row data caused cache misses whenever scores were updated or teams
+    were added — even though the column layout was identical. The first non-empty
+    row is the structural fingerprint; data rows are irrelevant to the schema.
+    """
+    header_row = None
+    for row in all_rows[:15]:
+        cells = tuple(str(c).strip() if c is not None else "" for c in row)
+        if any(cells):
+            header_row = cells
+            break
+    key_data = repr((sheet_name.strip(), header_row))
+    return hashlib.sha256(key_data.encode()).hexdigest()[:20]
+
+
 _MONTH_MAP = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
     "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
@@ -273,7 +290,7 @@ def _save_disk_schema(cache_key: str, schema: dict) -> None:
 
 def _get_schema(sheet_name: str, all_rows: list) -> dict:
     sample = _sample_rows(all_rows)
-    cache_key = _hash_rows(sample)
+    cache_key = _hash_schema_key(sheet_name, all_rows)
 
     # 1. Memory cache (fastest)
     if cache_key in _schema_cache:
@@ -486,8 +503,7 @@ def parse_cached(wb) -> list[dict]:
         if not all_rows:
             continue
 
-        sample = _sample_rows(all_rows)
-        cache_key = _hash_rows(sample)
+        cache_key = _hash_schema_key(sheet_name, all_rows)
 
         # Try memory cache first, then disk cache
         schema = _schema_cache.get(cache_key) or _load_disk_schema(cache_key)

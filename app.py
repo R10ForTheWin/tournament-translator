@@ -2080,6 +2080,7 @@ def api_games(tournament_id, team):
         if fn:
             our_team_name = fn.split("·")[0].strip()
 
+    parse_format = games[0].get("format") if games else None
     return jsonify({
         "team":                 team,
         "our_team_name":        our_team_name,
@@ -2092,6 +2093,7 @@ def api_games(tournament_id, team):
         "wpl_bracket":          wpl_bracket,
         "cache_age_s":          _cache_age(tournament_id),
         "cache_ttl_s":          URL_CACHE_TTL,
+        "parse_format":         parse_format,
     })
 
 

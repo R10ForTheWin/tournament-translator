@@ -1,114 +1,79 @@
 """
-Auto-detect which parser format an Excel workbook uses.
-Format A: has a DATE column (datetime objects) + LOCATION column
-Format B: no DATE column, time objects only, Futures/WPL style
+Excel parser dispatcher for tournament schedules.
+
+Parse priority (revised):
+  1. AI-cached schema (disk or memory) — instant, primary path for any format
+     seen before. No API call. Covers all novel formats after first encounter.
+  2. Format A heuristic — fast-path for Kap7/Kahuna tournaments.
+  3. Format B heuristic — fast-path for WPL Futures weekends.
+  4. AI parser — makes one API call for truly new layouts, caches result.
+
+Every parse attempt is gated through the deterministic validator. If a parser
+returns games that fail validation, it is rejected and the next parser is tried.
+This prevents silently wrong brackets from reaching parents.
 """
+import io
 import openpyxl
-from datetime import datetime
-
-SKIP = {"InfoRules", "DivisionsStandings", "TEAM LISTING AND BRACKETS",
-        "CHICLETS", "CHICLETS MASTER", "CHICLETS NEW",
-        "MASTER BY DIVISION", "MASTER BY LOCATION", "MASTER BY TIME",
-        "RAW ENTRIES", "MEDALS"}
+from parsers.validate import validate_games
 
 
-def detect_format(wb) -> str:
-    """Return 'A' or 'B'."""
-    for sheet_name in wb.sheetnames:
-        if sheet_name.upper() in {s.upper() for s in SKIP}:
-            continue
-        ws = wb[sheet_name]
-        for row in ws.iter_rows(min_row=1, max_row=60, values_only=True):
-            if len(row) < 4:
-                continue
-            if isinstance(row[0], datetime) and row[3] and isinstance(row[3], str):
-                return "A"
-    return "B"
+def _load_wb(filepath_or_bytes):
+    if isinstance(filepath_or_bytes, (bytes, bytearray)):
+        return openpyxl.load_workbook(io.BytesIO(filepath_or_bytes), data_only=True)
+    return openpyxl.load_workbook(filepath_or_bytes, data_only=True)
+
+
+def _tag_and_validate(games: list, fmt: str) -> list:
+    """Tag games with their format and run the validator.
+    Returns tagged games on success, empty list on validation failure."""
+    if not games:
+        return []
+    issues = validate_games(games)
+    if issues:
+        print(f"[validate] {fmt} parse rejected — {issues[:3]}")
+        return []
+    for g in games:
+        g["format"] = fmt
+    return games
 
 
 def load_and_parse(filepath_or_bytes) -> list[dict]:
-    """Load and parse an Excel workbook from a file path, bytes, or BytesIO object.
+    wb = _load_wb(filepath_or_bytes)
 
-    Parse priority:
-      1. Cached AI schema (disk or memory) — instant, no API call.
-      2. Heuristic parsers (Format A, then Format B) — fast, no API call.
-      3. AI parser (makes one API call, caches result for next time).
-    """
-    import io
-
-    if isinstance(filepath_or_bytes, (bytes, bytearray)):
-        wb = openpyxl.load_workbook(io.BytesIO(filepath_or_bytes), data_only=True)
-    elif hasattr(filepath_or_bytes, "read"):
-        wb = openpyxl.load_workbook(filepath_or_bytes, data_only=True)
-    else:
-        wb = openpyxl.load_workbook(filepath_or_bytes, data_only=True)
-
-    # 1. Heuristic parsers — fast, no API call, cover all known formats.
-    from parsers.format_a import parse as parse_a
-    games = parse_a(wb)
-    if games:
-        for g in games:
-            g["format"] = "A"
-        return games
-
-    from parsers.format_b import parse as parse_b
-    games = parse_b(wb)
-    if games:
-        for g in games:
-            g["format"] = "B"
-        return games
-
-    # 2. Cached AI schema — instant if disk cache exists, no API call.
+    # 1. AI-cached schema — primary path for any previously seen layout.
     try:
         from parsers.format_ai import parse_cached
-        games = parse_cached(wb)
+        games = _tag_and_validate(parse_cached(wb), "AI-cached")
         if games:
-            for g in games:
-                g["format"] = "AI-cached"
             return games
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[AI-cached] error: {exc}")
 
-    # 3. AI parser — makes one API call for unknown layouts, caches result.
+    # 2. Format A heuristic — Kap7/Kahuna (DATE col + LOCATION col).
+    try:
+        from parsers.format_a import parse as parse_a
+        games = _tag_and_validate(parse_a(wb), "A")
+        if games:
+            return games
+    except Exception as exc:
+        print(f"[format_a] error: {exc}")
+
+    # 3. Format B heuristic — WPL Futures (section-header dates, dual-column layout).
+    try:
+        from parsers.format_b import parse as parse_b
+        games = _tag_and_validate(parse_b(wb), "B")
+        if games:
+            return games
+    except Exception as exc:
+        print(f"[format_b] error: {exc}")
+
+    # 4. AI parser — one API call for unknown layouts, result cached to disk.
     try:
         from parsers.format_ai import parse as parse_ai
-        games = parse_ai(wb)
+        games = _tag_and_validate(parse_ai(wb), "AI")
         if games:
-            for g in games:
-                g["format"] = "AI"
             return games
     except Exception as exc:
         print(f"[AI parser] failed: {exc}")
 
     return []
-
-
-def _queue_schema_cache(wb):
-    """After a heuristic parse succeeds, build the AI schema cache in the background
-    if any sheet doesn't have one yet. This runs once per new file layout."""
-    import threading
-    try:
-        from parsers.format_ai import _sample_rows, _hash_rows, _load_disk_schema, SKIP_SHEETS
-        import openpyxl
-        needs_cache = False
-        for sheet_name in wb.sheetnames:
-            if sheet_name.lower().strip() in SKIP_SHEETS:
-                continue
-            ws = wb[sheet_name]
-            rows = list(ws.iter_rows(max_row=60, values_only=True))
-            sample = _sample_rows(rows)
-            key = _hash_rows(sample)
-            if not _load_disk_schema(key):
-                needs_cache = True
-                break
-        if not needs_cache:
-            return
-
-        # Re-open the workbook bytes for the background thread (wb may not be thread-safe)
-        import io, openpyxl as ox
-        buf = io.BytesIO()
-        # We can't re-serialize wb easily, so just flag that caching is needed.
-        # The actual cache build happens via the /admin/cache-schema endpoint.
-        print("[schema cache] New layout detected — call /admin/cache-schema to build AI cache.")
-    except Exception:
-        pass
