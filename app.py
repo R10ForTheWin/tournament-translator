@@ -1552,10 +1552,11 @@ def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
     if not totals:
         return None, None
 
-    # Locate our team
-    my_clean = next((c for c in totals if team_upper in c or c in team_upper), None)
-    if my_clean is None:
-        return None, None
+    # Locate our team — try exact substring, then word-level match
+    team_words = [w for w in team_upper.split() if len(w) > 2]
+    my_clean = next((c for c in totals
+                     if team_upper in c or c in team_upper
+                     or (team_words and all(w in c for w in team_words))), None)
 
     label = f"{age} {gender.title()} · Season"
 

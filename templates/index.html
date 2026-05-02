@@ -1388,22 +1388,36 @@ function wplBracketToStaircase(bracket) {
   const root = bracket.find(n => !n.src_game_id);
   if (!root) return bracket;
 
-  // Find "secondary" games — where a parent has multiple next_ids, the
-  // later one(s) go one column deeper (Sunday afternoon pair games).
+  // Neutral games: appear in BOTH win_next_ids AND lose_next_ids of the same parent.
+  // Round-robin sequential games and placement alternatives are neutral — no IF WE WIN/LOSE label.
+  const neutralIds = new Set();
+  // Alternative games: neutral games that have siblings (mutual exclusives from the same parent).
+  // Break tiles between alternatives are suppressed since only one will be played.
+  const alternativeIds = new Set();
+  bracket.forEach(n => {
+    const winSet = new Set(n.win_next_ids || []);
+    const neutralGroup = (n.lose_next_ids || []).filter(id => winSet.has(id));
+    neutralGroup.forEach(id => neutralIds.add(id));
+    if (neutralGroup.length > 1) neutralGroup.forEach(id => alternativeIds.add(id));
+  });
+
+  // Secondary games: non-neutral games where a parent has multiple next_ids in one branch;
+  // the later ones (by time) go one column deeper — e.g. Sunday afternoon finals for 1st/4th.
   const secondaryIds = new Set();
   bracket.forEach(n => {
     [n.win_next_ids, n.lose_next_ids].forEach(ids => {
       if (!ids || ids.length < 2) return;
-      const sorted = ids.map(id => gameMap[id]).filter(Boolean)
-        .sort((a, b) => (_dayNum(a.date) - _dayNum(b.date)) || ((parseTimeMin(a.time) || 0) - (parseTimeMin(b.time) || 0)));
+      const eligible = ids.filter(id => !neutralIds.has(id));
+      if (eligible.length < 2) return;
+      const sorted = eligible.map(id => gameMap[id]).filter(Boolean)
+        .sort((a, b) => (_dayNum(a.date) - _dayNum(b.date)) ||
+                        ((parseTimeMin(a.time) || 0) - (parseTimeMin(b.time) || 0)));
       sorted.slice(1).forEach(g => secondaryIds.add(g.game_id));
     });
   });
 
   const result = [];
   const visited = new Set();
-  // queue: {id, depth, branch}
-  // branch = "win"/"lose" = which side of game-1 this node is on (for vertical ordering)
   const queue = [{id: root.game_id, depth: 1, branch: undefined}];
 
   while (queue.length) {
@@ -1413,25 +1427,35 @@ function wplBracketToStaircase(bracket) {
     const node = gameMap[id];
     if (!node) continue;
 
+    const isNeutral  = neutralIds.has(id);
     const actualDepth = secondaryIds.has(id) ? depth + 1 : depth;
+
     result.push(Object.assign({}, node, {
-      game_num: actualDepth,
-      path:     branch,
+      game_num:       actualDepth,
+      path:           isNeutral ? null : branch,
+      is_alternative: alternativeIds.has(id),
     }));
 
-    // Children inherit the branch from game-1 level:
-    // if this node was reached via "win" from root → all descendants are "win" column
-    // if via "lose" → all descendants are "lose" column
-    const winBranch  = branch !== undefined ? branch : 'win';
-    const loseBranch = branch !== undefined ? branch : 'lose';
+    // Neutral nodes pass no branch to children (they stay neutral).
+    // Branching nodes: all descendants stay on the same branch (win or lose from game-1 split).
+    const winBranch  = isNeutral ? undefined : (branch !== undefined ? branch : 'win');
+    const loseBranch = isNeutral ? undefined : (branch !== undefined ? branch : 'lose');
 
-    (node.win_next_ids  || []).forEach(cid => { if (!visited.has(cid)) queue.push({id: cid, depth: actualDepth + 1, branch: winBranch}); });
-    (node.lose_next_ids || []).forEach(cid => { if (!visited.has(cid)) queue.push({id: cid, depth: actualDepth + 1, branch: loseBranch}); });
+    (node.win_next_ids  || []).forEach(cid => {
+      if (!visited.has(cid)) queue.push({id: cid, depth: actualDepth + 1, branch: winBranch});
+    });
+    (node.lose_next_ids || []).forEach(cid => {
+      if (!visited.has(cid)) queue.push({id: cid, depth: actualDepth + 1, branch: loseBranch});
+    });
   }
   return result;
 }
 
 function buildBracketView(allGames, tournamentId, team, ourName) {
+  // Deduplicate by game_id — prevents double-rendering when a game appears in multiple sources
+  const _seenIds = new Set();
+  allGames = allGames.filter(g => g.game_id && !_seenIds.has(g.game_id) && _seenIds.add(g.game_id));
+
   const vw = window.innerWidth;
   const CARD_W = vw >= 1100 ? 480 : vw >= 860 ? 420 : 340;
   const STEP   = CARD_W + 80;
@@ -1486,12 +1510,28 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
       return (_dayNum(a.date) - _dayNum(b.date)) || ((parseTimeMin(a.time) || 0) - (parseTimeMin(b.time) || 0));
     });
 
-    const hasScenarios = ordered.some(g => g.path);
+    const hasScenarios    = ordered.some(g => g.path === 'win' || g.path === 'lose');
+    const hasAlternatives = ordered.some(g => g.is_alternative);
+
+    let lastPath = undefined; // tracks current path group for column-level banners
 
     ordered.forEach((g, i) => {
-      // Only show within-column break tiles for confirmed sequential games,
-      // not for win/lose scenario alternatives (those aren't played back-to-back)
-      if (i > 0 && !hasScenarios) {
+      // Path banner — rendered once per win/lose group at column level, not per card
+      if (hasScenarios && g.path !== lastPath && (g.path === 'win' || g.path === 'lose')) {
+        const confirmed = g.placeholder === false;
+        const opp = g.opponent || '';
+        const pathLabel = g.path === 'win'
+          ? ((confirmed || /winner of game/i.test(opp)) ? 'Winners Bracket' : 'If We Win')
+          : ((confirmed || /loser of game/i.test(opp))  ? 'Consolation Bracket' : 'If We Lose');
+        const banner = document.createElement('div');
+        banner.className = `path-banner ${g.path}-path`;
+        banner.textContent = pathLabel;
+        step.appendChild(banner);
+      }
+      lastPath = g.path;
+
+      // Break tiles: only for confirmed sequential games (not win/lose branches, not alternatives)
+      if (i > 0 && !hasScenarios && !hasAlternatives) {
         const dur = breakDuration(ordered[i - 1].time, g.time, ordered[i - 1].date, g.date);
         if (dur) {
           const bt = document.createElement('div');
@@ -1500,11 +1540,18 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
           step.appendChild(bt);
         }
       }
-      const card = g.result
-        ? buildResultCard(g, ourName)
-        : buildUpcomingCard(g, tournamentId, team, ourName);
+
+      // When column has scenarios, strip path before passing to card builders so they
+      // don't add their own banner — the column-level banner above handles it.
+      const cardG = hasScenarios ? Object.assign({}, g, {path: null}) : g;
+      const card = cardG.result
+        ? buildResultCard(cardG, ourName)
+        : buildUpcomingCard(cardG, tournamentId, team, ourName);
+      // Restore branch-card indent class for scenario cards (path was stripped above)
+      if (hasScenarios && g.path) card.classList.add('branch-card');
       card.dataset.gameTime = g.time || '';
       card.dataset.gameDate = g.date || '';
+      if (g.is_alternative) card.dataset.alternative = '1';
       step.appendChild(card);
     });
 
@@ -1641,7 +1688,7 @@ function drawBracketLines(inner, rounds, roundNums) {
       path.setAttribute('stroke-width', '2.5');
       svg.appendChild(path);
 
-      const pillDur = fromCards.length === 1 ? breakDuration(
+      const pillDur = (fromCards.length === 1 && !toCard.dataset.alternative) ? breakDuration(
         fromCard.dataset.gameTime, toCard.dataset.gameTime,
         fromCard.dataset.gameDate, toCard.dataset.gameDate
       ) : null;
