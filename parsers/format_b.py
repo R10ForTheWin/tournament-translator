@@ -37,6 +37,8 @@ def parse(wb) -> list[dict]:
         ws = wb[sheet_name]
         left_date  = None   # date for games in left columns (0–7)
         right_date = None   # date for games in right columns (9–16)
+        left_loc   = "TBD"
+        right_loc  = "TBD"
 
         for row in ws.iter_rows(min_row=1, values_only=True):
             if not any(c is not None for c in row):
@@ -46,15 +48,17 @@ def parse(wb) -> list[dict]:
             right_hdr = str(row[9]).strip() if len(row) > 9 and row[9] else ""
 
             # Section header rows: contain day names (Saturday/Sunday) with date cells
+            # Format: SATURDAY | date | Host: | host_name | Location: | venue_name
             if _DAY_HEADER_RE.match(left_hdr):
                 left_date  = _date_from_cell(row[1]) or _date_from_text(left_hdr) or left_date
                 raw_right  = _date_from_cell(row[10] if len(row) > 10 else None)
-                # If the right-side date is missing or implausible (wrong year / before left),
-                # infer it as left_date + 1 day (Saturday → Sunday).
                 if left_date and (raw_right is None or raw_right <= left_date):
                     right_date = left_date + timedelta(days=1)
                 else:
                     right_date = raw_right or right_date
+                # Extract location from col 5 (left) and col 14 (right)
+                left_loc  = _cell_str(row, 5) or left_loc
+                right_loc = _cell_str(row, 14) or right_loc
                 continue
 
             # Also catch text-based date headers (legacy format)
@@ -64,19 +68,26 @@ def parse(wb) -> list[dict]:
                 continue
 
             # Parse left-side game (cols 0–7)
-            g = _parse_game_cols(row, 0, left_date, sheet_name)
+            g = _parse_game_cols(row, 0, left_date, left_loc, sheet_name)
             if g:
                 games.append(g)
 
             # Parse right-side game (cols 9–16)
-            g2 = _parse_game_cols(row, 9, right_date, sheet_name)
+            g2 = _parse_game_cols(row, 9, right_date, right_loc, sheet_name)
             if g2:
                 games.append(g2)
 
     return games
 
 
-def _parse_game_cols(row, start: int, current_date, sheet_name: str):
+def _cell_str(row, idx):
+    if idx >= len(row) or row[idx] is None:
+        return None
+    s = str(row[idx]).strip()
+    return s if s and s.upper() not in ("NONE", "TBD") else None
+
+
+def _parse_game_cols(row, start: int, current_date, current_location: str, sheet_name: str):
     """Parse one game from `row` starting at column `start`."""
     if len(row) < start + 5:
         return None
@@ -100,7 +111,7 @@ def _parse_game_cols(row, start: int, current_date, sheet_name: str):
         "date":        current_date,
         "time":        (time_val.time() if isinstance(time_val, datetime) else time_val)
                        if hasattr(time_val, "hour") else None,
-        "location":    "TBD",
+        "location":    current_location or "TBD",
         "game_id":     str(game_id).strip(),
         "white_team":  _normalize_team(str(white).strip()),
         "white_score": _to_int(w_score),
