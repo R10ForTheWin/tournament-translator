@@ -2300,6 +2300,30 @@ def api_status():
     return jsonify({"server_time": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), "tournaments": results})
 
 
+@app.route("/api/debug/standings/<tournament_id>")
+def api_debug_standings(tournament_id):
+    """Diagnostic: show raw DivisionsStandings tab content so we can see why standings fail."""
+    excel = find_excel(tournament_id)
+    if not excel:
+        return jsonify({"error": "no excel"}), 404
+    try:
+        import openpyxl, io as _io
+        if hasattr(excel, 'seek'):
+            excel.seek(0)
+        wb = openpyxl.load_workbook(excel, data_only=True, read_only=True)
+        if 'DivisionsStandings' not in wb.sheetnames:
+            return jsonify({"error": "DivisionsStandings tab not found",
+                            "sheets": wb.sheetnames})
+        ws = wb['DivisionsStandings']
+        # Return first 40 rows, cols 0-8, to show structure without overwhelming
+        preview = []
+        for i, row in enumerate(ws.iter_rows(max_row=40, values_only=True)):
+            preview.append({"row": i + 1, "cells": [str(c)[:60] if c is not None else None for c in row[:9]]})
+        return jsonify({"sheets": wb.sheetnames, "preview": preview})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/admin/cache-schema/<tournament_id>", methods=["POST"])
 def api_cache_schema(tournament_id):
     """One-time endpoint: analyze the tournament Excel with Claude and cache the
