@@ -1691,7 +1691,9 @@ function drawBracketLines(inner, rounds, roundNums) {
       path.setAttribute('stroke-width', '2.5');
       svg.appendChild(path);
 
-      const pillDur = (fromCards.length === 1 && !toCard.dataset.alternative) ? breakDuration(
+      // Only show duration pill on the confirmed path (non-placeholder, non-alternative)
+      const isPlaceholderDest = toCard.classList.contains('placeholder');
+      const pillDur = (fromCards.length === 1 && !toCard.dataset.alternative && !isPlaceholderDest) ? breakDuration(
         fromCard.dataset.gameTime, toCard.dataset.gameTime,
         fromCard.dataset.gameDate, toCard.dataset.gameDate
       ) : null;

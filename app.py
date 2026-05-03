@@ -2061,7 +2061,7 @@ def api_games(tournament_id, team):
                     "sunday_pair_id": node["sunday_pair_id"],
                     "is_current":     is_current,
                 }
-                if node.get("played"):
+                if node.get("played") and not node.get("placeholder"):
                     ws = node.get("white_score") or 0
                     ds = node.get("dark_score")  or 0
                     d["score"]     = _fmt_score(node)
