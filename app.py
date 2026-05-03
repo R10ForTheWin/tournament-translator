@@ -1783,7 +1783,8 @@ def api_tournaments():
         mo = _MONTH_MAP.get(month_match.group(1).lower(), 1) if month_match else 1
         t_date = date(yr, mo, 1)
         start = t.get("date_start") or t_date
-        is_past = start < today
+        end   = t.get("date_end")   or start
+        is_past = end < today
         days_until = (start - today).days if not is_past else None
         out.append({**t, "has_excel": has_excel, "has_file": has_file,
                     "has_preset_url": t["id"] in PRESET_URL_TOURNAMENTS,
