@@ -193,10 +193,6 @@
     .record-stat.ties  .record-stat-num { color: var(--muted); }
     .pool-standing-badge { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 14px; margin-bottom: 16px; margin-top: -12px; text-align: center; }
 
-    .wpl-tab-bar { display: flex; gap: 8px; padding: 12px 16px 4px; }
-    .wpl-tab { flex: 1; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 9px 8px; color: var(--muted); font-size: 13px; font-weight: 700; font-family: inherit; cursor: pointer; text-transform: uppercase; letter-spacing: 0.05em; }
-    .wpl-tab.active { background: var(--gold); border-color: var(--gold); color: #000; }
-    .wpl-tab:active { opacity: 0.8; }
 
     .standings-wrap { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 16px; }
     .standings-title { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 10px 14px 8px; }
@@ -955,13 +951,19 @@ async function loadTeams(tournament) {
           ${subLabel ? `<div class="list-card-sub" style="font-size:12px;color:var(--muted);margin-top:2px">${subLabel}</div>` : ''}
         </div>
       </div>
-      ${!tournament.id.startsWith('futures') ? `<button class="team-action-btn predict-btn" title="Place Predictor">
+      ${tournament.id.startsWith('futures') ? `<button class="team-action-btn standings-btn" title="Season Standings">
         <svg width="15" height="13" viewBox="0 0 15 13" fill="currentColor">
           <rect x="0" y="7" width="4" height="6" rx="1"/>
           <rect x="5.5" y="3.5" width="4" height="9.5" rx="1"/>
           <rect x="11" y="0" width="4" height="13" rx="1"/>
         </svg>
-      </button>` : ''}
+      </button>` : `<button class="team-action-btn predict-btn" title="Place Predictor">
+        <svg width="15" height="13" viewBox="0 0 15 13" fill="currentColor">
+          <rect x="0" y="7" width="4" height="6" rx="1"/>
+          <rect x="5.5" y="3.5" width="4" height="9.5" rx="1"/>
+          <rect x="11" y="0" width="4" height="13" rx="1"/>
+        </svg>
+      </button>`}
       <button class="team-action-btn bracket-btn" title="View Schedule">
         <svg width="15" height="13" viewBox="0 0 15 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
           <rect x="0.8" y="0.8" width="5" height="4" rx="0.8"/>
@@ -971,6 +973,11 @@ async function loadTeams(tournament) {
           <line x1="5.8" y1="9.8" x2="8.2" y2="7.8"/>
         </svg>
       </button>`;
+    card.querySelector('.standings-btn')?.addEventListener('click', e => {
+      e.stopPropagation();
+      state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
+      loadGames(tournament.id, t.name, t.sheet, 'standings');
+    });
     card.querySelector('.predict-btn')?.addEventListener('click', e => {
       e.stopPropagation();
       showPredictorSheet(tournament.id, t.name, t.sheet, t.friendly || mainLabel);
@@ -978,11 +985,11 @@ async function loadTeams(tournament) {
     card.querySelector('.bracket-btn').addEventListener('click', e => {
       e.stopPropagation();
       state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
-      loadGames(tournament.id, t.name, t.sheet);
+      loadGames(tournament.id, t.name, t.sheet, 'bracket');
     });
     card.onclick = () => {
       state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
-      loadGames(tournament.id, t.name, t.sheet);
+      loadGames(tournament.id, t.name, t.sheet, 'bracket');
     };
     list.appendChild(card);
   });
@@ -1020,7 +1027,7 @@ function recordLine(g) {
 }
 
 // ── Games ──────────────────────────────────────────────────────────────────────
-async function loadGames(tournamentId, team, sheet) {
+async function loadGames(tournamentId, team, sheet, defaultView = 'bracket') {
   const el = document.getElementById('games-content');
   el.innerHTML = '<div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round"><circle cx="18" cy="18" r="15" stroke-width="2" stroke-dasharray="60 35" /></svg></div>';
   showView('view-games');
@@ -1094,19 +1101,12 @@ async function loadGames(tournamentId, team, sheet) {
 
   try {
   if (isWpl) {
-    // ── WPL: tab toggle between Bracket and Season Standings ──────────────
-    const tabBar = document.createElement('div');
-    tabBar.className = 'wpl-tab-bar';
-    tabBar.innerHTML = `
-      <button class="wpl-tab active" data-tab="bracket">Bracket</button>
-      <button class="wpl-tab" data-tab="standings">Season Standings</button>`;
-    el.appendChild(tabBar);
-
     const bracketPane   = document.createElement('div');
     bracketPane.id      = 'wpl-pane-bracket';
+    bracketPane.style.display = defaultView === 'bracket' ? '' : 'none';
     const standingsPane = document.createElement('div');
     standingsPane.id    = 'wpl-pane-standings';
-    standingsPane.style.display = 'none';
+    standingsPane.style.display = defaultView === 'standings' ? '' : 'none';
     standingsPane.style.padding = '12px 16px';
 
     el.appendChild(bracketPane);
@@ -1115,17 +1115,6 @@ async function loadGames(tournamentId, team, sheet) {
     // Bracket content
     const allGames = wplBracketToStaircase(data.wpl_bracket);
     bracketPane.appendChild(buildBracketView(allGames, tournamentId, team, ourName));
-
-    // Tab switching
-    tabBar.addEventListener('click', e => {
-      const btn = e.target.closest('.wpl-tab');
-      if (!btn) return;
-      tabBar.querySelectorAll('.wpl-tab').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const show = btn.dataset.tab;
-      bracketPane.style.display   = show === 'bracket'   ? '' : 'none';
-      standingsPane.style.display = show === 'standings' ? '' : 'none';
-    });
 
   } else {
     const allGames = [...(data.played || []), ...(data.upcoming || [])];
