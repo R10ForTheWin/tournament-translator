@@ -1100,9 +1100,6 @@ async function loadGames(tournamentId, team, sheet) {
       standingsPane.style.display = show === 'standings' ? '' : 'none';
     });
 
-    // Standings content (built below, inserted into standingsPane)
-    el = standingsPane;  // redirect standings rendering into the pane
-
   } else {
     const allGames = [...(data.played || []), ...(data.upcoming || [])];
     el.appendChild(buildBracketView(allGames, tournamentId, team, ourName));
@@ -1143,6 +1140,7 @@ async function loadGames(tournamentId, team, sheet) {
     // Season-record lookup — always built even when data is missing (used by game tiles)
     window._seasonRec  = {};
     window._seasonRank = {};
+    const sPane = document.getElementById('wpl-pane-standings');
     if (data.cumulative_standings && data.cumulative_standings.length) {
       const all  = data.cumulative_standings;
       const mine = all.find(s => s.is_mine);
@@ -1164,12 +1162,12 @@ async function loadGames(tournamentId, team, sheet) {
       const myDiv    = mine ? (mine.division || 'Unknown') : null;
       const divTeams = myDiv ? all.filter(s => (s.division || 'Unknown') === myDiv) : all;
       const divLabel = myDiv || 'Season Standings';
-      el.innerHTML = `<div class="standings-wrap">
+      sPane.innerHTML = `<div class="standings-wrap">
         <div class="standings-title">${data.cumulative_division || 'Season'} · ${divLabel} · ${divTeams.length} teams<span style="float:right;letter-spacing:0.04em">PTS &nbsp;&nbsp;&nbsp;&nbsp; W–L</span></div>
         ${divTeams.map(mkRow).join('')}
       </div>`;
     } else {
-      el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted);font-size:14px;">
+      sPane.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted);font-size:14px;">
         Season standings not yet available.<br>Check back after the league updates the spreadsheet.
       </div>`;
     }
