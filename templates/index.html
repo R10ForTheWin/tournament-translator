@@ -1691,14 +1691,22 @@ function drawBracketLines(inner, rounds, roundNums) {
       path.setAttribute('stroke-width', '2.5');
       svg.appendChild(path);
 
-      // Only show duration pill on the confirmed path (non-placeholder, non-alternative)
       const isPlaceholderDest = toCard.classList.contains('placeholder');
-      const pillDur = (fromCards.length === 1 && !toCard.dataset.alternative && !isPlaceholderDest) ? breakDuration(
-        fromCard.dataset.gameTime, toCard.dataset.gameTime,
-        fromCard.dataset.gameDate, toCard.dataset.gameDate
-      ) : null;
-      const isDayChange = fromCard.dataset.gameDate !== toCard.dataset.gameDate;
-      if (pillDur && (!isDayChange || !dayPillAdded)) {
+      const isDayChange = !!(fromCard.dataset.gameDate && toCard.dataset.gameDate &&
+                             fromCard.dataset.gameDate !== toCard.dataset.gameDate);
+      // Day-change pill: always show once per column transition (even with multiple source cards).
+      // Same-day break pill: only when there is exactly one source card.
+      let pillDur = null;
+      if (!toCard.dataset.alternative && !isPlaceholderDest) {
+        if (isDayChange && !dayPillAdded) {
+          pillDur = breakDuration(fromCard.dataset.gameTime, toCard.dataset.gameTime,
+                                  fromCard.dataset.gameDate, toCard.dataset.gameDate);
+        } else if (!isDayChange && fromCards.length === 1) {
+          pillDur = breakDuration(fromCard.dataset.gameTime, toCard.dataset.gameTime,
+                                  fromCard.dataset.gameDate, toCard.dataset.gameDate);
+        }
+      }
+      if (pillDur) {
         pendingPills.push({ mx: gx, my: sy + (ty - sy) * 0.75, label: pillDur, gold: isDayChange });
         if (isDayChange) dayPillAdded = true;
       }
