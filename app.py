@@ -2317,10 +2317,11 @@ def api_debug_standings(tournament_id):
             return jsonify({"error": "DivisionsStandings tab not found",
                             "sheets": wb.sheetnames})
         ws = wb['DivisionsStandings']
-        # Return first 40 rows, cols 0-8, to show structure without overwhelming
+        # Return first 150 rows, cols 0-8 — enough to cover multiple age groups
         preview = []
-        for i, row in enumerate(ws.iter_rows(max_row=40, values_only=True)):
-            preview.append({"row": i + 1, "cells": [str(c)[:60] if c is not None else None for c in row[:9]]})
+        for i, row in enumerate(ws.iter_rows(max_row=150, values_only=True)):
+            if any(c is not None for c in row):  # skip blank rows in preview
+                preview.append({"row": i + 1, "cells": [str(c)[:60] if c is not None else None for c in row[:9]]})
         return jsonify({"sheets": wb.sheetnames, "preview": preview})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
