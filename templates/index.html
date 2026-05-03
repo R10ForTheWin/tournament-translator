@@ -1066,6 +1066,7 @@ async function loadGames(tournamentId, team, sheet) {
   const ourName  = data.our_team_name || team;
   const isWpl    = !!(data.wpl_bracket && data.wpl_bracket.length);
 
+  try {
   if (isWpl) {
     // ── WPL: tab toggle between Bracket and Season Standings ──────────────
     const tabBar = document.createElement('div');
@@ -1202,6 +1203,13 @@ async function loadGames(tournamentId, team, sheet) {
       ${divTeams.map(mkRow).join('')}
     </div>`;
     document.getElementById('games-content').appendChild(grp);
+  }
+  } catch(renderErr) {
+    el.innerHTML = `<div style="text-align:center;padding:32px 20px;color:var(--muted);font-size:13px;">
+      Render error: ${renderErr.message}<br><br>
+      <small style="opacity:0.5">${renderErr.stack ? renderErr.stack.split('\n')[1] : ''}</small>
+    </div>`;
+    console.error('loadGames render error:', renderErr);
   }
 }
 
