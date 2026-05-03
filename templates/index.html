@@ -1519,8 +1519,10 @@ function wplBracketToStaircase(bracket) {
     visited.add(id);
     const node = gameMap[id];
     if (!node) continue;
-    // Skip placeholder nodes — path not taken by this team; don't render or traverse further
-    if (node.placeholder) continue;
+    // Skip WRONG-PATH placeholders: parent is already played and team took the other branch.
+    // Future-path placeholders (parent not yet played) are shown dimmed — they're real possibilities.
+    const parentNode = node.src_game_id ? gameMap[node.src_game_id] : null;
+    if (node.placeholder && parentNode && parentNode.played) continue;
 
     const isNeutral  = neutralIds.has(id);
     const actualDepth = secondaryIds.has(id) ? depth + 1 : depth;
