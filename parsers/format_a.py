@@ -13,6 +13,7 @@ SKIP_SHEETS = {
 
 def parse(wb) -> list[dict]:
     games = []
+    seen_ids: set = set()
     for sheet_name in wb.sheetnames:
         if sheet_name.upper() in {s.upper() for s in SKIP_SHEETS}:
             continue
@@ -32,11 +33,15 @@ def parse(wb) -> list[dict]:
             if not white or not dark:
                 continue
 
+            gid = game_id.strip()
+            if gid in seen_ids:
+                continue
+            seen_ids.add(gid)
             games.append({
                 "date":       date_val.date(),
                 "time":       time_val if hasattr(time_val, "hour") else None,
                 "location":   str(location).strip() if location else "TBD",
-                "game_id":    game_id.strip(),
+                "game_id":    gid,
                 "white_team": str(white).strip(),
                 "white_score": _to_int(w_score),
                 "dark_team":  str(dark).strip(),
