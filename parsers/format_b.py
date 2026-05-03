@@ -31,6 +31,7 @@ _DAY_HEADER_RE = re.compile(r'^(saturday|sunday|day\s*\d+)', re.IGNORECASE)
 
 def parse(wb) -> list[dict]:
     games = []
+    seen_ids: set = set()  # global dedup across all sheets
     for sheet_name in wb.sheetnames:
         if sheet_name in SKIP_SHEETS:
             continue
@@ -69,12 +70,14 @@ def parse(wb) -> list[dict]:
 
             # Parse left-side game (cols 0–7)
             g = _parse_game_cols(row, 0, left_date, left_loc, sheet_name)
-            if g:
+            if g and g["game_id"] not in seen_ids:
+                seen_ids.add(g["game_id"])
                 games.append(g)
 
             # Parse right-side game (cols 9–16)
             g2 = _parse_game_cols(row, 9, right_date, right_loc, sheet_name)
-            if g2:
+            if g2 and g2["game_id"] not in seen_ids:
+                seen_ids.add(g2["game_id"])
                 games.append(g2)
 
     return games
@@ -102,9 +105,16 @@ def _parse_game_cols(row, start: int, current_date, current_location: str, sheet
 
     if not game_id or not isinstance(game_id, str):
         return None
+    # Game IDs must contain at least one digit — filters out column-header rows
+    # where letters like 'J', 'G', 'N' slip into the game_id column.
+    if not any(c.isdigit() for c in str(game_id)):
+        return None
     if not white or not dark:
         return None
     if str(white).strip().upper() in ("WHITE", "TEAM", "WHITE TEAM", "GAME #"):
+        return None
+    # Team slots must be longer than 1 character — filters out single-letter column headers
+    if len(str(white).strip()) < 2 or len(str(dark).strip()) < 2:
         return None
 
     return {
