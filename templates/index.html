@@ -1519,6 +1519,8 @@ function wplBracketToStaircase(bracket) {
     visited.add(id);
     const node = gameMap[id];
     if (!node) continue;
+    // Skip placeholder nodes — path not taken by this team; don't render or traverse further
+    if (node.placeholder) continue;
 
     const isNeutral  = neutralIds.has(id);
     const actualDepth = secondaryIds.has(id) ? depth + 1 : depth;
