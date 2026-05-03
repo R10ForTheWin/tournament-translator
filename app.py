@@ -2302,6 +2302,21 @@ def api_status():
     return jsonify({"server_time": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), "tournaments": results})
 
 
+@app.route("/api/client-error", methods=["POST"])
+def api_client_error():
+    """Receives JS errors from the browser and prints them to Railway logs."""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        print(f"[CLIENT ERROR] {data.get('message','')} | "
+              f"{data.get('source','')}:{data.get('line','')} | "
+              f"url={data.get('url','')} | "
+              f"ua={data.get('ua','')[:80]} | "
+              f"stack={str(data.get('stack',''))[:300]}", flush=True)
+    except Exception:
+        pass
+    return '', 204
+
+
 @app.route("/api/debug/standings/<tournament_id>")
 def api_debug_standings(tournament_id):
     """Diagnostic: show raw DivisionsStandings tab content so we can see why standings fail."""

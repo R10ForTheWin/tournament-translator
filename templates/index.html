@@ -525,6 +525,32 @@
     #a2hs-banner .a2hs-text span { color: var(--muted); }
     #a2hs-banner .a2hs-close { background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 0 0 0 6px; line-height: 1; flex-shrink: 0; font-family: inherit; }
   </style>
+  <script>
+    // Global error reporter — posts JS crashes to Railway logs automatically.
+    // Eliminates the need for users to relay error messages.
+    (function() {
+      function _reportError(msg, src, line, col, err) {
+        const body = JSON.stringify({
+          message: msg,
+          source:  src || '',
+          line:    line || '',
+          col:     col  || '',
+          stack:   err ? err.stack : '',
+          url:     location.href,
+          ua:      navigator.userAgent,
+          ts:      new Date().toISOString(),
+        });
+        navigator.sendBeacon('/api/client-error', new Blob([body], {type:'application/json'}));
+      }
+      window.onerror = function(msg, src, line, col, err) {
+        _reportError(msg, src, line, col, err);
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        _reportError('UnhandledRejection: ' + (e.reason?.message || e.reason),
+                     '', '', '', e.reason);
+      });
+    })();
+  </script>
 </head>
 <body>
 
