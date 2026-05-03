@@ -1267,10 +1267,12 @@ function buildWplTree(data, tournamentId, team, ourName) {
       scoreHtml = `<div class="wpl-card-score">${g.our_score} – ${g.opp_score}</div>`;
     }
 
-    const locHtml  = g.location ? locationHtml(g.location) : '';
-    const rec      = seasonRec(g.opponent);
-    const rank     = seasonRank(g.opponent);
-    const rankHtml = rank ? ` <span style="font-size:10px;font-weight:500;opacity:0.6">(#${rank})</span>` : '';
+    const locHtml   = g.location ? locationHtml(g.location) : '';
+    const rec       = seasonRec(g.opponent);
+    const oppRank   = seasonRank(g.opponent);
+    const oppRankHtml = oppRank ? ` <span style="font-size:10px;font-weight:500;opacity:0.6">(#${oppRank})</span>` : '';
+    const ourRank   = seasonRank(ourName);
+    const ourRankHtml = ourRank ? ` <span style="font-size:10px;font-weight:500;opacity:0.55">#${ourRank}</span>` : '';
 
     card.innerHTML = `
       ${banner}
@@ -1279,7 +1281,8 @@ function buildWplTree(data, tournamentId, team, ourName) {
           <span>${g.time || g.date || 'TBD'}</span>
           ${locHtml ? `<span class="wpl-card-meta-loc">${locHtml}</span>` : ''}
         </div>
-        <div class="wpl-card-opp"><span class="vs">vs</span>${g.opponent || '?'}${rankHtml}</div>
+        <div class="wpl-card-opp" style="margin-bottom:2px">${ourName || ''}${ourRankHtml}</div>
+        <div class="wpl-card-opp"><span class="vs">vs</span>${g.opponent || '?'}${oppRankHtml}</div>
         ${rec ? `<div class="wpl-card-rec">${rec}</div>` : ''}
         ${scoreHtml}
       </div>`;
