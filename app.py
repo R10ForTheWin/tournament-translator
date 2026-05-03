@@ -2030,10 +2030,23 @@ def api_games(tournament_id, team):
             # Serialize tree nodes: format dates/times, add opponent label
             def _serialize_tree_node(node, dg):
                 gid   = node["game_id"]
-                opp_sl = node["dark_team"] if team_matches(node["white_team"], team) else node["white_team"]
-                color  = "WHITE" if team_matches(node["white_team"], team) else "DARK"
+                # Try raw slot match first; fall back to resolving W#/L# refs for bracket games
+                # where neither slot directly names our team.
+                if team_matches(node["white_team"], team):
+                    opp_sl, color = node["dark_team"],  "WHITE"
+                elif team_matches(node["dark_team"], team):
+                    opp_sl, color = node["white_team"], "DARK"
+                else:
+                    t_w = describe_slot(node["white_team"], dg)
+                    t_d = describe_slot(node["dark_team"],  dg)
+                    if team_matches(t_w, team):
+                        opp_sl, color = node["dark_team"],  "WHITE"
+                    elif team_matches(t_d, team):
+                        opp_sl, color = node["white_team"], "DARK"
+                    else:
+                        opp_sl, color = node["white_team"], "DARK"
                 opp_name = describe_slot(opp_sl, dg)
-                # Guard: if resolved opponent equals our own team, flip to the other slot
+                # Guard: if resolved opponent still equals our own team, flip slots
                 if team_matches(opp_name, team):
                     other_sl = node["white_team"] if opp_sl == node["dark_team"] else node["dark_team"]
                     opp_name = describe_slot(other_sl, dg)
