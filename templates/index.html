@@ -1015,10 +1015,14 @@ function seasonDiv(name) {
   if (!name || !window._seasonDiv) return null;
   return window._seasonDiv[name.toUpperCase()] || null;
 }
-function withRank(name, cssClass) {
+function rankDivBadge(name) {
   const r = seasonRank(name);
-  const rank = r ? ` <span style="font-size:13px;font-weight:500;opacity:0.6">(#${r})</span>` : '';
-  return `<span class="${cssClass}">${name}${rank}</span>`;
+  const d = seasonDiv(name);
+  const parts = [r ? `#${r}` : null, d || null].filter(Boolean);
+  return parts.length ? ` <span style="font-size:13px;font-weight:500;opacity:0.6">(${parts.join(' · ')})</span>` : '';
+}
+function withRank(name, cssClass) {
+  return `<span class="${cssClass}">${name}${rankDivBadge(name)}</span>`;
 }
 function recordLine(g) {
   const us   = fmtRec(g.our_record);
@@ -2037,7 +2041,7 @@ function buildResultCard(g, ourName) {
         </div>
         ${ourRec ? `<div class="team-row-record">${ourRec}</div>` : ''}
         <div class="team-row">
-          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${seasonRank(g.opponent) ? ` <span style="font-size:13px;font-weight:500;opacity:0.6">(#${seasonRank(g.opponent)})</span>` : ''}</span>
+          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${rankDivBadge(g.opponent)}</span>
           <span class="team-row-score theirs">${g.opp_score ?? ''}</span>
         </div>
         ${oppRec ? `<div class="team-row-record">${oppRec}</div>` : ''}
@@ -2102,7 +2106,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
         </div>
         ${ourRec ? `<div class="team-row-record">${ourRec}</div>` : ''}
         <div class="team-row">
-          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${seasonRank(g.opponent) ? ` <span style="font-size:13px;font-weight:500;opacity:0.6">(#${seasonRank(g.opponent)})</span>` : ''}</span>
+          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${rankDivBadge(g.opponent)}</span>
           <div class="score-controls">
             <button class="score-btn" onclick="liveScoreBtn('${tid}','${gid}','opp',-1)">−</button>
             <span class="score-num theirs">${oppScore}</span>
@@ -2121,7 +2125,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
         </div>
         ${ourRec ? `<div class="team-row-record">${ourRec}</div>` : ''}
         <div class="team-row">
-          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${seasonRank(g.opponent) ? ` <span style="font-size:13px;font-weight:500;opacity:0.6">(#${seasonRank(g.opponent)})</span>` : ''}</span>
+          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${rankDivBadge(g.opponent)}</span>
         </div>
         ${oppRec ? `<div class="team-row-record">${oppRec}</div>` : ''}
       </div>`;
