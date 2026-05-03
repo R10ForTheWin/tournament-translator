@@ -1011,6 +1011,10 @@ function seasonRank(name) {
   if (!name || !window._seasonRank) return null;
   return window._seasonRank[name.toUpperCase()] || null;
 }
+function seasonDiv(name) {
+  if (!name || !window._seasonDiv) return null;
+  return window._seasonDiv[name.toUpperCase()] || null;
+}
 function withRank(name, cssClass) {
   const r = seasonRank(name);
   const rank = r ? ` <span style="font-size:13px;font-weight:500;opacity:0.6">(#${r})</span>` : '';
@@ -1156,6 +1160,7 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket') {
     // Season-record lookup — always built even when data is missing (used by game tiles)
     window._seasonRec  = {};
     window._seasonRank = {};
+    window._seasonDiv  = {};
     const sPane = document.getElementById('wpl-pane-standings');
     if (data.cumulative_standings && data.cumulative_standings.length) {
       const all  = data.cumulative_standings;
@@ -1168,6 +1173,7 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket') {
       all.forEach(s => {
         window._seasonRec[s.name.toUpperCase()]  = recStr(s);
         window._seasonRank[s.name.toUpperCase()] = s.rank;
+        if (s.division) window._seasonDiv[s.name.toUpperCase()] = s.division;
       });
       const mkRow = s => `<div class="standings-row${s.is_mine ? ' mine' : ''}">
         <div class="standings-rank">${s.rank}</div>
@@ -1270,9 +1276,13 @@ function buildWplTree(data, tournamentId, team, ourName) {
     const locHtml   = g.location ? locationHtml(g.location) : '';
     const rec       = seasonRec(g.opponent);
     const oppRank   = seasonRank(g.opponent);
-    const oppRankHtml = oppRank ? ` <span style="font-size:10px;font-weight:500;opacity:0.6">(#${oppRank})</span>` : '';
+    const oppDiv    = seasonDiv(g.opponent);
     const ourRank   = seasonRank(ourName);
-    const ourRankHtml = ourRank ? ` <span style="font-size:10px;font-weight:500;opacity:0.55">#${ourRank}</span>` : '';
+    const ourDiv    = seasonDiv(ourName);
+    const badge = (rank, div) => {
+      const parts = [rank ? `#${rank}` : null, div || null].filter(Boolean);
+      return parts.length ? ` <span style="font-size:10px;font-weight:500;opacity:0.55">${parts.join(' · ')}</span>` : '';
+    };
 
     card.innerHTML = `
       ${banner}
@@ -1281,8 +1291,8 @@ function buildWplTree(data, tournamentId, team, ourName) {
           <span>${g.time || g.date || 'TBD'}</span>
           ${locHtml ? `<span class="wpl-card-meta-loc">${locHtml}</span>` : ''}
         </div>
-        <div class="wpl-card-opp" style="margin-bottom:2px">${ourName || ''}${ourRankHtml}</div>
-        <div class="wpl-card-opp"><span class="vs">vs</span>${g.opponent || '?'}${oppRankHtml}</div>
+        <div class="wpl-card-opp" style="margin-bottom:2px">${ourName || ''}${badge(ourRank, ourDiv)}</div>
+        <div class="wpl-card-opp"><span class="vs">vs</span>${g.opponent || '?'}${badge(oppRank, oppDiv)}</div>
         ${rec ? `<div class="wpl-card-rec">${rec}</div>` : ''}
         ${scoreHtml}
       </div>`;
