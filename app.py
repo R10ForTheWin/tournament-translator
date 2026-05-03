@@ -2053,6 +2053,7 @@ def api_games(tournament_id, team):
                     "opponent":       opp_name,
                     "your_color":     color,
                     "placeholder":    node["placeholder"],
+                    "played":         bool(node.get("played", False)),
                     "placement_rank": node.get("placement_rank"),
                     "src_game_id":    node["src_game_id"],
                     "src_path":       node["src_path"],
