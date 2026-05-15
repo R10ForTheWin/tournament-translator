@@ -45,11 +45,13 @@ def validate_games(games: list) -> list:
     for g in games:
         gid = str(g.get("game_id", "?"))
 
-        # Duplicate game IDs
-        if gid in seen_ids:
+        # Duplicate game IDs — scoped to (game_id, sheet) so that WPL age-group
+        # sheets which share a numbering sequence don't collide with each other.
+        dup_key = (gid, g.get("sheet", ""))
+        if dup_key in seen_ids:
             errors.append(f"Duplicate game_id '{gid}'")
         else:
-            seen_ids[gid] = True
+            seen_ids[dup_key] = True
 
         # Both team slots present and structurally valid
         for field in ("white_team", "dark_team"):

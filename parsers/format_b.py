@@ -31,11 +31,11 @@ _DAY_HEADER_RE = re.compile(r'^(saturday|sunday|day\s*\d+)', re.IGNORECASE)
 
 def parse(wb) -> list[dict]:
     games = []
-    seen_ids: set = set()  # global dedup across all sheets
     for sheet_name in wb.sheetnames:
         if sheet_name in SKIP_SHEETS:
             continue
         ws = wb[sheet_name]
+        seen_ids: set = set()  # dedup within this sheet only
         left_date  = None   # date for games in left columns (0–7)
         right_date = None   # date for games in right columns (9–16)
         left_loc   = "TBD"
