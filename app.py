@@ -2,7 +2,7 @@
 Tournament Translator — Flask app
 """
 from __future__ import annotations
-import os, re, json, glob, io, time, base64, random
+import os, re, json, glob, io, time, base64, random, threading
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 from functools import lru_cache
@@ -885,22 +885,37 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
         return []
     seen_ids = {g["game_id"] for g in direct_games}
 
-    # Pool groups this team is seeded in (e.g. 'G' from 'G2-TROJAN SILVER')
-    groups = set()
+    # Pool groups this team is seeded in, keyed by group letter → list of dates.
+    # Tracking dates lets us scope finish-slot expansion to the same weekend,
+    # preventing contamination when pool letters repeat across WPL weekends.
+    groups: dict[str, list] = {}
     for g in direct_games:
         for slot in (g["white_team"], g["dark_team"]):
             m = _POOL_SLOT_RE.match(slot.strip())
             if m and team_matches(slot, team):
-                groups.add(m.group(1).upper())
+                letter = m.group(1).upper()
+                d = g.get("date")
+                grp_dates = groups.setdefault(letter, [])
+                if d not in grp_dates:
+                    grp_dates.append(d)
 
-    # Determine team's actual pool finish per group if pool play is complete.
-    # Used to prune composite-slot Sunday games for ranks we didn't finish.
+    def _same_weekend(cand_date, grp_letter: str) -> bool:
+        """True if cand_date is within 2 days of any date the team was in grp_letter."""
+        if cand_date is None:
+            return True
+        grp_dates = [d for d in groups.get(grp_letter, []) if d is not None]
+        return not grp_dates or any(abs((cand_date - d).days) <= 2 for d in grp_dates)
+
+    # Pool standings per group, scoped to the same weekend(s) the team played in.
+    # Cross-weekend contamination (same letter, different teams) is excluded by date.
     grp_pool_games: dict[str, list] = {}
     for g in division_games:
         wm = _POOL_SLOT_RE.match(g["white_team"].strip())
         dm = _POOL_SLOT_RE.match(g["dark_team"].strip())
         if wm and dm:
-            grp_pool_games.setdefault(wm.group(1).upper(), []).append(g)
+            grp = wm.group(1).upper()
+            if grp in groups and _same_weekend(g.get("date"), grp):
+                grp_pool_games.setdefault(grp, []).append(g)
     team_pool_ranks: dict[str, int] = {}
     for grp in groups:
         pool_games = grp_pool_games.get(grp, [])
@@ -908,11 +923,23 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             g.get("white_score") is not None and g.get("dark_score") is not None
             for g in pool_games
         ):
-            standings = _standings_for_group(grp, division_games)
+            standings = _standings_for_group(grp, pool_games)
             for i, s in enumerate(standings):
                 if team_matches(s["team"], team):
                     team_pool_ranks[grp] = i + 1
                     break
+    # Override with ranks from explicitly named finish-slot games (e.g. "2ndE-TROJAN GOLD").
+    # These are more reliable than standings when pool letters repeat across WPL weekends.
+    # direct_games is chronological, so later iterations win for the same group.
+    for g in direct_games:
+        for slot in (g["white_team"], g["dark_team"]):
+            s = slot.strip()
+            fm = _FINISH_SLOT_RE.match(s)
+            if fm and team_matches(s, team):
+                grp = fm.group(1).upper()
+                rank_m = re.search(r'(\d+)', fm.group(0))
+                if rank_m:
+                    team_pool_ranks[grp] = int(rank_m.group(1))
 
     # game_num -> (game_dict, is_placeholder, ph_depth)
     # ph_depth: 0=pool slot, 1=composite slot, 2=W#/L# slot (stop expanding)
@@ -962,6 +989,8 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                 fm = _FINISH_SLOT_RE.match(s) or _COMPOSITE_SLOT_RE.search(s)
                 if fm and fm.group(1).upper() in groups:
                     grp = fm.group(1).upper()
+                    if not _same_weekend(g.get("date"), grp):
+                        continue  # different weekend — pool letter reused, skip
                     rank_m = re.search(r'(\d+)', fm.group(0))
                     rank = int(rank_m.group(1)) if rank_m else None
                     if rank and grp in team_pool_ranks and team_pool_ranks[grp] != rank:
@@ -1002,6 +1031,8 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     break
 
             if add_placeholder is not None:
+                if _game_num(g["game_id"]) is None:
+                    continue  # skip non-game rows (e.g. embedded standings entries)
                 g_copy = dict(g)
                 g_copy["placeholder"] = add_placeholder
                 if add_pool_rank:
