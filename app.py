@@ -1877,6 +1877,74 @@ def api_trojan_teams(tournament_id):
     return jsonify(teams)
 
 
+def _run_bracket_llm_check(team: str, nodes: list, warnings: list) -> None:
+    """Background: ask Haiku to explain bracket issues in plain English. Logs only."""
+    try:
+        import anthropic
+        client = anthropic.Anthropic()
+        summary = json.dumps([{
+            "game_id":      n["game_id"],
+            "date":         n.get("date"),
+            "opponent":     n.get("opponent"),
+            "placeholder":  n.get("placeholder"),
+            "win_next_ids": n.get("win_next_ids"),
+            "lose_next_ids":n.get("lose_next_ids"),
+        } for n in nodes], indent=2)
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=200,
+            messages=[{"role": "user", "content":
+                f'Water polo bracket for "{team}" has issues: {warnings}\n\nNodes:\n{summary}\n\n'
+                f'In 1-2 sentences: what is wrong and what should the bracket look like?'
+            }]
+        )
+        print(f"[bracket-judge] {team}: {resp.content[0].text}")
+    except Exception as exc:
+        print(f"[bracket-judge] failed: {exc}")
+
+
+def _validate_wpl_bracket(team: str, nodes: list) -> list:
+    """Deterministic bracket integrity checks. Returns list of warning strings.
+    Fires a background Haiku diagnosis when issues are found."""
+    if not nodes:
+        return ["bracket is empty"]
+
+    warnings = []
+    all_ids = {n["game_id"] for n in nodes}
+    seen_ids: set = set()
+    non_placeholder = [n for n in nodes if not n.get("placeholder")]
+
+    for n in nodes:
+        gid = n["game_id"]
+
+        if gid in seen_ids:
+            warnings.append(f"duplicate game_id {gid!r}")
+        seen_ids.add(gid)
+
+        for ref_id in (n.get("win_next_ids") or []):
+            if ref_id not in all_ids:
+                warnings.append(f"game {gid}: win_next_id {ref_id!r} missing from tree")
+        for ref_id in (n.get("lose_next_ids") or []):
+            if ref_id not in all_ids:
+                warnings.append(f"game {gid}: lose_next_id {ref_id!r} missing from tree")
+
+        if not n.get("placeholder") and team_matches(n.get("opponent", ""), team):
+            warnings.append(f"game {gid}: opponent resolves to own team")
+
+    if not non_placeholder:
+        warnings.append("all bracket nodes are placeholders — no real games found")
+
+    if warnings:
+        print(f"[bracket-validate] {team}: {warnings}")
+        threading.Thread(
+            target=_run_bracket_llm_check,
+            args=(team, nodes, warnings),
+            daemon=True,
+        ).start()
+
+    return warnings
+
+
 @app.route("/api/games/<tournament_id>/<path:team>")
 def api_games(tournament_id, team):
     excel = find_excel(tournament_id)
@@ -2119,6 +2187,8 @@ def api_games(tournament_id, team):
                 return d
             wpl_bracket = [_serialize_tree_node(n, div_games_for_tree) for n in tree]
 
+    bracket_warnings = _validate_wpl_bracket(team, wpl_bracket) if wpl_bracket else []
+
     our_team_name = team.title()
     if my_games:
         sname = my_games[0].get("sheet", "")
@@ -2137,6 +2207,7 @@ def api_games(tournament_id, team):
         "cumulative_standings": cumulative_standings,
         "cumulative_division":  cumulative_division,
         "wpl_bracket":          wpl_bracket,
+        "bracket_warnings":     bracket_warnings or None,
         "cache_age_s":          _cache_age(tournament_id),
         "cache_ttl_s":          URL_CACHE_TTL,
         "parse_format":         parse_format,
