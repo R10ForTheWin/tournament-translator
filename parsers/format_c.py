@@ -90,10 +90,10 @@ def _parse_date(val):
     if val is None:
         return None
     if isinstance(val, datetime):
-        if 2024 <= val.year <= 2027:
+        if 2022 <= val.year <= 2028:
             return val.date()
     if isinstance(val, date):
-        if 2024 <= val.year <= 2027:
+        if 2022 <= val.year <= 2028:
             return val
     return None
 
@@ -199,6 +199,8 @@ def parse(wb) -> list[dict]:
             ci_dark  = _col_index(header_row, "dark")
             ci_ds    = None                                  # second S (after dark)
             ci_gmid  = _col_index(header_row, "gmid")
+            ci_wto   = _col_index(header_row, "w to #")
+            ci_lto   = _col_index(header_row, "l to #")
 
             # Second score column is the S right after the dark column
             if ci_dark is not None:
@@ -270,6 +272,15 @@ def parse(wb) -> list[dict]:
                 time_val = _parse_time(row[ci_time] if ci_time is not None and ci_time < len(row) else None)
                 game_type = str(row[ci_type]).strip() if ci_type is not None and ci_type < len(row) and row[ci_type] else ""
 
+                # W to # / L to # advancement links — may be a plain number,
+                # a bracket code ("bracket", "pt_M2"), or absent.  Store only
+                # plain integers so the tree builder can resolve them to GMIDs.
+                def _adv(ci):
+                    if ci is None or ci >= len(row) or row[ci] is None:
+                        return None
+                    v = str(row[ci]).strip()
+                    return int(v) if v.lstrip('-').isdigit() else None
+
                 games.append({
                     "date":        current_date,
                     "time":        time_val,
@@ -283,6 +294,8 @@ def parse(wb) -> list[dict]:
                     "division":    _prettify_division(sheet_name),
                     "sheet":       sheet_name,
                     "played":      white_score is not None and dark_score is not None,
+                    "w_to":        _adv(ci_wto),
+                    "l_to":        _adv(ci_lto),
                 })
 
     return games

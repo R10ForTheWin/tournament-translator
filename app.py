@@ -1473,6 +1473,106 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
     return out
 
 
+def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> list:
+    """Build a bracket tree for NJO / JO-Quals format games.
+
+    Unlike WPL (which infers bracket paths from slot-reference strings), NJO
+    stores explicit advancement: each game has w_to (game# winner goes to) and
+    l_to (game# loser goes to).  We follow those links forward from the team's
+    earliest game to produce a win-path tree.
+
+    Each node returned has the same shape as WPL tree nodes so the frontend
+    staircase renderer works unchanged.
+    """
+    if not division_games:
+        return []
+
+    # Build a map from game-number string → game, scoped to the same sheet
+    # (GMIDs like "16B-003" encode a prefix + 3-digit number).
+    def _gnum_str(gid: str):
+        m = re.search(r'-(\d+)$', gid)
+        return str(int(m.group(1))) if m else None
+
+    gnum_map: dict[str, dict] = {}
+    for g in division_games:
+        n = _gnum_str(g["game_id"])
+        if n and n not in gnum_map:
+            gnum_map[n] = g
+
+    # Find all games where this team appears
+    my_games = sorted(
+        [g for g in division_games if team_matches(g["white_team"], team)
+         or team_matches(g["dark_team"], team)],
+        key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
+    )
+    if not my_games:
+        return []
+
+    # Restrict to games around the anchor date (current tournament weekend)
+    if anchor_date:
+        my_games = [g for g in my_games
+                    if g.get("date") and abs((g["date"] - anchor_date).days) <= 3]
+    if not my_games:
+        return []
+
+    def _make_njo_node(g, src_id, src_path, is_ph):
+        node = dict(g)
+        node["placeholder"]    = is_ph
+        node["src_game_id"]    = src_id
+        node["src_path"]       = src_path
+        node["win_next_ids"]   = []
+        node["lose_next_ids"]  = []
+        node["sunday_pair_id"] = None
+        node["tree_format"]    = "bracket"
+        return node
+
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def _follow(game, src_id, src_path, is_ph, depth=0):
+        if depth > 8 or game["game_id"] in seen:
+            return None
+        seen.add(game["game_id"])
+        node = _make_njo_node(game, src_id, src_path, is_ph)
+        out.append(node)
+
+        played = game.get("played", False)
+        won = _team_won(team, game) if played else None  # True/False/None
+
+        # Follow win path
+        w_num = str(game.get("w_to")) if game.get("w_to") is not None else None
+        if w_num and w_num in gnum_map:
+            next_g = gnum_map[w_num]
+            if next_g["game_id"] not in seen:
+                # Only follow if team appears or result unknown
+                involved = (team_matches(next_g["white_team"], team)
+                            or team_matches(next_g["dark_team"], team))
+                next_ph = is_ph or (won is False)  # placeholder if we lost
+                if involved or won is not False:
+                    child = _follow(next_g, game["game_id"], "win", next_ph, depth + 1)
+                    if child:
+                        node["win_next_ids"].append(next_g["game_id"])
+
+        # Follow lose path
+        l_num = str(game.get("l_to")) if game.get("l_to") is not None else None
+        if l_num and l_num in gnum_map:
+            next_g = gnum_map[l_num]
+            if next_g["game_id"] not in seen:
+                involved = (team_matches(next_g["white_team"], team)
+                            or team_matches(next_g["dark_team"], team))
+                next_ph = is_ph or (won is True)  # placeholder if we won
+                if involved or won is not True:
+                    child = _follow(next_g, game["game_id"], "lose", next_ph, depth + 1)
+                    if child:
+                        node["lose_next_ids"].append(next_g["game_id"])
+
+        return node
+
+    root = my_games[0]
+    _follow(root, None, None, False)
+    return out
+
+
 def find_next_games(game, division_games):
     num = _game_num(game["game_id"])
     if not num:
@@ -2777,11 +2877,17 @@ def api_games(tournament_id, team):
 
     # WPL crossover game tree
     wpl_bracket = None
+    _njo_tournaments = {"jo-quals", "junior-olympics"}
     if tournament_id in WPL_TOURNAMENTS and my_games:
         tree_sheet = my_games[0]['sheet']
         div_games_for_tree = [g for g in _all_games if g['sheet'] == tree_sheet]
         latest_team_date = max((g["date"] for g in my_games if g.get("date")), default=None)
         tree = _build_wpl_game_tree(team, div_games_for_tree, anchor_date=latest_team_date)
+    elif tournament_id in _njo_tournaments and my_games:
+        tree_sheet = my_games[0]['sheet']
+        div_games_for_tree = [g for g in _all_games if g['sheet'] == tree_sheet]
+        latest_team_date = max((g["date"] for g in my_games if g.get("date")), default=None)
+        tree = _build_njo_game_tree(team, div_games_for_tree, anchor_date=latest_team_date)
         struct_issues = _check_bracket_structure(
             team, tree, div_games=div_games_for_tree, anchor_date=latest_team_date
         )
