@@ -2053,30 +2053,168 @@ _SLOT_LIKE_RE = re.compile(
 )
 
 
-def _check_bracket_structure(team: str, tree: list) -> list[str]:
+def _derive_expected_bracket(team: str, div_games: list, anchor_date) -> dict:
+    """Read the schedule and derive exactly what the bracket tree should contain.
+
+    This is the ground truth: we trace the game graph from the schedule itself,
+    independent of _build_wpl_game_tree, and return what the tree SHOULD look like.
+
+    Returns a dict:
+      prelim_ids      – game_ids where team appears by name this weekend
+      win_pool_ids    – game_ids reachable via WIN GM # references from prelims
+      placement_ids   – finish-slot placement game_ids for the team's pool
+      expected_depth  – number of unique sequential rounds (prelim + pool + 1 placement slot)
+      pool_letter     – pool letter (e.g. 'E'), or None if not found
+    """
+    if not anchor_date:
+        return {}
+
+    def _within(g) -> bool:
+        return bool(g.get("date") and abs((g["date"] - anchor_date).days) <= 3)
+
+    # Step 1: direct games — team appears by name this weekend
+    direct = [
+        g for g in div_games
+        if _within(g) and (team_matches(g["white_team"], team)
+                           or team_matches(g["dark_team"], team))
+    ]
+    if not direct:
+        return {}
+
+    seen_ids = {g["game_id"] for g in direct}
+
+    # Step 2: detect format — pool-seed (E1-IMPERIAL) vs prelim (13 - TROJAN CARDINAL)
+    pool_letter = None
+    for g in direct:
+        for slot in (g["white_team"], g["dark_team"]):
+            m = _POOL_SLOT_RE.match(slot.strip())
+            if m and team_matches(slot, team):
+                pool_letter = m.group(1).upper()
+                break
+        if pool_letter:
+            break
+
+    if pool_letter:
+        # Pool-seed team: direct games ARE their pool games; no prelim round.
+        # Find additional pool games for this pool that the team plays (WIN GM #
+        # from their direct game numbers, or pool-letter second-day games).
+        direct_nums = {_game_num(g["game_id"]) for g in direct if _game_num(g["game_id"])}
+        extra_pool = []
+        for g in div_games:
+            if g["game_id"] in seen_ids or not _within(g):
+                continue
+            for slot in (g["white_team"], g["dark_team"]):
+                pm = _POOL_SLOT_RE.match(slot.strip())
+                if pm and pm.group(1).upper() == pool_letter and team_matches(slot, team):
+                    extra_pool.append(g)
+                    seen_ids.add(g["game_id"])
+                    break
+        pool_games = direct + extra_pool
+        prelim_games: list = []
+        win_pool = pool_games
+    else:
+        # Prelim-path team: direct games are prelims; find WIN GM # pool games.
+        prelim_games = direct
+        prelim_nums  = {_game_num(g["game_id"]) for g in prelim_games
+                        if _game_num(g["game_id"])}
+        win_pool = []
+        for g in div_games:
+            if g["game_id"] in seen_ids or not _within(g):
+                continue
+            for slot in (g["white_team"], g["dark_team"]):
+                wgm = re.search(r'\bWIN\s+GM\s+#(\d+)', slot, re.IGNORECASE)
+                if wgm and str(int(wgm.group(1))) in prelim_nums:
+                    win_pool.append(g)
+                    seen_ids.add(g["game_id"])
+                    break
+        # Extract pool letter from win-pool slots
+        for g in win_pool:
+            for slot in (g["white_team"], g["dark_team"]):
+                wgm = re.search(r'\bWIN\s+GM\s+#(\d+)', slot, re.IGNORECASE)
+                if wgm and str(int(wgm.group(1))) in prelim_nums:
+                    pm = re.match(r'^([A-Z])', slot.strip(), re.IGNORECASE)
+                    if pm:
+                        pool_letter = pm.group(1).upper()
+                        break
+            if pool_letter:
+                break
+
+    # Step 3: finish-slot placement games for this pool
+    placement = []
+    if pool_letter:
+        for g in div_games:
+            if g["game_id"] in seen_ids or not _within(g):
+                continue
+            for slot in (g["white_team"], g["dark_team"]):
+                fm = _FINISH_SLOT_RE.match(slot.strip())
+                if fm and fm.group(1).upper() == pool_letter:
+                    if _game_num(g["game_id"]):
+                        placement.append(g)
+                        seen_ids.add(g["game_id"])
+                    break
+
+    # Expected depth: unique time slots across all rounds, with placement alternatives
+    # counted as 1 (the team plays exactly one of the N options).
+    prelim_slots   = len({(g["date"], g["time"]) for g in prelim_games})
+    pool_slots     = len({(g["date"], g["time"]) for g in win_pool})
+    placement_slot = 1 if placement else 0
+    expected_depth = prelim_slots + pool_slots + placement_slot
+
+    return {
+        "prelim_ids":     [g["game_id"] for g in prelim_games],
+        "win_pool_ids":   [g["game_id"] for g in win_pool],
+        "placement_ids":  [g["game_id"] for g in placement],
+        "expected_depth": expected_depth,
+        "pool_letter":    pool_letter,
+        "is_pool_seed":   bool(pool_letter and not prelim_games),
+    }
+
+
+def _check_bracket_structure(team: str, tree: list,
+                              div_games: list = None, anchor_date=None) -> list[str]:
     """Deterministic structural assertions on the WPL bracket tree. Never calls an LLM.
 
-    These checks catch bugs the LLM judge cannot see — specifically:
-      - Empty tree  → wpl_bracket stays null → frontend falls back to raw chronological
-        game_nums which include both win-path and lose-path games, producing non-sequential
-        column jumps like GAME 2 → GAME 6 → GAME 7.
-      - Prelim-only tree (1 node) → WIN GM # expansion failed; only the prelim shows.
-      - Dangling next_ids → broken tree linkage; BFS will silently drop those games.
+    Pass div_games + anchor_date to also validate against the schedule ground truth —
+    this catches mismatches like an empty tree when the schedule expects 4 rounds,
+    or a tree with too few/many depths relative to what the schedule specifies.
+
+    Structural checks (always run):
+      - Empty tree  → wpl_bracket null → frontend falls back to raw chronological
+        game_nums, producing non-sequential GAME labels like GAME 2 → GAME 6 → GAME 7.
+      - Single node → prelim only; WIN GM # expansion failed.
+      - Multiple roots, dangling next_ids, duplicate game_ids, node count > 10.
+
+    Ground-truth checks (when div_games + anchor_date provided):
+      - Expected bracket depth (from schedule) vs actual tree depth.
+      - Saturday and Sunday both present.
+      - All win-path schedule games accounted for in tree.
     """
     issues = []
+
+    # ── Structural checks ──────────────────────────────────────────────────────
     if not tree:
         issues.append(
             "tree is empty — wpl_bracket will be null; frontend falls back to "
             "chronological game_nums including both win-path and lose-path games, "
             "producing non-sequential GAME labels (e.g. GAME 2 → GAME 6 → GAME 7)"
         )
+        if div_games and anchor_date:
+            expected = _derive_expected_bracket(team, div_games, anchor_date)
+            if expected.get("expected_depth"):
+                d = expected["expected_depth"]
+                issues[-1] += (
+                    f"; schedule expects {d} round(s): "
+                    f"prelim={expected['prelim_ids']}, "
+                    f"pool={expected['win_pool_ids']}, "
+                    f"placement={len(expected['placement_ids'])} option(s)"
+                )
         return issues
 
     if len(tree) == 1:
         issues.append(
             f"tree has only 1 node ({tree[0]['game_id']}) — prelim only; "
-            "WIN GM # pool-phase expansion likely failed; check that div_games_for_tree "
-            "includes all-weekend games, not just the date-filtered subset"
+            "WIN GM # pool-phase expansion failed; ensure div_games_for_tree "
+            "uses _all_games (unfiltered), not the date-filtered subset"
         )
 
     roots = [n for n in tree if not n.get("src_game_id")]
@@ -2109,8 +2247,64 @@ def _check_bracket_structure(team: str, tree: list) -> list[str]:
     if len(tree) > 10:
         issues.append(
             f"tree has {len(tree)} nodes — expected ≤10 for any WPL weekend format; "
-            "possible wrong anchor_date or infinite BFS expansion"
+            "possible wrong anchor_date or runaway expansion"
         )
+
+    # ── Ground-truth checks ────────────────────────────────────────────────────
+    if div_games and anchor_date:
+        expected = _derive_expected_bracket(team, div_games, anchor_date)
+        if expected:
+            exp_depth = expected["expected_depth"]
+
+            # Compute actual tree depth: number of unique sequential rounds.
+            # Placement alternatives share a depth level — count unique (date, time) slots
+            # excluding alternatives (nodes whose win/lose both point back to same parent).
+            # Simpler proxy: unique (date, time) combos across ALL tree nodes, where
+            # multiple alternatives at the same slot still count as 1.
+            tree_slots = {}  # (date, time) → count
+            for n in tree:
+                key = (n.get("date"), n.get("time"))
+                if key[0]:
+                    tree_slots[key] = tree_slots.get(key, 0) + 1
+            # Placement alternatives are multiple nodes at the SAME time as each other —
+            # but they're at DIFFERENT times (e.g. 12PM, 1PM, 2PM). Each is mutually
+            # exclusive. Count them as 1 slot total.
+            # Heuristic: nodes with no children (leaf nodes) that share the same parent
+            # all count as 1. Simply: unique (date, time) of non-root nodes minus the
+            # count above expected minus 1 for alternatives padding.
+            # Easier: just compare against expected_depth ± 1 tolerance for alternatives.
+            actual_unique_slot_count = len(tree_slots)
+            # Placement alternatives inflate unique slots (3 options = 3 different times).
+            # Adjust: actual depth = unique slots - (placement count - 1).
+            placement_in_tree = len(expected["placement_ids"])
+            adjusted_depth = actual_unique_slot_count - max(0, placement_in_tree - 1)
+
+            if adjusted_depth != exp_depth:
+                issues.append(
+                    f"schedule expects {exp_depth} sequential round(s) "
+                    f"(prelim={len(expected['prelim_ids'])}, "
+                    f"pool={len(expected['win_pool_ids'])}, "
+                    f"placement=1 of {len(expected['placement_ids'])}), "
+                    f"but tree has {adjusted_depth} unique rounds "
+                    f"({actual_unique_slot_count} raw slots, "
+                    f"{placement_in_tree} placement options)"
+                )
+
+            # All win-path schedule games should appear in the tree
+            tree_ids_all = {n["game_id"] for n in tree}
+            for gid in expected["prelim_ids"] + expected["win_pool_ids"]:
+                if gid not in tree_ids_all:
+                    issues.append(
+                        f"schedule game {gid!r} is on the win path but missing from tree"
+                    )
+
+            # Saturday AND Sunday should both be present
+            sat = [n for n in tree if n.get("date") and n["date"].weekday() == 5]
+            sun = [n for n in tree if n.get("date") and n["date"].weekday() == 6]
+            if not sat:
+                issues.append("no Saturday games in tree — Saturday data missing or wrong anchor")
+            if not sun:
+                issues.append("no Sunday games in tree — Sunday data missing from spreadsheet")
 
     return issues
 
@@ -2375,7 +2569,9 @@ def api_games(tournament_id, team):
         div_games_for_tree = [g for g in _all_games if g['sheet'] == tree_sheet]
         latest_team_date = max((g["date"] for g in my_games if g.get("date")), default=None)
         tree = _build_wpl_game_tree(team, div_games_for_tree, anchor_date=latest_team_date)
-        struct_issues = _check_bracket_structure(team, tree)
+        struct_issues = _check_bracket_structure(
+            team, tree, div_games=div_games_for_tree, anchor_date=latest_team_date
+        )
         if struct_issues:
             for _si in struct_issues:
                 print(f"[bracket-struct] {team!r} | {tournament_id}: {_si}", flush=True)

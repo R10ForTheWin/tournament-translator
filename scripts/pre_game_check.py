@@ -31,6 +31,7 @@ sys.path.insert(0, ROOT)
 from parsers.detect import load_and_parse
 from app import (
     _expand_bracket_games, _build_wpl_game_tree,
+    _derive_expected_bracket, _check_bracket_structure,
     team_matches, strip_prefix, describe_slot,
     _tournament_meta, _SLOT_LIKE_RE,
     WPL_TOURNAMENTS, FUTURES_SHEETS_URL, EXCEL_DIR,
@@ -141,8 +142,8 @@ def _visible_sunday_count(direct: list, extras: list, tree: list) -> int:
     return len(sun_ids)
 
 
-def _check_team(team: str, div_games: list, anchor: date) -> tuple[list, list, list, int, list[str]]:
-    """Run all checks. Returns (direct, extras, tree, sun_count, issues)."""
+def _check_team(team: str, div_games: list, anchor: date) -> tuple[list, list, list, int, list[str], dict]:
+    """Run all checks. Returns (direct, extras, tree, sun_count, issues, expected)."""
     issues = []
 
     direct = sorted(
@@ -152,29 +153,19 @@ def _check_team(team: str, div_games: list, anchor: date) -> tuple[list, list, l
         key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
     )
     if not direct:
-        return [], [], [], 0, ["no direct games found this weekend"]
+        return [], [], [], 0, ["no direct games found this weekend"], {}
 
-    extras = _expand_bracket_games(team, direct, div_games)
-    tree   = _build_wpl_game_tree(team, div_games, anchor_date=anchor)
-    sun    = _visible_sunday_count(direct, extras, tree)
+    extras   = _expand_bracket_games(team, direct, div_games)
+    tree     = _build_wpl_game_tree(team, div_games, anchor_date=anchor)
+    sun      = _visible_sunday_count(direct, extras, tree)
+    expected = _derive_expected_bracket(team, div_games, anchor)
 
-    total = len(direct) + len(extras)
-    if total < MIN_TOTAL_GAMES:
-        issues.append(f"only {total} total game(s) — expansion may be broken")
+    # ── Ground-truth check: tree depth vs schedule ─────────────────────────────
+    struct_issues = _check_bracket_structure(team, tree, div_games=div_games, anchor_date=anchor)
+    issues.extend(struct_issues)
 
-    if len(direct) > 0 and len(extras) > len(direct) * MAX_EXTRAS_RATIO:
-        issues.append(
-            f"extras={len(extras)} >> direct={len(direct)} — "
-            "possible cross-weekend contamination"
-        )
-
-    if sun == 0:
-        issues.append(
-            f"no Sunday games visible (direct={len(direct)} extras={len(extras)} "
-            f"tree={len(tree)}) — Sunday data may be missing from sheet"
-        )
-
-    if tree:
+    # ── Additional checks only relevant when tree IS populated ─────────────────
+    if tree and not struct_issues:
         bad_opps = []
         for n in tree:
             wt, dt = n["white_team"], n["dark_team"]
@@ -187,7 +178,7 @@ def _check_team(team: str, div_games: list, anchor: date) -> tuple[list, list, l
                 bad_opps.append(f"{n['game_id']}: {opp!r}")
         if bad_opps:
             issues.append(
-                "unresolved slot string(s) in opponent labels: "
+                "unresolved opponent slot string(s): "
                 + ", ".join(bad_opps[:3])
             )
 
@@ -203,14 +194,8 @@ def _check_team(team: str, div_games: list, anchor: date) -> tuple[list, list, l
                 "inferred WIN-GM games incorrectly marked confirmed: "
                 + str(inferred_real)
             )
-    else:
-        if any(re.search(r'^[A-Z]\d+-', s, re.IGNORECASE)
-               for g in direct
-               for s in (g["white_team"], g["dark_team"])
-               if team_matches(s, team)):
-            issues.append("bracket tree is empty for a pool-slot team")
 
-    return direct, extras, tree, sun, issues
+    return direct, extras, tree, sun, issues, expected
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -276,9 +261,11 @@ def main():
         print(f"{BOLD}{sheet}{RESET}  ({len(teams)} teams)\n")
 
         for team in teams:
-            direct, extras, tree, sun, issues = _check_team(team, div_games, anchor)
-            stats = (f"direct={len(direct)} extras={len(extras)} "
-                     f"tree={len(tree)} sun={sun}")
+            direct, extras, tree, sun, issues, expected = _check_team(team, div_games, anchor)
+            exp_depth = expected.get("expected_depth", "?")
+            pool      = expected.get("pool_letter", "?")
+            stats = (f"direct={len(direct)} tree={len(tree)} "
+                     f"expected_depth={exp_depth} pool={pool} sun={sun}")
             line_body = f"{team:<28s} {stats}"
 
             if issues:
