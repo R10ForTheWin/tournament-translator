@@ -911,6 +911,26 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                 if d not in grp_dates:
                     grp_dates.append(d)
 
+    # For seed-number prelim games (e.g. "13 - TROJAN CARDINAL"), _POOL_SLOT_RE
+    # won't match and groups stays empty.  Scan downstream division games for
+    # WIN/LOS GM #N references to our direct games and extract the pool letter
+    # from those slots so finish-slot expansion can work.
+    if not groups:
+        direct_nums = {_game_num(g["game_id"]) for g in direct_games
+                       if _game_num(g["game_id"])}
+        for dg in division_games:
+            for slot in (dg["white_team"], dg["dark_team"]):
+                s = slot.strip()
+                wgm = re.search(r'\b(WIN|LOS)\s+GM\s+#(\d+)', s, re.IGNORECASE)
+                if wgm and str(int(wgm.group(2))) in direct_nums:
+                    pm = re.match(r'^([A-Z])', s, re.IGNORECASE)
+                    if pm:
+                        letter = pm.group(1).upper()
+                        d = dg.get("date")
+                        grp_dates = groups.setdefault(letter, [])
+                        if d not in grp_dates:
+                            grp_dates.append(d)
+
     def _same_weekend(cand_date, grp_letter: str) -> bool:
         """True if cand_date is within 2 days of any date the team was in grp_letter."""
         if cand_date is None:
@@ -1042,6 +1062,25 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     add_ph_depth = (src_depth + 1) if ph else 0
                     break
 
+                # WIN GM #N / LOS GM #N — WPL championship prelim-to-pool slot
+                # e.g. "E2 (WIN GM #399) -" or "F1 (LOS GM #399) -"
+                wgm = re.search(r'\b(WIN|LOS)\s+GM\s+#(\d+)', s, re.IGNORECASE)
+                if wgm:
+                    ref_num = str(int(wgm.group(2)))
+                    if ref_num not in reachable:
+                        continue
+                    src_game, src_ph, src_depth = reachable[ref_num]
+                    if src_depth >= 2:
+                        continue
+                    want_win = wgm.group(1).upper() == "WIN"
+                    won = _team_won(team, src_game)
+                    if won is True  and not want_win: continue
+                    if won is False and     want_win: continue
+                    ph = src_ph or (won is None)
+                    add_placeholder = ph if add_placeholder is None else (add_placeholder and ph)
+                    add_ph_depth = (src_depth + 1) if ph else 0
+                    break
+
             if add_placeholder is not None:
                 if _game_num(g["game_id"]) is None:
                     continue  # skip non-game rows (e.g. embedded standings entries)
@@ -1054,7 +1093,11 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                 extras.append(g_copy)
                 seen_ids.add(g["game_id"])
                 n = _game_num(g["game_id"])
-                if n:
+                # Don't add collision-renamed games (e.g. "18UB 389-B") to reachable
+                # under their base number — their number collides with another real game
+                # and would cause false expansions via WIN/LOS GM # lookup.
+                is_renamed = bool(re.search(r'-[A-Z]+$', g["game_id"]))
+                if n and not is_renamed:
                     reachable[n] = (g_copy, add_placeholder, add_ph_depth)
                 changed = True
 
@@ -1103,6 +1146,7 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
                 if g["game_id"] not in {x["game_id"] for x in explicit_games}:
                     explicit_games.append(g)
                 break
+
     if not explicit_games:
         return []
 
@@ -1110,7 +1154,7 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
     # anchor_date: the latest date any game directly involves this team (including
     # non-pool-slot formats like "13 - TROJAN CARDINAL"). If the team's most recent
     # games use a format _POOL_SLOT_RE can't see, recent_explicit will be empty and
-    # we return [] rather than show a stale tree from an older weekend.
+    # we fall back to seed-number format detection below.
     ref_date = anchor_date or (max(g["date"] for g in explicit_games if g.get("date"))
                                if any(g.get("date") for g in explicit_games) else None)
     if ref_date:
@@ -1120,7 +1164,38 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
         recent_explicit = explicit_games[-1:]
 
     if not recent_explicit:
-        return []  # current weekend uses a slot format the tree builder can't represent
+        # Current weekend uses seed-number format (e.g. "13 - TROJAN CARDINAL"),
+        # not pool-slot format.  Find the prelim game(s) directly, then follow
+        # WIN GM #N forward to discover the pool-phase games for this weekend.
+        if not anchor_date:
+            return []
+        prelim_nums: set[str] = set()
+        for g in sorted_games:
+            if not (g.get("date") and abs((g["date"] - anchor_date).days) <= 3):
+                continue
+            if team_matches(g["white_team"], team) or team_matches(g["dark_team"], team):
+                gid = g["game_id"]
+                if gid not in {x["game_id"] for x in explicit_games}:
+                    explicit_games.append(g)
+                    recent_explicit.append(g)
+                    n = _game_num(gid)
+                    if n:
+                        prelim_nums.add(n)
+        # Add WIN GM # pool-phase games (Saturday pool game + Sunday pool game)
+        if prelim_nums:
+            for g in sorted_games:
+                if g["game_id"] in {x["game_id"] for x in explicit_games}:
+                    continue
+                if not (g.get("date") and abs((g["date"] - anchor_date).days) <= 3):
+                    continue
+                for slot in (g["white_team"], g["dark_team"]):
+                    wgm = re.search(r'\bWIN\s+GM\s+#(\d+)', slot.strip(), re.IGNORECASE)
+                    if wgm and str(int(wgm.group(1))) in prelim_nums:
+                        explicit_games.append(g)
+                        recent_explicit.append(g)
+                        break
+        if not recent_explicit:
+            return []
 
     root = recent_explicit[0]
     root_num = _game_num(root["game_id"])
@@ -1134,6 +1209,22 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
         if m and team_matches(m.group(3), team):
             pool_group = m.group(1).upper()
             break
+    # Fallback: extract pool letter from a WIN GM # game in recent_explicit
+    # (e.g. "E2 (WIN GM #399) -" in game 18UB 403 → pool letter "E")
+    if pool_group is None and root_num:
+        for g in recent_explicit:
+            if g["game_id"] == root["game_id"]:
+                continue
+            for slot in (g["white_team"], g["dark_team"]):
+                s = slot.strip()
+                wgm = re.search(r'\bWIN\s+GM\s+#(\d+)', s, re.IGNORECASE)
+                if wgm and str(int(wgm.group(1))) == root_num:
+                    pm = re.match(r'^([A-Z])', s, re.IGNORECASE)
+                    if pm:
+                        pool_group = pm.group(1).upper()
+                        break
+            if pool_group:
+                break
 
     # ── 2. Check for W#/L# bracket games off the root ──────────────────────
     win_sat_game = lose_sat_game = None
