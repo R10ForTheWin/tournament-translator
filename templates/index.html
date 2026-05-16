@@ -97,6 +97,15 @@
       text-transform: uppercase; letter-spacing: 0.05em;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
+    #subnav-tabs { display: none; background: var(--cardinal); border-top: 1px solid rgba(255,255,255,0.12); }
+    .subnav-tab-bar { display: flex; }
+    .subnav-tab {
+      flex: 1; padding: 10px 0; background: none; border: none;
+      color: rgba(255,255,255,0.55); font-family: inherit;
+      font-size: 12px; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; cursor: pointer; border-bottom: 2px solid transparent;
+    }
+    .subnav-tab.active { color: var(--gold); border-bottom-color: var(--gold); }
 
 
     /* ── Main ── */
@@ -593,6 +602,12 @@
     <button class="back-btn" id="back-btn">‹ Back</button>
     <div class="subnav-title" id="subnav-title"></div>
   </div>
+  <div id="subnav-tabs">
+    <div class="subnav-tab-bar">
+      <button class="subnav-tab" id="tab-schedule" onclick="switchPane('bracket')">Schedule</button>
+      <button class="subnav-tab" id="tab-rankings" onclick="switchPane('standings')">Rankings</button>
+    </div>
+  </div>
   <div class="gold-bar"></div>
 </div>
 
@@ -766,6 +781,7 @@ function showView(id) {
   const isHome = id === 'view-tournaments';
   document.getElementById('hero-wrap').style.display   = isHome ? '' : 'none';
   document.getElementById('subnav-wrap').style.display = isHome ? 'none' : '';
+  if (id !== 'view-games') document.getElementById('subnav-tabs').style.display = 'none';
 }
 
 function updateSubnav() {
@@ -784,7 +800,22 @@ function updateSubnav() {
 function goHome()       { showView('view-tournaments'); }
 function goTournament() {
   showView('view-teams');
+  document.getElementById('subnav-tabs').style.display = 'none';
   updateSubnav();
+}
+
+function switchPane(which, scroll = true) {
+  const bp = document.getElementById('wpl-pane-bracket');
+  const sp = document.getElementById('wpl-pane-standings');
+  const ts = document.getElementById('tab-schedule');
+  const tr = document.getElementById('tab-rankings');
+  if (!bp || !sp) return;
+  const showBracket = which === 'bracket';
+  bp.style.display = showBracket ? '' : 'none';
+  sp.style.display = showBracket ? 'none' : '';
+  ts?.classList.toggle('active', showBracket);
+  tr?.classList.toggle('active', !showBracket);
+  if (scroll) window.scrollTo(0, 0);
 }
 
 // ── Tournaments ────────────────────────────────────────────────────────────────
@@ -1110,9 +1141,9 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket') {
     el.appendChild(tag);
   }
 
-  // Bracket — WPL crossover tree or standard staircase
+  // Bracket — WPL two-pane (Schedule + Rankings) or standard staircase
   const ourName  = data.our_team_name || team;
-  const isWpl    = !!(data.wpl_bracket && data.wpl_bracket.length);
+  const isWpl    = tournamentId.startsWith('futures');
 
   try {
   if (isWpl) {
@@ -1144,11 +1175,18 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket') {
     el.appendChild(bracketPane);
     el.appendChild(standingsPane);
 
-    // Bracket content
-    const allGames = wplBracketToStaircase(data.wpl_bracket);
-    bracketPane.appendChild(buildBracketView(allGames, tournamentId, team, ourName));
+    // Schedule pane — show full played + upcoming list (and bracket tree if available)
+    const schedGames = data.wpl_bracket && data.wpl_bracket.length
+      ? wplBracketToStaircase(data.wpl_bracket)
+      : [...(data.played || []), ...(data.upcoming || [])];
+    bracketPane.appendChild(buildBracketView(schedGames, tournamentId, team, ourName));
+
+    // Show subnav tabs and set active state
+    document.getElementById('subnav-tabs').style.display = '';
+    switchPane(defaultView, false);
 
   } else {
+    document.getElementById('subnav-tabs').style.display = 'none';
     const allGames = [...(data.played || []), ...(data.upcoming || [])];
     el.appendChild(buildBracketView(allGames, tournamentId, team, ourName));
   }
