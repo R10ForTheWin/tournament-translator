@@ -67,6 +67,15 @@ def load_and_parse(filepath_or_bytes) -> list[dict]:
     except Exception as exc:
         print(f"[format_b] error: {exc}")
 
+    # 3b. Format C heuristic — NJO/JO Quals (GMID column, per-division sheets).
+    try:
+        from parsers.format_c import parse as parse_c
+        games = _tag_and_validate(parse_c(wb), "C")
+        if games:
+            return games
+    except Exception as exc:
+        print(f"[format_c] error: {exc}")
+
     # 4. AI parser — one API call for unknown layouts, result cached to disk.
     try:
         from parsers.format_ai import parse as parse_ai
