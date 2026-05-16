@@ -35,11 +35,32 @@ def parse(wb) -> list[dict]:
         if sheet_name in SKIP_SHEETS:
             continue
         ws = wb[sheet_name]
-        seen_ids: set = set()  # dedup within this sheet only
+        # game_id → white_team of first occurrence; used to detect organizer ID collisions
+        seen_ids: dict[str, str] = {}
+        collision_count: dict[str, int] = {}  # base id → # of extra occurrences so far
         left_date  = None   # date for games in left columns (0–7)
         right_date = None   # date for games in right columns (9–16)
         left_loc   = "TBD"
         right_loc  = "TBD"
+
+        def _add_game(g):
+            """Dedup by game_id, but keep organizer ID collisions with a -B/-C suffix."""
+            if g is None:
+                return
+            gid = g["game_id"]
+            if gid not in seen_ids:
+                seen_ids[gid] = g["white_team"]
+                games.append(g)
+            elif seen_ids[gid] != g["white_team"]:
+                # Same ID, different teams — organizer reused an ID across sections.
+                # Rename to preserve this game (finish-slot lookup needs it).
+                n = collision_count.get(gid, 0) + 1
+                collision_count[gid] = n
+                suffix = chr(ord('B') + n - 1)  # B, C, D, …
+                new_gid = f"{gid}-{suffix}"
+                seen_ids[new_gid] = g["white_team"]
+                games.append(dict(g, game_id=new_gid))
+            # else: true duplicate (same ID, same teams) → skip
 
         for row in ws.iter_rows(min_row=1, values_only=True):
             if not any(c is not None for c in row):
@@ -69,16 +90,10 @@ def parse(wb) -> list[dict]:
                 continue
 
             # Parse left-side game (cols 0–7)
-            g = _parse_game_cols(row, 0, left_date, left_loc, sheet_name)
-            if g and g["game_id"] not in seen_ids:
-                seen_ids.add(g["game_id"])
-                games.append(g)
+            _add_game(_parse_game_cols(row, 0, left_date, left_loc, sheet_name))
 
             # Parse right-side game (cols 9–16)
-            g2 = _parse_game_cols(row, 9, right_date, right_loc, sheet_name)
-            if g2 and g2["game_id"] not in seen_ids:
-                seen_ids.add(g2["game_id"])
-                games.append(g2)
+            _add_game(_parse_game_cols(row, 9, right_date, right_loc, sheet_name))
 
     return games
 

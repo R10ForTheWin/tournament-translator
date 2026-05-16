@@ -773,7 +773,8 @@ def describe_slot(slot: str, division_games: list = None) -> str:
     return slot
 
 def _game_num(game_id: str):
-    m = re.search(r"(\d+)$", game_id)
+    # Allows alphabetic-only suffix after digits (e.g. "18UB 402-B" from ID-collision dedup)
+    m = re.search(r"(\d+)[A-Za-z-]*$", game_id)
     return str(int(m.group(1))) if m else None
 
 
@@ -867,7 +868,7 @@ def _build_division_rounds(division_games: list) -> dict[str, int]:
 
 _POOL_SLOT_RE    = re.compile(r'^([A-Z])(\d+)-(.+)', re.IGNORECASE)
 _WL_SLOT_RE      = re.compile(r'^[WL]#([^-\s]+)', re.IGNORECASE)   # dash optional (bare W#2 before scores)
-_FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)([A-Z])-', re.IGNORECASE)
+_FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)(?:\s+in\s+)?([A-Z])\s*-', re.IGNORECASE)
 # Composite bracket slots like K4(1stG)- or K4(1stG) — group letter is inside parens
 _COMPOSITE_SLOT_RE = re.compile(r'\(\d+(?:st|nd|rd|th)([A-Z])\)', re.IGNORECASE)
 
