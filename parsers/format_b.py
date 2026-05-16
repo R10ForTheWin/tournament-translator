@@ -124,6 +124,18 @@ def _parse_game_cols(row, start: int, current_date, current_location: str, sheet
     # where letters like 'J', 'G', 'N' slip into the game_id column.
     if not any(c.isdigit() for c in str(game_id)):
         return None
+    # Reject game IDs that are actually slot-reference strings, not real game numbers.
+    # Two sources of false positives:
+    #   1. Seed-table rows (rows 24-28): col 9 contains "Los Gm #N -" which the parser
+    #      treats as a game_id. The normalized team slots ("W#420", "W#431") then trigger
+    #      false FORMAT A bracket detection for prelim-path teams.
+    #   2. Filled-in placement rows: "2nd in G - OCWPC - 2 pts." appears as a game_id
+    #      when the organizer fills in standings data in the schedule grid.
+    gid_str = str(game_id).strip()
+    if re.match(r'^(?:WIN|LOS)\s+GM\s*#', gid_str, re.IGNORECASE):
+        return None
+    if re.match(r'^\d+(?:st|nd|rd|th)\s+in\s+', gid_str, re.IGNORECASE):
+        return None
     if not white or not dark:
         return None
     if str(white).strip().upper() in ("WHITE", "TEAM", "WHITE TEAM", "GAME #"):

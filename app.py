@@ -1155,8 +1155,10 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
                     explicit_games.append(g)
                 break
 
-    if not explicit_games:
-        return []
+    # Note: do NOT return early when explicit_games is empty. Teams whose Weekend 5
+    # format uses only seed-number slots (e.g. "34 - BACK BAY") have never appeared in
+    # pool-slot format, so the outer search finds nothing. The seed-number detection
+    # block below handles them when anchor_date is provided.
 
     # Narrow to the most recent weekend cluster (WPL has 5 weekends on one sheet).
     # anchor_date: the latest date any game directly involves this team (including
@@ -1181,11 +1183,16 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
         # WIN GM #N forward to discover the pool-phase games for this weekend.
         if not anchor_date:
             return []
+        def _prelim_slot_match(slot: str) -> bool:
+            """Exact match after stripping slot prefix — prevents 'South Coast' from
+            absorbing 'South Coast B' prelim games via substring team_matches."""
+            return strip_prefix(slot).strip().upper() == team.upper()
+
         prelim_nums: set[str] = set()
         for g in sorted_games:
             if not (g.get("date") and abs((g["date"] - anchor_date).days) <= 3):
                 continue
-            if team_matches(g["white_team"], team) or team_matches(g["dark_team"], team):
+            if _prelim_slot_match(g["white_team"]) or _prelim_slot_match(g["dark_team"]):
                 gid = g["game_id"]
                 if gid not in {x["game_id"] for x in explicit_games}:
                     explicit_games.append(g)
@@ -1253,6 +1260,10 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
     win_sat_game = lose_sat_game = None
     for g in sorted_games:
         if g["game_id"] in {x["game_id"] for x in explicit_games}:
+            continue
+        # Skip games with no date — these are bogus rows parsed from the seed table
+        # (rows 24-28) which produce W#N slots that falsely trigger FORMAT A.
+        if not g.get("date"):
             continue
         for slot in (g["white_team"], g["dark_team"]):
             s = slot.strip()
@@ -2082,11 +2093,17 @@ def _derive_expected_bracket(team: str, div_games: list, anchor_date) -> dict:
     def _within(g) -> bool:
         return bool(g.get("date") and abs((g["date"] - anchor_date).days) <= 3)
 
-    # Step 1: direct games — team appears by name this weekend
+    def _exact_match(slot: str, t: str) -> bool:
+        """Exact team name match after stripping slot prefix.
+        Prevents 'South Coast' from absorbing 'South Coast B' games via substring."""
+        return strip_prefix(slot).strip().upper() == t.upper()
+
+    # Step 1: direct games — team appears by name this weekend.
+    # Use exact matching (not substring) so 'South Coast' doesn't absorb 'South Coast B'.
     direct = [
         g for g in div_games
-        if _within(g) and (team_matches(g["white_team"], team)
-                           or team_matches(g["dark_team"], team))
+        if _within(g) and (_exact_match(g["white_team"], team)
+                           or _exact_match(g["dark_team"], team))
     ]
     if not direct:
         return {}
