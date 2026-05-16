@@ -141,6 +141,24 @@ def _normalize_slot(raw: str) -> str:
         team = m.group(2).strip().upper()
         return f"{pos}-{team}" if team else pos
 
+    # NJO bracket advancement slots with underscore separators:
+    #   2ND_A-PEGASUS    → 2ndA-PEGASUS   (finish slot, pool A)
+    #   1ST_PT_M-CAPITAL → 1stM-CAPITAL   (bracket stage PT, pool M)
+    #   3RD_AU_O-TEAM    → 3rdO-TEAM      (bracket stage AU, pool O)
+    m = re.match(r'^(\d+(?:ST|ND|RD|TH))_(?:[A-Z]+_)?([A-Z])-(.+)', s, re.IGNORECASE)
+    if m:
+        ord_part  = m.group(1).capitalize()
+        pool_lett = m.group(2).upper()
+        team      = m.group(3).strip().upper()
+        return f"{ord_part}{pool_lett}-{team}"
+
+    # Stage-prefixed pool slots:  AU_M1-ELMHURST  pt_M2-CAPITAL  ni_C3-TEAM
+    m = re.match(r'^[A-Za-z]+_([A-Z]\d+)-(.+)', s, re.IGNORECASE)
+    if m:
+        pos  = m.group(1).upper()
+        team = m.group(2).strip().upper()
+        return f"{pos}-{team}"
+
     # Standard pool slot (already handled by normalize_team_slot):  A2-TEAM
     # Finish slot:  2ndA-TEAM  1stA-  3rd_G-TEAM
     # Seed number:  8-DYNAMO  or  8-  (no team yet)
