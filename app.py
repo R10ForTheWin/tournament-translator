@@ -700,12 +700,16 @@ def _game_by_num(num: str, division_games: list):
             return g
     return None
 
+_PTS_SUFFIX_RE = re.compile(r'\s*-\s*\d+\s*PTS\.?\s*$', re.IGNORECASE)
+
 def describe_slot(slot: str, division_games: list = None) -> str:
     """Return a human-readable opponent label.
     With division_games, resolves bracket slots to actual team names using standings."""
     slot = slot.strip()
     name = strip_prefix(slot)
     if name != slot and name:
+        # Strip WPL championship seeding suffix e.g. "OLYMPUS - 9 PTS." → "OLYMPUS"
+        name = _PTS_SUFFIX_RE.sub('', name).strip()
         # If strip_prefix left us with a W#/L# reference (e.g. "E1(4thB)L#7"), resolve it.
         if re.match(r'^[WL]#', name, re.IGNORECASE):
             return describe_slot(name, division_games)
