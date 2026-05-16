@@ -27,7 +27,7 @@ from parsers.detect import load_and_parse
 from parsers.validate import _valid_slot
 from app import (
     _expand_bracket_games, _build_wpl_game_tree,
-    team_matches, describe_slot, _SLOT_LIKE_RE,
+    team_matches, describe_slot, _SLOT_LIKE_RE, _tournament_meta,
 )
 
 FIXTURES_DIR = os.path.join(ROOT, "Tournaments Excels")
@@ -60,34 +60,40 @@ TEAM_CHECKS = [
 ]
 
 # ── Championship-weekend specific checks ─────────────────────────────────────
-# These check the behavior we care about most on game day:
-#   - Team sees the right number of direct games this weekend
-#   - Bracket expansion finds Sunday games
-#   - Tree builder returns a non-empty staircase with Sunday nodes
-#   - Opponent labels are resolved (no raw slot strings leaked through)
+# These check the behavior we care about most on game day.
 #
-# Schema: (sheet, team, anchor_date, min_direct, max_direct,
-#           min_extras, min_tree_nodes, min_sun_nodes)
+# Anchor date is derived from _tournament_meta() so it stays correct when a
+# new tournament weekend is added to KNOWN_TOURNAMENTS — no manual date updates.
 #
-# anchor_date — Saturday of championship weekend; scopes checks to that weekend.
-# min_extras  — lower bound prevents regression to "only 1 game showing."
-# min_sun_nodes — must see at least this many Sunday nodes in the bracket.
-CHAMPIONSHIP_CHECKS = [
-    # Pool-slot seeded team (H1). 2 Sat pool games + 3 Sun placement extras.
-    # Tree: root → pool game → 3×Sunday placeholder = 5 nodes.
-    ("16u Boys", "trojan gold",     date(2026, 5, 16),  2, 2,  3, 5, 3),
+# Schema per entry: (sheet, team, min_direct, max_direct,
+#                    min_extras, min_tree_nodes, min_sun_nodes)
+#
+# Thresholds are set to hold BOTH pre-tournament (all placeholders visible) AND
+# post-tournament (bracket narrowed to one path).  Lower bounds only — they catch
+# regressions back to zero without breaking when live scores narrow the tree.
+#
+#   min_extras=1    — at least 1 Sunday game must reach the expansion
+#   min_sun_nodes=1 — at least 1 Sunday node must appear in the bracket tree
+#
+# Add a row here any time a new bug class is fixed on a real team.
+CHAMPIONSHIP_CHECKS: dict[str, list[tuple]] = {
+    "futures-5": [
+        # Pool-slot seeded team (H1): 2 Sat games, 3 Sun placement placeholders.
+        # Previously: Sunday games missing due to game-ID collision in format_b.py.
+        ("16u Boys", "trojan gold",     2, 2, 1, 3, 1),
 
-    # Seed-number prelim team.  1 direct (prelim) + 8 extras (pool + placement).
-    # Tree: prelim → pool → Sunday pool → 3×placement = 6 nodes.
-    # Previously showed only 1 game — this is the regression canary for that bug.
-    ("16u Boys", "trojan cardinal", date(2026, 5, 16),  1, 1,  6, 5, 3),
+        # Seed-number prelim team: 1 direct game, expands through WIN GM # chain.
+        # Previously: showed only 1 game (seed-number root unhandled).
+        ("16u Boys", "trojan cardinal", 1, 1, 1, 3, 1),
 
-    # Pool-slot seeded team in a different pool (E1). Same structure as Gold.
-    ("16u Boys", "imperial",        date(2026, 5, 16),  2, 2,  3, 4, 2),
+        # Seeded pool-E1 team — regression canary for pool-slot expansion.
+        ("16u Boys", "imperial",        2, 2, 1, 3, 1),
 
-    # Pool-slot seeded team in pool G (another seed-1 team).
-    ("16u Boys", "socal",           date(2026, 5, 16),  2, 2,  3, 4, 2),
-]
+        # Seeded pool-G1 team — second pool-slot canary.
+        ("16u Boys", "socal",           2, 2, 1, 3, 1),
+    ],
+    # Add "futures-super", "futures-6", etc. here as those weekends are played.
+}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -193,8 +199,7 @@ def test_team_expansion(fname: str, sheet: str, team: str,
 
 def test_championship_team(sheet: str, team: str, anchor: date,
                             min_direct: int, max_direct: int,
-                            min_extras: int, min_tree: int,
-                            min_sun: int) -> int:
+                            min_extras: int, min_tree: int, min_sun: int) -> int:
     """Check a team's championship-weekend bracket and expansion.
 
     This is the test that would have caught every game-day bug we've fixed:
@@ -296,8 +301,16 @@ def main():
     print("\n" + "=" * 60)
     print("Championship weekend tests")
     print("=" * 60)
-    for args in CHAMPIONSHIP_CHECKS:
-        total_failures += test_championship_team(*args)
+    for tournament_id, checks in CHAMPIONSHIP_CHECKS.items():
+        meta = _tournament_meta(tournament_id)
+        if not meta or not meta.get("date_start"):
+            print(f"\n[SKIP] No date_start for {tournament_id!r} in KNOWN_TOURNAMENTS")
+            continue
+        anchor = meta["date_start"]
+        for (sheet, team, min_d, max_d, min_e, min_t, min_s) in checks:
+            total_failures += test_championship_team(
+                sheet, team, anchor, min_d, max_d, min_e, min_t, min_s
+            )
 
     print("\n" + "=" * 60)
     if total_failures == 0:

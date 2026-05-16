@@ -2689,6 +2689,176 @@ def api_cache_schema(tournament_id):
         return jsonify({"error": str(e)}), 500
 
 
+# ── Pre-game sweep ────────────────────────────────────────────────────────────
+
+_swept_tournament_ids: set[str] = set()   # prevent re-running in same process
+
+def _run_pre_game_sweep(tournament_id: str) -> dict:
+    """Validate all teams for a tournament weekend. Logs to stdout.
+
+    Returns dict with 'ok' count, 'issues' list (for API endpoint).
+    Called automatically 12-25 hours before each tournament, and on demand
+    via /api/health/pre-game-check/<tournament_id>.
+    """
+    meta = _tournament_meta(tournament_id)
+    if not meta or not meta.get("date_start"):
+        return {"error": f"no date_start for {tournament_id}"}
+
+    anchor = meta["date_start"]
+    print(f"[pre-game-check] starting sweep: {tournament_id} ({anchor})")
+
+    excel = find_excel(tournament_id)
+    if not excel:
+        msg = f"[pre-game-check] {tournament_id}: no excel file — skipping"
+        print(msg)
+        return {"error": msg}
+
+    try:
+        all_games = load_and_parse(excel)
+    except Exception as e:
+        msg = f"[pre-game-check] {tournament_id}: parse error — {e}"
+        print(msg)
+        return {"error": msg}
+
+    _swept_tournament_ids.add(tournament_id)
+
+    n_ok = 0
+    all_issues: list[dict] = []
+
+    by_sheet: dict[str, list] = {}
+    for g in all_games:
+        by_sheet.setdefault(g["sheet"], []).append(g)
+
+    _pts_re = re.compile(r'\s*-\s*\d+(\.\d+)?\s*PTS\.?\s*$', re.IGNORECASE)
+
+    for sheet, sheet_games in by_sheet.items():
+        seen: set[str] = set()
+        teams: list[str] = []
+        for g in sheet_games:
+            if not (g.get("date") and abs((g["date"] - anchor).days) <= 1):
+                continue
+            for slot in (g["white_team"], g["dark_team"]):
+                name = strip_prefix(slot).strip().upper()
+                name = _pts_re.sub("", name).strip()
+                if (not name or len(name) < 3
+                        or re.search(r'\bGM\s*#', name, re.IGNORECASE)
+                        or re.match(r'^(WIN|LOS|TBD|\d)', name, re.IGNORECASE)
+                        or re.match(r'^[A-Z]\d+$', name)):
+                    continue
+                if name not in seen:
+                    seen.add(name)
+                    teams.append(name.title())
+
+        for team in teams:
+            direct = [g for g in sheet_games
+                      if (team_matches(g["white_team"], team) or
+                          team_matches(g["dark_team"], team))
+                      and g.get("date") and abs((g["date"] - anchor).days) <= 1]
+            if not direct:
+                continue
+
+            extras = _expand_bracket_games(team, direct, sheet_games)
+            tree   = _build_wpl_game_tree(team, sheet_games, anchor_date=anchor)
+
+            # Count all unique Sunday game IDs visible to this team
+            sun_ids: set[str] = set()
+            for item in direct + extras:
+                if item.get("date") and item["date"].weekday() == 6:
+                    sun_ids.add(item["game_id"])
+            for node in tree:
+                if node.get("date") and node["date"].weekday() == 6:
+                    sun_ids.add(node["game_id"])
+
+            issues: list[str] = []
+            total = len(direct) + len(extras)
+            if total < 2:
+                issues.append(f"only {total} total game(s)")
+            if not sun_ids:
+                issues.append(
+                    f"no Sunday games visible "
+                    f"(direct={len(direct)} extras={len(extras)} tree={len(tree)})"
+                )
+            if len(extras) > len(direct) * 8:
+                issues.append(
+                    f"extras={len(extras)} >> direct={len(direct)} — "
+                    "possible cross-weekend contamination"
+                )
+            # Check for unresolved slot strings in tree nodes
+            for n in tree:
+                wt, dt = n["white_team"], n["dark_team"]
+                try:
+                    opp_slot = dt if team.split()[-1].upper() in wt.upper() else wt
+                except Exception:
+                    opp_slot = wt
+                opp = describe_slot(opp_slot, sheet_games, ref_date=anchor)
+                if _SLOT_LIKE_RE.match(opp):
+                    issues.append(f"unresolved slot in tree: {n['game_id']} opp={opp!r}")
+                    break
+
+            if issues:
+                for iss in issues:
+                    print(f"[pre-game-check] ⚠  {sheet}/{team}: {iss}")
+                all_issues.append({"sheet": sheet, "team": team, "issues": issues})
+            else:
+                n_ok += 1
+
+    if all_issues:
+        print(f"[pre-game-check] {tournament_id}: "
+              f"{len(all_issues)} team(s) with issues, {n_ok} clean")
+    else:
+        print(f"[pre-game-check] {tournament_id}: all {n_ok} teams OK ✓")
+
+    return {"tournament": tournament_id, "ok": n_ok, "issues": all_issues}
+
+
+def _pre_game_monitor():
+    """Background thread: runs a pre-game sweep 12-25 hours before tournament start.
+
+    Checks once per hour. When a tournament is 12-25 hours away and hasn't
+    been swept yet this process, fires _run_pre_game_sweep in a daemon thread.
+    Logs prominently to Railway stdout so issues surface before game day.
+    """
+    import time as _time
+    _time.sleep(60)  # let app fully start before first check
+    while True:
+        try:
+            now = datetime.now(ZoneInfo('America/Los_Angeles')).replace(tzinfo=None)
+            for t in KNOWN_TOURNAMENTS:
+                tid   = t.get("id", "")
+                start = t.get("date_start")
+                if not start or tid in _swept_tournament_ids:
+                    continue
+                hours = (datetime.combine(start, datetime.min.time()) - now).total_seconds() / 3600
+                if 12 <= hours <= 25:
+                    print(f"[pre-game-check] {hours:.0f}h until {t.get('name', tid)} "
+                          f"— launching pre-game sweep")
+                    threading.Thread(
+                        target=_run_pre_game_sweep, args=(tid,), daemon=True
+                    ).start()
+        except Exception as e:
+            print(f"[pre-game-monitor] error: {e}")
+        _time.sleep(3600)  # re-check every hour
+
+
+@app.route("/api/health/pre-game-check/<tournament_id>")
+def api_pre_game_check(tournament_id: str):
+    """Manual trigger for pre-game validation sweep. Returns JSON results.
+
+    Hit this any time to get a health report for all teams in a tournament:
+        curl https://<railway-url>/api/health/pre-game-check/futures-5
+    """
+    # Remove from swept set so this always re-runs on demand
+    _swept_tournament_ids.discard(tournament_id)
+    result = _run_pre_game_sweep(tournament_id)
+    if "error" in result:
+        return jsonify(result), 404
+    return jsonify(result)
+
+
+# Start background monitor
+threading.Thread(target=_pre_game_monitor, daemon=True).start()
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
     app.run(host="0.0.0.0", port=port, debug=False)
