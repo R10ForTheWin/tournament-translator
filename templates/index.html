@@ -1700,6 +1700,21 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
   const _seenIds = new Set();
   allGames = allGames.filter(g => g.game_id && !_seenIds.has(g.game_id) && _seenIds.add(g.game_id));
 
+  // Structural sanity check: for WPL tournaments, game_nums should be sequential (1, 2, 3…).
+  // High or non-sequential numbers indicate the wpl_bracket tree was null and the fallback
+  // played+upcoming list is being used — which includes both win-path and lose-path games.
+  if (tournamentId && tournamentId.startsWith('futures')) {
+    const nums = allGames.map(g => g.game_num || 1).filter(Boolean);
+    const maxNum = nums.length ? Math.max(...nums) : 0;
+    if (maxNum > 7) {
+      console.warn(
+        `[bracket-struct] ${team} | ${tournamentId}: game_num reaches ${maxNum} — ` +
+        `wpl_bracket tree likely returned empty; frontend fell back to raw chronological ` +
+        `game_nums (both win-path and lose-path). Fix: check [bracket-struct] logs in Railway.`
+      );
+    }
+  }
+
   const vw = window.innerWidth;
   const CARD_W = vw >= 1100 ? 480 : vw >= 860 ? 420 : 340;
   const STEP   = CARD_W + 80;

@@ -320,7 +320,7 @@ def _team_sort_key(team: dict):
 # ── Game helpers ───────────────────────────────────────────────────────────────
 
 _PREFIX_RE = re.compile(
-    r"^(?:\d+(?:st|nd|rd|th)[A-Z]-|[A-Z]\d+\([^)]+\)-?|[WL]#[^-\s]+-?|[A-Z]\d+\s*-\s*|\d+\s*-\s*)(.*)",
+    r"^(?:\d+(?:st|nd|rd|th)[A-Z]-|[A-Z]\d+\s*\([^)]+\)\s*-\s*|[WL]#[^-\s]+-?|[A-Z]\d+\s*-\s*|\d+\s*-\s*)(.*)",
     re.IGNORECASE,
 )
 
@@ -2052,6 +2052,69 @@ _SLOT_LIKE_RE = re.compile(
     re.IGNORECASE,
 )
 
+
+def _check_bracket_structure(team: str, tree: list) -> list[str]:
+    """Deterministic structural assertions on the WPL bracket tree. Never calls an LLM.
+
+    These checks catch bugs the LLM judge cannot see — specifically:
+      - Empty tree  → wpl_bracket stays null → frontend falls back to raw chronological
+        game_nums which include both win-path and lose-path games, producing non-sequential
+        column jumps like GAME 2 → GAME 6 → GAME 7.
+      - Prelim-only tree (1 node) → WIN GM # expansion failed; only the prelim shows.
+      - Dangling next_ids → broken tree linkage; BFS will silently drop those games.
+    """
+    issues = []
+    if not tree:
+        issues.append(
+            "tree is empty — wpl_bracket will be null; frontend falls back to "
+            "chronological game_nums including both win-path and lose-path games, "
+            "producing non-sequential GAME labels (e.g. GAME 2 → GAME 6 → GAME 7)"
+        )
+        return issues
+
+    if len(tree) == 1:
+        issues.append(
+            f"tree has only 1 node ({tree[0]['game_id']}) — prelim only; "
+            "WIN GM # pool-phase expansion likely failed; check that div_games_for_tree "
+            "includes all-weekend games, not just the date-filtered subset"
+        )
+
+    roots = [n for n in tree if not n.get("src_game_id")]
+    if len(roots) != 1:
+        issues.append(
+            f"expected exactly 1 root node, found {len(roots)}: "
+            f"{[r['game_id'] for r in roots]}"
+        )
+
+    tree_ids = {n["game_id"] for n in tree}
+    dangling = {
+        nid
+        for n in tree
+        for nid in (n.get("win_next_ids") or []) + (n.get("lose_next_ids") or [])
+        if nid not in tree_ids
+    }
+    if dangling:
+        issues.append(f"dangling next_ids (referenced but not in tree): {sorted(dangling)}")
+
+    seen: set = set()
+    dupes: set = set()
+    for n in tree:
+        gid = n["game_id"]
+        if gid in seen:
+            dupes.add(gid)
+        seen.add(gid)
+    if dupes:
+        issues.append(f"duplicate game_ids in tree: {sorted(dupes)}")
+
+    if len(tree) > 10:
+        issues.append(
+            f"tree has {len(tree)} nodes — expected ≤10 for any WPL weekend format; "
+            "possible wrong anchor_date or infinite BFS expansion"
+        )
+
+    return issues
+
+
 def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
                            serialized_nodes: list = None) -> list:
     """Deterministic bracket integrity checks. Returns list of warning strings.
@@ -2131,7 +2194,8 @@ def api_games(tournament_id, team):
     if not excel:
         abort(404)
 
-    games    = _filter_by_dates(load_and_parse(excel), tournament_id)
+    _all_games = load_and_parse(excel)
+    games      = _filter_by_dates(_all_games, tournament_id)
 
     # Weekend reference date for scoping describe_slot standings lookups.
     # Prevents stale pool standings from previous weekends (pool letters repeat in WPL).
@@ -2308,9 +2372,13 @@ def api_games(tournament_id, team):
     wpl_bracket = None
     if tournament_id in WPL_TOURNAMENTS and my_games:
         tree_sheet = my_games[0]['sheet']
-        div_games_for_tree = [g for g in games if g['sheet'] == tree_sheet]
+        div_games_for_tree = [g for g in _all_games if g['sheet'] == tree_sheet]
         latest_team_date = max((g["date"] for g in my_games if g.get("date")), default=None)
         tree = _build_wpl_game_tree(team, div_games_for_tree, anchor_date=latest_team_date)
+        struct_issues = _check_bracket_structure(team, tree)
+        if struct_issues:
+            for _si in struct_issues:
+                print(f"[bracket-struct] {team!r} | {tournament_id}: {_si}", flush=True)
         if tree:
             # Serialize tree nodes: format dates/times, add opponent label
             def _serialize_tree_node(node, dg):
