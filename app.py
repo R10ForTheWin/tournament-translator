@@ -1188,18 +1188,31 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
             absorbing 'South Coast B' prelim games via substring team_matches."""
             return strip_prefix(slot).strip().upper() == team.upper()
 
+        def _is_pool_pos_slot(s: str) -> bool:
+            return bool(re.match(r'^[A-Z]\d+[-\s(]', s.strip(), re.IGNORECASE))
+
         prelim_nums: set[str] = set()
         for g in sorted_games:
             if not (g.get("date") and abs((g["date"] - anchor_date).days) <= 3):
                 continue
-            if _prelim_slot_match(g["white_team"]) or _prelim_slot_match(g["dark_team"]):
-                gid = g["game_id"]
-                if gid not in {x["game_id"] for x in explicit_games}:
-                    explicit_games.append(g)
-                    recent_explicit.append(g)
-                    n = _game_num(gid)
-                    if n:
-                        prelim_nums.add(n)
+            wt, dt = g["white_team"], g["dark_team"]
+            if not (_prelim_slot_match(wt) or _prelim_slot_match(dt)):
+                continue
+            # Skip pool-position slots the organiser filled in mid-tournament
+            # (e.g. "F3 (LOS GM #401) - ROSE BOWL"). Adding them to recent_explicit
+            # causes the downstream WIN/LOS GM # search to run against the wrong pool,
+            # and their collision-renamed game IDs (e.g. "18UB 389-B" → "389") would
+            # contaminate prelim_nums with a different team's prelim number.
+            matching = wt if _prelim_slot_match(wt) else dt
+            if _is_pool_pos_slot(matching):
+                continue
+            gid = g["game_id"]
+            if gid not in {x["game_id"] for x in explicit_games}:
+                explicit_games.append(g)
+                recent_explicit.append(g)
+                n = _game_num(gid)
+                if n:
+                    prelim_nums.add(n)
         # Check prelim result to pick the correct downstream path.
         # Pre-game (not yet played) → show WIN path as the planned scenario.
         # After a loss → follow LOS GM # consolation path instead.
@@ -2192,7 +2205,19 @@ def _derive_expected_bracket(team: str, div_games: list, anchor_date) -> dict:
         win_pool = pool_games
     else:
         # Prelim-path team: direct games are prelims; find WIN GM # pool games.
-        prelim_games = direct
+        # Mid-tournament the organiser fills team names into pool-position slots like
+        # "B3 (WIN GM #392) - LA JOLLA UNITED".  Those games appear in `direct` via
+        # _exact_match but are NOT prelims.  Filter them out so prelim_nums contains
+        # only the actual prelim game number, and remove pool-position games from
+        # seen_ids so the WIN GM # search below can still find them.
+        def _is_pool_position_game(g: dict) -> bool:
+            for s in (g["white_team"], g["dark_team"]):
+                if re.match(r'^[A-Z]\d+[-\s(]', s.strip(), re.IGNORECASE):
+                    return True
+            return False
+        prelim_games = [g for g in direct if not _is_pool_position_game(g)] or direct
+        pool_pos_ids = {g["game_id"] for g in direct if _is_pool_position_game(g)}
+        seen_ids -= pool_pos_ids   # allow WIN GM # search to find these games
         prelim_nums  = {_game_num(g["game_id"]) for g in prelim_games
                         if _game_num(g["game_id"])}
         win_pool = []
@@ -2413,9 +2438,17 @@ def _check_bracket_structure(team: str, tree: list,
             # than WIN GM #N), fall back to the lose path as ground truth.  This avoids
             # a spurious depth mismatch when the tree builder correctly populates the
             # lose-path games (the only traceable pool phase for such teams).
+            # Win path untraceable: pool uses relative L#N positions, not WIN GM #N.
+            # Only fall back to lose path as ground truth when:
+            #   - exactly 1 prelim game (multiple = organiser filled in pool names,
+            #     not a real prelim set; those games were already removed from prelim_ids)
+            #   - team did NOT win their prelim (a winner's untraceable L pool is a
+            #     known limitation, not a lose-path problem)
             win_path_missing = (not expected.get("win_pool_ids")
                                 and not expected.get("is_pool_seed")
-                                and expected.get("lose_pool_ids"))
+                                and expected.get("lose_pool_ids")
+                                and len(expected.get("prelim_ids", [])) == 1
+                                and prelim_result is not True)
             if win_path_missing:
                 on_lose_path = True
             exp_pool_ids  = (expected["lose_pool_ids"] if on_lose_path
