@@ -12,6 +12,8 @@ import re
 _POOL_SLOT_RE   = re.compile(r'^[A-Z]\d+-', re.IGNORECASE)
 _WL_SLOT_RE     = re.compile(r'^[WL]#',    re.IGNORECASE)
 _FINISH_SLOT_RE = re.compile(r'^\d+(?:st|nd|rd|th)[A-Z]-', re.IGNORECASE)
+# Seed-number slot (Format C / NJO): "8-DYNAMO", "15-680", "22-TROJAN"
+_SEED_NUM_RE    = re.compile(r'^\d+-\S', re.IGNORECASE)
 
 
 def _valid_slot(slot: str) -> bool:
@@ -29,7 +31,8 @@ def _valid_slot(slot: str) -> bool:
     s = slot.strip()
     if not s or len(s) < 2:
         return False
-    if _POOL_SLOT_RE.match(s) or _WL_SLOT_RE.match(s) or _FINISH_SLOT_RE.match(s):
+    if (_POOL_SLOT_RE.match(s) or _WL_SLOT_RE.match(s)
+            or _FINISH_SLOT_RE.match(s) or _SEED_NUM_RE.match(s)):
         return True
     return bool(re.search(r'[A-Za-z]', s))
 
