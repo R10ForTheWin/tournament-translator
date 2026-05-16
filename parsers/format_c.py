@@ -23,6 +23,30 @@ from datetime import datetime, date
 
 from parsers.normalize import normalize_team_slot as _normalize_team
 
+def _prettify_division(sheet_name: str) -> str:
+    """Convert a raw NJO sheet name to a readable division label.
+
+    '18U_F_Champ 47'       → '18U Girls Championship'
+    '16U_M_CHAMP-41 teams' → '16U Boys Championship'
+    '10U_C_Classic 24'     → '10U Co-Ed Classic'
+    '18U_M_Invite 24'      → '18U Boys Invite'
+    Returns the original name unchanged if pattern doesn't match.
+    """
+    s = sheet_name.strip()
+    age_m = re.match(r'(\d+)U', s, re.IGNORECASE)
+    if not age_m:
+        return sheet_name
+    age = age_m.group(1) + 'U'
+    gen_m = re.search(r'_([MFC])_', s, re.IGNORECASE)
+    gender = {'M': 'Boys', 'F': 'Girls', 'C': 'Co-Ed'}.get(
+        gen_m.group(1).upper(), '') if gen_m else ''
+    if   re.search(r'champ',   s, re.IGNORECASE): event = 'Championship'
+    elif re.search(r'classic', s, re.IGNORECASE): event = 'Classic'
+    elif re.search(r'invite',  s, re.IGNORECASE): event = 'Invite'
+    else:                                          event = ''
+    return ' '.join(p for p in [age, gender, event] if p)
+
+
 SKIP_SHEETS = {
     "Reference",
     "MASTER BY DIVISION",
@@ -238,7 +262,7 @@ def parse(wb) -> list[dict]:
                     "dark_team":   _normalize_slot(dark_s),
                     "dark_score":  dark_score,
                     "comments":    game_type,
-                    "division":    sheet_name,
+                    "division":    _prettify_division(sheet_name),
                     "sheet":       sheet_name,
                     "played":      white_score is not None and dark_score is not None,
                 })
