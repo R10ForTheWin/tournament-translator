@@ -1241,6 +1241,40 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
                             recent_explicit.append(g)
                             inferred_game_ids.add(g["game_id"])
                             break
+
+            # Slot-position follow-up: if LOS GM # pool games were found (directly or
+            # via fallback), scan for additional games by pool-position prefix (e.g. "C4").
+            # This catches Sunday games whose organizer filled in stale game-number
+            # references from a prior weekend instead of the correct current-weekend numbers.
+            if inferred_game_ids:
+                los_slot_pos: str | None = None
+                existing_ids = {x["game_id"] for x in explicit_games}
+                for g in explicit_games:
+                    if g["game_id"] not in inferred_game_ids:
+                        continue
+                    for slot in (g["white_team"], g["dark_team"]):
+                        lgm = re.search(r'\bLOS\s+GM\s+#(\d+)', slot.strip(), re.IGNORECASE)
+                        if lgm and str(int(lgm.group(1))) in prelim_nums:
+                            pm = re.match(r'^([A-Z]\d+)\s*[-\(]', slot.strip(), re.IGNORECASE)
+                            if pm:
+                                los_slot_pos = pm.group(1).upper()
+                                break
+                    if los_slot_pos:
+                        break
+                if los_slot_pos:
+                    for g in sorted_games:
+                        if g["game_id"] in existing_ids:
+                            continue
+                        if not (g.get("date") and abs((g["date"] - anchor_date).days) <= 3):
+                            continue
+                        for slot in (g["white_team"], g["dark_team"]):
+                            pm = re.match(r'^([A-Z]\d+)\s*[-\(]', slot.strip(), re.IGNORECASE)
+                            if pm and pm.group(1).upper() == los_slot_pos:
+                                explicit_games.append(g)
+                                recent_explicit.append(g)
+                                inferred_game_ids.add(g["game_id"])
+                                break
+
         if not recent_explicit:
             return []
 
