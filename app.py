@@ -717,12 +717,19 @@ def describe_slot(slot: str, division_games: list = None) -> str:
 
     if division_games:
         # W#N / L#N → resolve to actual winner/loser if game has been played
+        # Also handles WPL championship format: "WIN GM #N" / "LOS GM #N"
         wm = re.match(r'^([WL])#([^-\s]+)', slot, re.IGNORECASE)
-        if wm:
-            want_winner = wm.group(1).upper() == "W"
-            ref = re.search(r'(\d+)$', wm.group(2))
-            if ref:
-                ref_game = _game_by_num(str(int(ref.group(1))), division_games)
+        win_gm = re.search(r'\b(WIN|LOS)\s+GM\s+#(\d+)', slot, re.IGNORECASE) if not wm else None
+        if wm or win_gm:
+            if wm:
+                want_winner = wm.group(1).upper() == "W"
+                ref = re.search(r'(\d+)$', wm.group(2))
+                ref_num = str(int(ref.group(1))) if ref else None
+            else:
+                want_winner = win_gm.group(1).upper() == "WIN"
+                ref_num = str(int(win_gm.group(2)))
+            if ref_num:
+                ref_game = _game_by_num(ref_num, division_games)
                 if ref_game:
                     t1 = describe_slot(ref_game["white_team"], division_games)
                     t2 = describe_slot(ref_game["dark_team"], division_games)
@@ -1930,7 +1937,7 @@ def _run_bracket_llm_check(team: str, nodes: list, warnings: list) -> None:
         print(f"[bracket-judge] failed: {exc}")
 
 
-def _validate_wpl_bracket(team: str, nodes: list) -> list:
+def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None) -> list:
     """Deterministic bracket integrity checks. Returns list of warning strings.
     Fires a background Haiku diagnosis when issues are found."""
     if not nodes:
@@ -1960,6 +1967,24 @@ def _validate_wpl_bracket(team: str, nodes: list) -> list:
 
     if not non_placeholder:
         warnings.append("all bracket nodes are placeholders — no real games found")
+
+    # Championship completeness: if team has multiple upcoming games all on Saturday
+    # with no Sunday game in the bracket, flag it — Sunday data is likely missing.
+    if upcoming:
+        from datetime import date as _date
+        upcoming_dates = {g.get("date") for g in upcoming if g.get("date")}
+        node_dates    = {n.get("date") for n in nodes   if n.get("date")}
+        all_sat = upcoming_dates and all(
+            isinstance(d, _date) and d.weekday() == 5 for d in upcoming_dates
+        )
+        has_sun_node = any(
+            isinstance(d, _date) and d.weekday() == 6 for d in node_dates
+        )
+        if all_sat and len(upcoming_dates) >= 1 and not has_sun_node:
+            warnings.append(
+                f"all {len(upcoming)} upcoming game(s) are on Saturday with no Sunday "
+                f"node in bracket — Sunday placement data may be missing from spreadsheet"
+            )
 
     if warnings:
         print(f"[bracket-validate] {team}: {warnings}")
