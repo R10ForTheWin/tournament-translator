@@ -702,9 +702,11 @@ def _game_by_num(num: str, division_games: list):
 
 _PTS_SUFFIX_RE = re.compile(r'\s*-\s*\d+\s*PTS\.?\s*$', re.IGNORECASE)
 
-def describe_slot(slot: str, division_games: list = None) -> str:
+def describe_slot(slot: str, division_games: list = None, ref_date=None) -> str:
     """Return a human-readable opponent label.
-    With division_games, resolves bracket slots to actual team names using standings."""
+    With division_games, resolves bracket slots to actual team names using standings.
+    ref_date: when provided, scopes standings lookups to ±2 days to prevent stale
+    results from previous weekends (WPL pool letters repeat across weekends)."""
     slot = slot.strip()
     name = strip_prefix(slot)
     if name != slot and name:
@@ -712,10 +714,16 @@ def describe_slot(slot: str, division_games: list = None) -> str:
         name = _PTS_SUFFIX_RE.sub('', name).strip()
         # If strip_prefix left us with a W#/L# reference (e.g. "E1(4thB)L#7"), resolve it.
         if re.match(r'^[WL]#', name, re.IGNORECASE):
-            return describe_slot(name, division_games)
+            return describe_slot(name, division_games, ref_date)
         return name
 
     if division_games:
+        # Scope to current weekend when ref_date is provided — pool letters repeat
+        # across WPL weekends; without scoping, standings bleed in from prior weeks.
+        dg = ([g for g in division_games
+               if not g.get("date") or abs((g["date"] - ref_date).days) <= 2]
+              if ref_date else division_games)
+
         # W#N / L#N → resolve to actual winner/loser if game has been played
         # Also handles WPL championship format: "WIN GM #N" / "LOS GM #N"
         wm = re.match(r'^([WL])#([^-\s]+)', slot, re.IGNORECASE)
@@ -729,10 +737,10 @@ def describe_slot(slot: str, division_games: list = None) -> str:
                 want_winner = win_gm.group(1).upper() == "WIN"
                 ref_num = str(int(win_gm.group(2)))
             if ref_num:
-                ref_game = _game_by_num(ref_num, division_games)
+                ref_game = _game_by_num(ref_num, dg)
                 if ref_game:
-                    t1 = describe_slot(ref_game["white_team"], division_games)
-                    t2 = describe_slot(ref_game["dark_team"], division_games)
+                    t1 = describe_slot(ref_game["white_team"], dg)
+                    t2 = describe_slot(ref_game["dark_team"], dg)
                     if ref_game.get("played") and ref_game.get("white_score") is not None:
                         white_won = ref_game["white_score"] > ref_game["dark_score"]
                         resolved = (t1 if white_won else t2) if want_winner else (t2 if white_won else t1)
@@ -750,7 +758,7 @@ def describe_slot(slot: str, division_games: list = None) -> str:
             ordinal_m = re.search(r'(\d+(?:st|nd|rd|th))', slot, re.IGNORECASE)
             ordinal = ordinal_m.group(1) if ordinal_m else "?"
             if rank:
-                standings = _standings_for_group(group, division_games)
+                standings = _standings_for_group(group, dg)
                 if standings and len(standings) >= rank:
                     any_played = any(s["wins"] > 0 or s["losses"] > 0 for s in standings)
                     if any_played:
@@ -1163,6 +1171,10 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
     else:
         recent_explicit = explicit_games[-1:]
 
+    # Track games added via WIN GM # inference (not direct pool-slot match).
+    # These are conditional on winning the prelim and must be marked placeholder.
+    inferred_game_ids: set[str] = set()
+
     if not recent_explicit:
         # Current weekend uses seed-number format (e.g. "13 - TROJAN CARDINAL"),
         # not pool-slot format.  Find the prelim game(s) directly, then follow
@@ -1181,7 +1193,8 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
                     n = _game_num(gid)
                     if n:
                         prelim_nums.add(n)
-        # Add WIN GM # pool-phase games (Saturday pool game + Sunday pool game)
+        # Add WIN GM # pool-phase games (Saturday pool game + Sunday pool game).
+        # These are inferred — only happen if team wins the prelim.
         if prelim_nums:
             for g in sorted_games:
                 if g["game_id"] in {x["game_id"] for x in explicit_games}:
@@ -1193,6 +1206,7 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
                     if wgm and str(int(wgm.group(1))) in prelim_nums:
                         explicit_games.append(g)
                         recent_explicit.append(g)
+                        inferred_game_ids.add(g["game_id"])
                         break
         if not recent_explicit:
             return []
@@ -1325,11 +1339,15 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
     # e.g. Trojan Cardinal: Game 307 → Game 310 → Game 351 → placement TBD
     # ═══════════════════════════════════════════════════════════════════════
     else:
+        # For seed-number prelim roots, WIN GM # inferred games are placeholder
+        # until the prelim is won (team hasn't qualified for the pool yet).
+        prelim_won = _team_won(team, recent_explicit[0]) if inferred_game_ids else None
         prev_node = None
         for g in recent_explicit:
             if g["game_id"] in seen: continue
+            is_ph = (g["game_id"] in inferred_game_ids) and (prelim_won is not True)
             node = _make_node(g, prev_node["game_id"] if prev_node else None,
-                              None, False, "roundrobin")
+                              None, is_ph, "roundrobin")
             if prev_node:
                 # Same next game regardless of result (round-robin)
                 prev_node["win_next_ids"].append(g["game_id"])
@@ -1885,10 +1903,10 @@ def _result_str(game, team) -> str:
     if yours < opp:  return "loss"
     return "tie"
 
-def _next_summary(g, team, dg=None):
+def _next_summary(g, team, dg=None, ref_date=None):
     opp = g["dark_team"] if team_matches(g["white_team"], team) else g["white_team"]
     return {
-        "opponent": describe_slot(opp, dg),
+        "opponent": describe_slot(opp, dg, ref_date=ref_date),
         "date":     _fmt_date(g["date"]),
         "time":     _fmt_time(g["time"]),
         "location": g["location"],
@@ -2029,9 +2047,17 @@ def _run_bracket_llm_check(team: str, nodes: list, warnings: list) -> None:
         print(f"[bracket-judge] failed: {exc}")
 
 
-def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None) -> list:
+_SLOT_LIKE_RE = re.compile(
+    r'^(?:\d+(?:st|nd|rd|th)(?:\s+in\s+)?[A-Z]-|[A-Z]\d+[-\(]|[WL]#|WIN\s+GM|LOS\s+GM)',
+    re.IGNORECASE,
+)
+
+def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
+                           serialized_nodes: list = None) -> list:
     """Deterministic bracket integrity checks. Returns list of warning strings.
-    Fires a background Haiku diagnosis when issues are found."""
+    Fires a background Haiku diagnosis when issues are found.
+    serialized_nodes: the JSON-ready nodes with resolved 'opponent' strings,
+    used for data-quality checks (unresolved slots, stale names)."""
     if not nodes:
         return ["bracket is empty"]
 
@@ -2078,6 +2104,16 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None) -> list
                 f"node in bracket — Sunday placement data may be missing from spreadsheet"
             )
 
+    # Data-quality checks on serialized nodes (resolved opponent strings).
+    if serialized_nodes:
+        for sn in serialized_nodes:
+            opp = sn.get("opponent", "")
+            # Warn if opponent still looks like a raw slot string (resolution failed)
+            if opp and _SLOT_LIKE_RE.match(opp):
+                warnings.append(
+                    f"game {sn['game_id']}: opponent {opp!r} looks like an unresolved slot"
+                )
+
     if warnings:
         print(f"[bracket-validate] {team}: {warnings}")
         threading.Thread(
@@ -2096,6 +2132,11 @@ def api_games(tournament_id, team):
         abort(404)
 
     games    = _filter_by_dates(load_and_parse(excel), tournament_id)
+
+    # Weekend reference date for scoping describe_slot standings lookups.
+    # Prevents stale pool standings from previous weekends (pool letters repeat in WPL).
+    _meta = _tournament_meta(tournament_id)
+    _weekend_ref_date = _meta.get("date_start") if _meta else None
 
     sheet    = request.args.get("sheet")
     my_games = [g for g in games
@@ -2180,7 +2221,7 @@ def api_games(tournament_id, team):
             our_rec = trec.get(our_key)
             opp_rec = trec.get(opp_key)
 
-        opponent_label = describe_slot(opp_sl, dg)
+        opponent_label = describe_slot(opp_sl, dg, ref_date=_weekend_ref_date)
         # Skip games where the opponent resolves to our own team (W#N self-play artifact)
         if team_matches(opponent_label, team):
             continue
@@ -2211,7 +2252,7 @@ def api_games(tournament_id, team):
             base["result"] = result
             next_game = winner_next if result == "win" else loser_next if result == "loss" else None
             if next_game:
-                base["next"] = _next_summary(next_game, team, dg)
+                base["next"] = _next_summary(next_game, team, dg, ref_date=_weekend_ref_date)
             played_out.append(base)
         else:
             # Detect if this game is currently in progress (window: -15 min to +2 hr from start)
@@ -2228,9 +2269,9 @@ def api_games(tournament_id, team):
             scenarios = {}
             # Suppress a scenario if that game is already shown as its own card
             if winner_next and winner_next["game_id"] not in my_game_ids:
-                scenarios["win"]  = _next_summary(winner_next, team, dg)
+                scenarios["win"]  = _next_summary(winner_next, team, dg, ref_date=_weekend_ref_date)
             if loser_next and loser_next["game_id"] not in my_game_ids:
-                scenarios["lose"] = _next_summary(loser_next,  team, dg)
+                scenarios["lose"] = _next_summary(loser_next,  team, dg, ref_date=_weekend_ref_date)
             base["scenarios"] = scenarios if scenarios else None
             upcoming_out.append(base)
 
@@ -2281,19 +2322,19 @@ def api_games(tournament_id, team):
                 elif team_matches(node["dark_team"], team):
                     opp_sl, color = node["white_team"], "DARK"
                 else:
-                    t_w = describe_slot(node["white_team"], dg)
-                    t_d = describe_slot(node["dark_team"],  dg)
+                    t_w = describe_slot(node["white_team"], dg, ref_date=latest_team_date)
+                    t_d = describe_slot(node["dark_team"],  dg, ref_date=latest_team_date)
                     if team_matches(t_w, team):
                         opp_sl, color = node["dark_team"],  "WHITE"
                     elif team_matches(t_d, team):
                         opp_sl, color = node["white_team"], "DARK"
                     else:
                         opp_sl, color = node["white_team"], "DARK"
-                opp_name = describe_slot(opp_sl, dg)
+                opp_name = describe_slot(opp_sl, dg, ref_date=latest_team_date)
                 # Guard: if resolved opponent still equals our own team, flip slots
                 if team_matches(opp_name, team):
                     other_sl = node["white_team"] if opp_sl == node["dark_team"] else node["dark_team"]
-                    opp_name = describe_slot(other_sl, dg)
+                    opp_name = describe_slot(other_sl, dg, ref_date=latest_team_date)
                 is_current = False
                 # Placeholder games (wrong bracket path) are never "current" for this team
                 if not node.get("placeholder") and node.get("date") and node.get("time"):
@@ -2332,7 +2373,9 @@ def api_games(tournament_id, team):
                 return d
             wpl_bracket = [_serialize_tree_node(n, div_games_for_tree) for n in tree]
 
-    bracket_warnings = _validate_wpl_bracket(team, wpl_bracket) if wpl_bracket else []
+    bracket_warnings = (_validate_wpl_bracket(team, tree, upcoming=upcoming_out,
+                                               serialized_nodes=wpl_bracket)
+                        if wpl_bracket else [])
 
     our_team_name = team.title()
     if my_games:
