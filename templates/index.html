@@ -303,7 +303,8 @@
     .bracket-step { width: 340px; margin-bottom: 6px; }
     .bracket-day-header { display: inline-block; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.12em; color: #000; background: var(--gold); border-radius: 6px; padding: 5px 12px; margin: 14px 0 10px; }
     .bracket-step.first-step .bracket-day-header { margin-top: 4px; }
-    .bracket-game-num-header { font-size: 16px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); padding: 0 0 8px; text-align: center; }
+    .bracket-game-num-header { font-size: 16px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); padding: 0 0 2px; text-align: center; }
+    .bracket-day-header { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); padding: 0 0 8px; text-align: center; }
 
     /* ── WPL crossover game tree ── */
     .wpl-tree-wrap { padding: 0 0 32px; }
@@ -1759,6 +1760,16 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
       numHdr.className = 'bracket-game-num-header';
       numHdr.textContent = `Game ${gameNum}`;
       step.appendChild(numHdr);
+      // Day label under the game number — use earliest date in column
+      const earliestGame = stepGames.slice().sort((a, b) => _dayNum(a.date) - _dayNum(b.date))[0];
+      const colDate = earliestGame?.date;
+      if (colDate) {
+        const dayName = colDate.split(',')[0].trim(); // "Saturday" or "Sunday"
+        const dayHdr = document.createElement('div');
+        dayHdr.className = 'bracket-day-header';
+        dayHdr.textContent = dayName.toUpperCase();
+        step.appendChild(dayHdr);
+      }
     }
 
     // No-path first, then win, then lose; within path sort by time
