@@ -1053,7 +1053,7 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
     return extras
 
 
-def _build_wpl_game_tree(team: str, division_games: list) -> list:
+def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> list:
     """Build a WPL weekend game tree for a team.
 
     Handles two formats automatically:
@@ -1099,13 +1099,20 @@ def _build_wpl_game_tree(team: str, division_games: list) -> list:
         return []
 
     # Narrow to the most recent weekend cluster (WPL has 5 weekends on one sheet).
-    # Using all explicit games would root the tree in Weekend 1, not the current one.
-    latest_date = max(g["date"] for g in explicit_games if g.get("date")) if any(g.get("date") for g in explicit_games) else None
-    if latest_date:
+    # anchor_date: the latest date any game directly involves this team (including
+    # non-pool-slot formats like "13 - TROJAN CARDINAL"). If the team's most recent
+    # games use a format _POOL_SLOT_RE can't see, recent_explicit will be empty and
+    # we return [] rather than show a stale tree from an older weekend.
+    ref_date = anchor_date or (max(g["date"] for g in explicit_games if g.get("date"))
+                               if any(g.get("date") for g in explicit_games) else None)
+    if ref_date:
         recent_explicit = [g for g in explicit_games
-                           if g.get("date") and abs((g["date"] - latest_date).days) <= 3]
+                           if g.get("date") and abs((g["date"] - ref_date).days) <= 3]
     else:
         recent_explicit = explicit_games[-1:]
+
+    if not recent_explicit:
+        return []  # current weekend uses a slot format the tree builder can't represent
 
     root = recent_explicit[0]
     root_num = _game_num(root["game_id"])
@@ -2143,7 +2150,8 @@ def api_games(tournament_id, team):
     if tournament_id in WPL_TOURNAMENTS and my_games:
         tree_sheet = my_games[0]['sheet']
         div_games_for_tree = [g for g in games if g['sheet'] == tree_sheet]
-        tree = _build_wpl_game_tree(team, div_games_for_tree)
+        latest_team_date = max((g["date"] for g in my_games if g.get("date")), default=None)
+        tree = _build_wpl_game_tree(team, div_games_for_tree, anchor_date=latest_team_date)
         if tree:
             # Serialize tree nodes: format dates/times, add opponent label
             def _serialize_tree_node(node, dg):
