@@ -66,6 +66,16 @@
       .hero-logo { width: 560px; }
     }
     .gold-bar { height: 3px; background: var(--gold); }
+    #data-freshness-bar {
+      display: none;
+      text-align: center;
+      padding: 5px 16px 4px;
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+      background: var(--bg);
+    }
+    #data-freshness-bar.refreshing { color: var(--gold); }
 
     /* ── Subnav (sub-views only) ── */
     #subnav-wrap {
@@ -609,6 +619,7 @@
     </div>
   </div>
   <div class="gold-bar"></div>
+  <div id="data-freshness-bar"><span id="data-freshness-text"></span></div>
 </div>
 
 <main>
@@ -781,7 +792,11 @@ function showView(id) {
   const isHome = id === 'view-tournaments';
   document.getElementById('hero-wrap').style.display   = isHome ? '' : 'none';
   document.getElementById('subnav-wrap').style.display = isHome ? 'none' : '';
-  if (id !== 'view-games') document.getElementById('subnav-tabs').style.display = 'none';
+  if (id !== 'view-games') {
+    document.getElementById('subnav-tabs').style.display = 'none';
+    _stopRefreshTimers();
+    document.getElementById('data-freshness-bar').style.display = 'none';
+  }
 }
 
 function updateSubnav() {
@@ -1073,11 +1088,60 @@ function recordLine(g) {
 }
 
 // ── Games ──────────────────────────────────────────────────────────────────────
-async function loadGames(tournamentId, team, sheet, defaultView = 'bracket') {
+// ── Data freshness + auto-refresh ─────────────────────────────────────────
+let _refreshArgs    = null;   // [tournamentId, team, sheet] for background re-fetch
+let _fetchedEpochMs = null;   // when Google Sheets data was last downloaded
+let _autoRefreshTmr = null;
+let _freshnessTmr   = null;
+
+function _fmtAge(epochMs) {
+  const s = Math.floor((Date.now() - epochMs) / 1000);
+  if (s < 90)  return 'just now';
+  const m = Math.floor(s / 60);
+  return m === 1 ? '1 min ago' : `${m} min ago`;
+}
+
+function _updateFreshnessBar(refreshing = false) {
+  const bar = document.getElementById('data-freshness-bar');
+  const txt = document.getElementById('data-freshness-text');
+  if (!bar) return;
+  if (refreshing) {
+    bar.classList.add('refreshing');
+    txt.textContent = '↺ Updating…';
+  } else {
+    bar.classList.remove('refreshing');
+    txt.textContent = _fetchedEpochMs ? `↺ Updated ${_fmtAge(_fetchedEpochMs)}` : '';
+  }
+  bar.style.display = '';
+}
+
+function _stopRefreshTimers() {
+  if (_autoRefreshTmr) { clearInterval(_autoRefreshTmr); _autoRefreshTmr = null; }
+  if (_freshnessTmr)   { clearInterval(_freshnessTmr);   _freshnessTmr   = null; }
+}
+
+function _startRefreshTimers(tournamentId, team, sheet) {
+  _stopRefreshTimers();
+  _refreshArgs = [tournamentId, team, sheet];
+  // Tick every 30s to update "X min ago" without re-fetching
+  _freshnessTmr = setInterval(() => _updateFreshnessBar(), 30000);
+  // Re-fetch every 2 minutes so scores update automatically
+  _autoRefreshTmr = setInterval(async () => {
+    if (!_refreshArgs) return;
+    const view = document.querySelector('.view.active');
+    if (!view || view.id !== 'view-games') return;
+    _updateFreshnessBar(true);
+    await loadGames(..._refreshArgs, null, { silent: true });
+  }, 120000);
+}
+
+async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opts = {}) {
   const el = document.getElementById('games-content');
-  el.innerHTML = '<div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round"><circle cx="18" cy="18" r="15" stroke-width="2" stroke-dasharray="60 35" /></svg></div>';
-  showView('view-games');
-  updateSubnav();
+  if (!opts.silent) {
+    el.innerHTML = '<div class="spinner-wrap"><svg class="wp-spinner" viewBox="0 0 36 36" width="36" height="36" fill="none" stroke="var(--cardinal)" stroke-linecap="round"><circle cx="18" cy="18" r="15" stroke-width="2" stroke-dasharray="60 35" /></svg></div>';
+    showView('view-games');
+    updateSubnav();
+  }
 
   let data;
   try {
@@ -1085,9 +1149,18 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket') {
     if (!gamesRes.ok) throw new Error(`Server error ${gamesRes.status}`);
     data = await gamesRes.json();
   } catch(e) {
-    el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted)">This app is in beta — something went wrong loading games. If this keeps happening, shoot DJ a note on WhatsApp.</div>`;
+    if (!opts.silent) {
+      el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted)">This app is in beta — something went wrong loading games. If this keeps happening, shoot DJ a note on WhatsApp.</div>`;
+    }
+    _updateFreshnessBar(false);
     return;
   }
+
+  // Track when the source spreadsheet was last fetched from Google Sheets
+  if (data.cache_age_s != null) {
+    _fetchedEpochMs = Date.now() - (data.cache_age_s * 1000);
+  }
+
   el.innerHTML = '';
 
   if (!data.played.length && !data.upcoming.length) {
@@ -1190,6 +1263,10 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket') {
     const allGames = [...(data.played || []), ...(data.upcoming || [])];
     el.appendChild(buildBracketView(allGames, tournamentId, team, ourName));
   }
+
+  // Update freshness bar and start auto-refresh timers
+  _updateFreshnessBar(false);
+  _startRefreshTimers(tournamentId, team, sheet);
 
   // Live score polling — refresh every 45s for any in-progress games
   if (window._liveScoreInterval) clearInterval(window._liveScoreInterval);
