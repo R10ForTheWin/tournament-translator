@@ -1193,8 +1193,17 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
                     n = _game_num(gid)
                     if n:
                         prelim_nums.add(n)
-        # Add WIN GM # pool-phase games (Saturday pool game + Sunday pool game).
-        # These are inferred — only happen if team wins the prelim.
+        # Check prelim result to pick the correct downstream path.
+        # Pre-game (not yet played) → show WIN path as the planned scenario.
+        # After a loss → follow LOS GM # consolation path instead.
+        _prelim_result = (
+            _team_won(team, recent_explicit[0]) if recent_explicit else None
+        )
+        gm_pattern = (
+            r'\bLOS\s+GM\s+#(\d+)' if _prelim_result is False
+            else r'\bWIN\s+GM\s+#(\d+)'
+        )
+
         if prelim_nums:
             for g in sorted_games:
                 if g["game_id"] in {x["game_id"] for x in explicit_games}:
@@ -1202,7 +1211,7 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
                 if not (g.get("date") and abs((g["date"] - anchor_date).days) <= 3):
                     continue
                 for slot in (g["white_team"], g["dark_team"]):
-                    wgm = re.search(r'\bWIN\s+GM\s+#(\d+)', slot.strip(), re.IGNORECASE)
+                    wgm = re.search(gm_pattern, slot.strip(), re.IGNORECASE)
                     if wgm and str(int(wgm.group(1))) in prelim_nums:
                         explicit_games.append(g)
                         recent_explicit.append(g)
@@ -1223,15 +1232,15 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
         if m and team_matches(m.group(3), team):
             pool_group = m.group(1).upper()
             break
-    # Fallback: extract pool letter from a WIN GM # game in recent_explicit
-    # (e.g. "E2 (WIN GM #399) -" in game 18UB 403 → pool letter "E")
+    # Fallback: extract pool letter from WIN or LOS GM # game in recent_explicit.
+    # Handles both the win path (E pool) and the lose/consolation path (F pool).
     if pool_group is None and root_num:
         for g in recent_explicit:
             if g["game_id"] == root["game_id"]:
                 continue
             for slot in (g["white_team"], g["dark_team"]):
                 s = slot.strip()
-                wgm = re.search(r'\bWIN\s+GM\s+#(\d+)', s, re.IGNORECASE)
+                wgm = re.search(r'\b(?:WIN|LOS)\s+GM\s+#(\d+)', s, re.IGNORECASE)
                 if wgm and str(int(wgm.group(1))) == root_num:
                     pm = re.match(r'^([A-Z])', s, re.IGNORECASE)
                     if pm:
@@ -1339,13 +1348,14 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
     # e.g. Trojan Cardinal: Game 307 → Game 310 → Game 351 → placement TBD
     # ═══════════════════════════════════════════════════════════════════════
     else:
-        # For seed-number prelim roots, WIN GM # inferred games are placeholder
-        # until the prelim is won (team hasn't qualified for the pool yet).
-        prelim_won = _team_won(team, recent_explicit[0]) if inferred_game_ids else None
+        # Inferred pool games (win or lose path) are placeholder only while the
+        # prelim hasn't been played.  Once it's decided — either way — the path
+        # is confirmed and those games are no longer hypothetical.
+        prelim_decided = _team_won(team, recent_explicit[0]) if inferred_game_ids else None
         prev_node = None
         for g in recent_explicit:
             if g["game_id"] in seen: continue
-            is_ph = (g["game_id"] in inferred_game_ids) and (prelim_won is not True)
+            is_ph = (g["game_id"] in inferred_game_ids) and (prelim_decided is None)
             node = _make_node(g, prev_node["game_id"] if prev_node else None,
                               None, is_ph, "roundrobin")
             if prev_node:
@@ -2153,20 +2163,61 @@ def _derive_expected_bracket(team: str, div_games: list, anchor_date) -> dict:
                         seen_ids.add(g["game_id"])
                     break
 
-    # Expected depth: unique time slots across all rounds, with placement alternatives
-    # counted as 1 (the team plays exactly one of the N options).
-    prelim_slots   = len({(g["date"], g["time"]) for g in prelim_games})
-    pool_slots     = len({(g["date"], g["time"]) for g in win_pool})
-    placement_slot = 1 if placement else 0
-    expected_depth = prelim_slots + pool_slots + placement_slot
+    # ── Step 4 (prelim-path teams only): trace the lose / consolation path ───
+    # Use a fresh seen set so win-path games don't block lose-path discovery.
+    lose_pool: list = []
+    lose_pool_letter: str | None = None
+    lose_placement: list = []
+
+    if prelim_games:
+        lose_seen = {g["game_id"] for g in prelim_games}
+        for g in div_games:
+            if g["game_id"] in lose_seen or not _within(g):
+                continue
+            for slot in (g["white_team"], g["dark_team"]):
+                lgm = re.search(r'\bLOS\s+GM\s+#(\d+)', slot, re.IGNORECASE)
+                if lgm and str(int(lgm.group(1))) in prelim_nums:
+                    lose_pool.append(g)
+                    lose_seen.add(g["game_id"])
+                    if not lose_pool_letter:
+                        pm = re.match(r'^([A-Z])', slot.strip(), re.IGNORECASE)
+                        if pm:
+                            lose_pool_letter = pm.group(1).upper()
+                    break
+
+        if lose_pool_letter:
+            for g in div_games:
+                if g["game_id"] in lose_seen or not _within(g):
+                    continue
+                for slot in (g["white_team"], g["dark_team"]):
+                    fm = _FINISH_SLOT_RE.match(slot.strip())
+                    if fm and fm.group(1).upper() == lose_pool_letter:
+                        if _game_num(g["game_id"]):
+                            lose_placement.append(g)
+                            lose_seen.add(g["game_id"])
+                        break
+
+    # ── Compute expected depths ────────────────────────────────────────────
+    prelim_slots      = len({(g["date"], g["time"]) for g in prelim_games})
+    pool_slots        = len({(g["date"], g["time"]) for g in win_pool})
+    placement_slot    = 1 if placement else 0
+    expected_depth    = prelim_slots + pool_slots + placement_slot
+
+    lose_pool_slots      = len({(g["date"], g["time"]) for g in lose_pool})
+    lose_placement_slot  = 1 if lose_placement else 0
+    lose_expected_depth  = prelim_slots + lose_pool_slots + lose_placement_slot
 
     return {
-        "prelim_ids":     [g["game_id"] for g in prelim_games],
-        "win_pool_ids":   [g["game_id"] for g in win_pool],
-        "placement_ids":  [g["game_id"] for g in placement],
-        "expected_depth": expected_depth,
-        "pool_letter":    pool_letter,
-        "is_pool_seed":   bool(pool_letter and not prelim_games),
+        "prelim_ids":          [g["game_id"] for g in prelim_games],
+        "win_pool_ids":        [g["game_id"] for g in win_pool],
+        "placement_ids":       [g["game_id"] for g in placement],
+        "expected_depth":      expected_depth,
+        "pool_letter":         pool_letter,
+        "lose_pool_ids":       [g["game_id"] for g in lose_pool],
+        "lose_placement_ids":  [g["game_id"] for g in lose_placement],
+        "lose_pool_letter":    lose_pool_letter,
+        "lose_expected_depth": lose_expected_depth,
+        "is_pool_seed":        bool(pool_letter and not prelim_games),
     }
 
 
@@ -2254,48 +2305,74 @@ def _check_bracket_structure(team: str, tree: list,
     if div_games and anchor_date:
         expected = _derive_expected_bracket(team, div_games, anchor_date)
         if expected:
-            exp_depth = expected["expected_depth"]
+            # Determine which path the tree should reflect.
+            # Prelim not played → show win path (planned).  Won → win path confirmed.
+            # Lost → lose/consolation path.  Pool-seed teams have no prelim.
+            prelim_result: bool | None = None
+            if expected.get("prelim_ids") and tree:
+                root = next((n for n in tree if not n.get("src_game_id")), None)
+                if root:
+                    prelim_result = _team_won(team, root)
 
-            # Compute actual tree depth: number of unique sequential rounds.
-            # Placement alternatives share a depth level — count unique (date, time) slots
-            # excluding alternatives (nodes whose win/lose both point back to same parent).
-            # Simpler proxy: unique (date, time) combos across ALL tree nodes, where
-            # multiple alternatives at the same slot still count as 1.
-            tree_slots = {}  # (date, time) → count
+            on_lose_path  = (prelim_result is False)
+            exp_pool_ids  = (expected["lose_pool_ids"] if on_lose_path
+                             else expected["win_pool_ids"])
+            exp_plac_ids  = (expected["lose_placement_ids"] if on_lose_path
+                             else expected["placement_ids"])
+            exp_depth     = (expected["lose_expected_depth"] if on_lose_path
+                             else expected["expected_depth"])
+
+            # Unique sequential rounds: unique (date, time) slots in tree,
+            # with placement alternatives (different times, mutually exclusive)
+            # counted as just 1 round.
+            tree_slots: dict = {}
             for n in tree:
                 key = (n.get("date"), n.get("time"))
                 if key[0]:
                     tree_slots[key] = tree_slots.get(key, 0) + 1
-            # Placement alternatives are multiple nodes at the SAME time as each other —
-            # but they're at DIFFERENT times (e.g. 12PM, 1PM, 2PM). Each is mutually
-            # exclusive. Count them as 1 slot total.
-            # Heuristic: nodes with no children (leaf nodes) that share the same parent
-            # all count as 1. Simply: unique (date, time) of non-root nodes minus the
-            # count above expected minus 1 for alternatives padding.
-            # Easier: just compare against expected_depth ± 1 tolerance for alternatives.
             actual_unique_slot_count = len(tree_slots)
-            # Placement alternatives inflate unique slots (3 options = 3 different times).
-            # Adjust: actual depth = unique slots - (placement count - 1).
-            placement_in_tree = len(expected["placement_ids"])
+            placement_in_tree = len(exp_plac_ids)
             adjusted_depth = actual_unique_slot_count - max(0, placement_in_tree - 1)
 
             if adjusted_depth != exp_depth:
+                path_label = "lose" if on_lose_path else "win"
                 issues.append(
-                    f"schedule expects {exp_depth} sequential round(s) "
+                    f"schedule expects {exp_depth} sequential round(s) on {path_label} path "
                     f"(prelim={len(expected['prelim_ids'])}, "
-                    f"pool={len(expected['win_pool_ids'])}, "
-                    f"placement=1 of {len(expected['placement_ids'])}), "
+                    f"pool={len(exp_pool_ids)}, "
+                    f"placement=1 of {len(exp_plac_ids)}), "
                     f"but tree has {adjusted_depth} unique rounds "
                     f"({actual_unique_slot_count} raw slots, "
-                    f"{placement_in_tree} placement options)"
+                    f"{placement_in_tree} placement options in tree)"
                 )
 
-            # All win-path schedule games should appear in the tree
+            # All schedule games for the active path should appear in the tree
             tree_ids_all = {n["game_id"] for n in tree}
-            for gid in expected["prelim_ids"] + expected["win_pool_ids"]:
+            for gid in expected["prelim_ids"] + exp_pool_ids:
                 if gid not in tree_ids_all:
+                    path_label = "lose" if on_lose_path else "win"
                     issues.append(
-                        f"schedule game {gid!r} is on the win path but missing from tree"
+                        f"schedule game {gid!r} is on the {path_label} path "
+                        f"but missing from tree"
+                    )
+
+            # Lose path must exist in the schedule for prelim-path teams that use
+            # WIN GM # format.  Teams using W#/L# FORMAT A bracket crossover have
+            # their consolation in L# slots (not LOS GM #) — don't warn for those.
+            uses_win_gm_format = bool(expected.get("win_pool_ids"))
+            if (expected.get("prelim_ids") and not expected.get("is_pool_seed")
+                    and uses_win_gm_format):
+                if not expected["lose_pool_ids"]:
+                    issues.append(
+                        f"lose path (LOS GM # consolation games) not found in schedule "
+                        f"for prelim game(s) {expected['prelim_ids']} — "
+                        f"if team loses the prelim, the app will show only 1 game"
+                    )
+                elif expected["lose_expected_depth"] != expected["expected_depth"]:
+                    issues.append(
+                        f"unbalanced paths: win depth={expected['expected_depth']} "
+                        f"vs lose depth={expected['lose_expected_depth']} — "
+                        f"one path has fewer games than the other"
                     )
 
             # Saturday AND Sunday should both be present
