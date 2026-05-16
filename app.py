@@ -1098,7 +1098,16 @@ def _build_wpl_game_tree(team: str, division_games: list) -> list:
     if not explicit_games:
         return []
 
-    root = explicit_games[0]
+    # Narrow to the most recent weekend cluster (WPL has 5 weekends on one sheet).
+    # Using all explicit games would root the tree in Weekend 1, not the current one.
+    latest_date = max(g["date"] for g in explicit_games if g.get("date")) if any(g.get("date") for g in explicit_games) else None
+    if latest_date:
+        recent_explicit = [g for g in explicit_games
+                           if g.get("date") and abs((g["date"] - latest_date).days) <= 3]
+    else:
+        recent_explicit = explicit_games[-1:]
+
+    root = recent_explicit[0]
     root_num = _game_num(root["game_id"])
     if not root_num:
         return []
@@ -1132,15 +1141,21 @@ def _build_wpl_game_tree(team: str, division_games: list) -> list:
     # ── 3. Finish-slot games for this pool group ─────────────────────────────
     explicit_ids = {x["game_id"] for x in explicit_games}
     bracket_ids  = {g["game_id"] for g in [win_sat_game, lose_sat_game] if g}
+    root_date    = root.get("date")
     sunday_by_rank = {}   # rank(int) → [game, ...]
     if pool_group:
         for g in sorted_games:
             if g["game_id"] in explicit_ids | bracket_ids:
                 continue
+            # Only look within the same weekend — pool letters repeat across WPL weekends
+            if root_date and g.get("date") and abs((g["date"] - root_date).days) > 3:
+                continue
             for slot in (g["white_team"], g["dark_team"]):
                 s = slot.strip()
                 fm = _FINISH_SLOT_RE.match(s)
                 if fm and fm.group(1).upper() == pool_group:
+                    if _game_num(g["game_id"]) is None:
+                        break  # skip embedded standings rows
                     rank_m = re.search(r'^(\d+)', s)
                     if rank_m:
                         sunday_by_rank.setdefault(int(rank_m.group(1)), []).append(g)
@@ -1205,7 +1220,7 @@ def _build_wpl_game_tree(team: str, division_games: list) -> list:
     # ═══════════════════════════════════════════════════════════════════════
     else:
         prev_node = None
-        for g in explicit_games:
+        for g in recent_explicit:
             if g["game_id"] in seen: continue
             node = _make_node(g, prev_node["game_id"] if prev_node else None,
                               None, False, "roundrobin")
@@ -1219,7 +1234,7 @@ def _build_wpl_game_tree(team: str, division_games: list) -> list:
         # After all round-robin games, one finish-slot placement game
         if prev_node and pool_group:
             # Determine actual finish if all explicit games are played
-            all_played = all(g.get("white_score") is not None for g in explicit_games)
+            all_played = all(g.get("white_score") is not None for g in recent_explicit)
             if all_played:
                 standings = _standings_for_group(pool_group, division_games)
                 rank = next((i + 1 for i, s in enumerate(standings)
