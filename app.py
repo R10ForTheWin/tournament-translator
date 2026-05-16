@@ -1224,6 +1224,23 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
                         recent_explicit.append(g)
                         inferred_game_ids.add(g["game_id"])
                         break
+            # If WIN GM # found nothing and result is unknown, fall back to LOS GM #.
+            # Some pools reference winners by relative position (L#1, L#2) rather than
+            # WIN GM #N, making the win path untraceable from the prelim.  The lose
+            # path uses LOS GM #N and IS traceable — show it as the planned scenario.
+            if not inferred_game_ids and _prelim_result is None:
+                for g in sorted_games:
+                    if g["game_id"] in {x["game_id"] for x in explicit_games}:
+                        continue
+                    if not (g.get("date") and abs((g["date"] - anchor_date).days) <= 3):
+                        continue
+                    for slot in (g["white_team"], g["dark_team"]):
+                        lgm = re.search(r'\bLOS\s+GM\s+#(\d+)', slot.strip(), re.IGNORECASE)
+                        if lgm and str(int(lgm.group(1))) in prelim_nums:
+                            explicit_games.append(g)
+                            recent_explicit.append(g)
+                            inferred_game_ids.add(g["game_id"])
+                            break
         if not recent_explicit:
             return []
 
@@ -2202,6 +2219,32 @@ def _derive_expected_bracket(team: str, div_games: list, anchor_date) -> dict:
                             lose_pool_letter = pm.group(1).upper()
                     break
 
+        # After the LOS GM # search, also scan by pool-position slot (e.g. "C4")
+        # to catch Sunday games whose organizer filled in stale game numbers from a
+        # prior weekend instead of the correct current-weekend numbers.
+        if lose_pool:
+            lose_slot_pos: str | None = None
+            for g in lose_pool:
+                for slot in (g["white_team"], g["dark_team"]):
+                    lgm = re.search(r'\bLOS\s+GM\s+#(\d+)', slot, re.IGNORECASE)
+                    if lgm and str(int(lgm.group(1))) in prelim_nums:
+                        pm = re.match(r'^([A-Z]\d+)\s*[-\(]', slot.strip(), re.IGNORECASE)
+                        if pm:
+                            lose_slot_pos = pm.group(1).upper()
+                            break
+                if lose_slot_pos:
+                    break
+            if lose_slot_pos:
+                for g in div_games:
+                    if g["game_id"] in lose_seen or not _within(g):
+                        continue
+                    for slot in (g["white_team"], g["dark_team"]):
+                        pm = re.match(r'^([A-Z]\d+)\s*[-\(]', slot.strip(), re.IGNORECASE)
+                        if pm and pm.group(1).upper() == lose_slot_pos:
+                            lose_pool.append(g)
+                            lose_seen.add(g["game_id"])
+                            break
+
         if lose_pool_letter:
             for g in div_games:
                 if g["game_id"] in lose_seen or not _within(g):
@@ -2332,6 +2375,15 @@ def _check_bracket_structure(team: str, tree: list,
                     prelim_result = _team_won(team, root)
 
             on_lose_path  = (prelim_result is False)
+            # If the WIN path is untraceable (pool uses relative L#N positions rather
+            # than WIN GM #N), fall back to the lose path as ground truth.  This avoids
+            # a spurious depth mismatch when the tree builder correctly populates the
+            # lose-path games (the only traceable pool phase for such teams).
+            win_path_missing = (not expected.get("win_pool_ids")
+                                and not expected.get("is_pool_seed")
+                                and expected.get("lose_pool_ids"))
+            if win_path_missing:
+                on_lose_path = True
             exp_pool_ids  = (expected["lose_pool_ids"] if on_lose_path
                              else expected["win_pool_ids"])
             exp_plac_ids  = (expected["lose_placement_ids"] if on_lose_path
