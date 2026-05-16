@@ -39,10 +39,12 @@ from app import (
 
 _WPL_KEYWORD = "futures wpl"
 _TOURNAMENT_KEYWORDS = {
-    "kap7-intl":      "kap7 international",
-    "kap7-cup":       "kap7 cup",
-    "turbo-cup":      "turbo",
-    "newport-invite": "newport",
+    "kap7-intl":       "kap7 international",
+    "kap7-cup":        "kap7 cup",
+    "turbo-cup":       "turbo",
+    "newport-invite":  "newport",
+    "jo-quals":        "jo qual",
+    "junior-olympics": "junior olympics",
 }
 
 _WPL_LOCAL_FILENAME = (
