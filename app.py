@@ -2792,18 +2792,22 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
 
 
 def _last_meeting(team: str, opponent: str, all_games: list,
-                  before_date=None) -> dict | None:
+                  before_date=None, sheet: str = None) -> dict | None:
     """Return the most recent played game between team and opponent.
 
-    Searches all_games (unfiltered, all weekends) for a played game where
-    both teams appear.  before_date excludes games on or after that date so
-    the current game isn't counted as its own last meeting.
+    Searches all_games for a played game where both teams appear.
+    sheet: if provided, restricts search to that division sheet so a 16u Boys
+    lookup doesn't surface 12u Boys results for the same team name.
+    before_date excludes games on or after that date so the current game
+    isn't counted as its own last meeting.
     """
     if not opponent or _SLOT_LIKE_RE.match(opponent):
         return None  # opponent is TBD / unresolved slot — nothing to look up
     best = None
     for g in all_games:
         if not g.get("played"):
+            continue
+        if sheet and g.get("sheet") != sheet:
             continue
         if before_date and g.get("date") and g["date"] >= before_date:
             continue
@@ -2986,7 +2990,8 @@ def api_games(tournament_id, team):
                 scenarios["lose"] = _next_summary(loser_next,  team, dg, ref_date=_weekend_ref_date)
             base["scenarios"] = scenarios if scenarios else None
             base["last_meeting"] = _last_meeting(team, opponent_label, _all_games,
-                                                  before_date=g.get("date"))
+                                                  before_date=g.get("date"),
+                                                  sheet=g.get("sheet"))
             upcoming_out.append(base)
 
     placement = _infer_placement(played_out)
@@ -3095,7 +3100,7 @@ def api_games(tournament_id, team):
                 d["result"]    = _result_str(node, team)
             if not node.get("played"):
                 d["last_meeting"] = _last_meeting(
-                    team, opp_name, _all_games, before_date=node.get("date"))
+                    team, opp_name, dg, before_date=node.get("date"))
             if live:
                 d["live_score"] = live
             return d
