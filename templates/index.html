@@ -1805,6 +1805,16 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
 
     const hasScenarios    = ordered.some(g => g.path === 'win' || g.path === 'lose');
     const hasAlternatives = ordered.some(g => g.is_alternative);
+    const allPlaceholder  = ordered.length > 1 && ordered.every(g => g.placeholder !== false);
+
+    // When all options are placeholders (pool result still unknown), say so clearly
+    // so parents know this is expected, not an app error.
+    if (hasAlternatives && allPlaceholder) {
+      const note = document.createElement('div');
+      note.style.cssText = 'font-size:11px;color:var(--muted);text-align:center;padding:0 4px 10px;letter-spacing:0.03em;line-height:1.45;';
+      note.textContent = 'Pool results pending · one of these games will be confirmed automatically';
+      step.appendChild(note);
+    }
 
     let lastPath = undefined; // tracks current path group for column-level banners
 
