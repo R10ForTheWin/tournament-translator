@@ -1115,8 +1115,7 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
     return extras
 
 
-def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None,
-                          live_scores: dict = None) -> list:
+def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> list:
     """Build a WPL weekend game tree for a team.
 
     Handles two formats automatically:
@@ -1446,81 +1445,26 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None,
 
         # After all round-robin games, one finish-slot placement game
         if prev_node and pool_group:
-            # Determine actual finish if all explicit games are played.
-            # Also accept live-score entries (entered by parents during the game)
-            # as proof that a game has been played, even before the organiser
-            # enters the official score in the spreadsheet.
-            def _is_played(g):
-                if g.get("white_score") is not None:
-                    return True
-                if live_scores and live_scores.get(g["game_id"]):
-                    return True
-                return False
-
-            all_played = all(_is_played(g) for g in recent_explicit)
+            # Determine actual finish using only official scores from the spreadsheet.
+            # Parent-entered live scores are display-only and not used here.
+            all_played = all(g.get("white_score") is not None for g in recent_explicit)
             if all_played:
-                # Build an augmented standings view: start from schedule scores,
-                # then overlay any live-score wins/losses so we get the right rank
-                # even when the organiser hasn't entered official scores yet.
                 standings = _standings_for_group(pool_group, division_games)
-                if live_scores:
-                    # Re-score games where the sheet has no official score yet
-                    for g in recent_explicit:
-                        if g.get("white_score") is not None:
-                            continue  # already official
-                        ls = live_scores.get(g["game_id"])
-                        if not ls:
-                            continue
-                        ws, ds = ls.get("our_score", 0), ls.get("opp_score", 0)
-                        # Determine which slot is "our" team
-                        if team_matches(g["white_team"], team):
-                            our_s, opp_s = ws, ds
-                            our_name = strip_prefix(g["white_team"]).strip().upper()
-                            opp_name = strip_prefix(g["dark_team"]).strip().upper()
-                        else:
-                            our_s, opp_s = ds, ws
-                            our_name = strip_prefix(g["dark_team"]).strip().upper()
-                            opp_name = strip_prefix(g["white_team"]).strip().upper()
-                        # Patch standings in-place for this game
-                        for entry in standings:
-                            n = entry["team"].upper()
-                            if n == our_name:
-                                if our_s > opp_s:   entry["wins"]   += 1
-                                else:               entry["losses"] += 1
-                            elif n == opp_name:
-                                if opp_s > our_s:   entry["wins"]   += 1
-                                else:               entry["losses"] += 1
-                    standings.sort(key=lambda s: (-s["wins"], -(s.get("gf",0)-s.get("ga",0))))
-
                 rank = next((i + 1 for i, s in enumerate(standings)
                              if team_matches(s["team"], team)), None)
-                # Fallback: if standings can't identify the team (common when pool
-                # opponents use composite slots like "H2 (WIN GM #410) - SOUTH COAST"),
-                # infer rank from the team's own win/loss record in recent pool games.
+                # Fallback: standings can't identify the team when pool opponents use
+                # composite slots (e.g. "H2 (WIN GM #410) - SOUTH COAST").  Infer rank
+                # directly from the team's win/loss record in their pool games.
                 if rank is None and recent_explicit:
-                    wins = losses = 0
-                    for g in recent_explicit:
-                        ws = g.get("white_score")
-                        ds = g.get("dark_score")
-                        if ws is None and live_scores:
-                            ls = live_scores.get(g["game_id"])
-                            if ls:
-                                if team_matches(g["white_team"], team):
-                                    ws, ds = ls.get("our_score", 0), ls.get("opp_score", 0)
-                                else:
-                                    ds, ws = ls.get("our_score", 0), ls.get("opp_score", 0)
-                        if ws is not None and ds is not None:
-                            if team_matches(g["white_team"], team):
-                                if ws > ds: wins += 1
-                                else:       losses += 1
-                            else:
-                                if ds > ws: wins += 1
-                                else:       losses += 1
-                    n_games = len(recent_explicit)
-                    worst = max(sunday_by_rank.keys()) if sunday_by_rank else n_games
-                    if   wins == n_games:              rank = 1
-                    elif losses == n_games:            rank = worst
-                    elif wins > 0 and losses > 0:      rank = 2  # middle finish
+                    wins   = sum(1 for g in recent_explicit
+                                 if g.get("white_score") is not None
+                                 and (( team_matches(g["white_team"], team) and g["white_score"] > g["dark_score"])
+                                   or (not team_matches(g["white_team"], team) and g["dark_score"] > g["white_score"])))
+                    losses = len(recent_explicit) - wins
+                    worst  = max(sunday_by_rank.keys()) if sunday_by_rank else len(recent_explicit)
+                    if   wins == len(recent_explicit): rank = 1
+                    elif losses == len(recent_explicit): rank = worst
+                    else:                              rank = 2
                 placement_games = [(pg, rank) for pg in sunday_by_rank.get(rank, [])] if rank else []
             else:
                 # Show all possible placement games as placeholders, preserving rank label
@@ -2963,15 +2907,7 @@ def api_games(tournament_id, team):
         tree_sheet = my_games[0]['sheet']
         div_games_for_tree = [g for g in _all_games if g['sheet'] == tree_sheet]
         latest_team_date = max((g["date"] for g in my_games if g.get("date")), default=None)
-        # Pass live scores so the tree can collapse to the correct Sunday
-        # placement game even when the organiser hasn't entered official scores yet.
-        live_scores_for_team = {
-            gid: _LIVE_SCORES[(tournament_id, gid)]
-            for gid in (g["game_id"] for g in div_games_for_tree)
-            if (tournament_id, gid) in _LIVE_SCORES
-        }
-        tree = _build_wpl_game_tree(team, div_games_for_tree, anchor_date=latest_team_date,
-                                     live_scores=live_scores_for_team or None)
+        tree = _build_wpl_game_tree(team, div_games_for_tree, anchor_date=latest_team_date)
     elif tournament_id in _njo_tournaments and my_games:
         tree_sheet = my_games[0]['sheet']
         div_games_for_tree = [g for g in _all_games if g['sheet'] == tree_sheet]
