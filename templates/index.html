@@ -477,8 +477,6 @@
     .quarter-btn { flex: 1; padding: 7px 2px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 11px; font-weight: 700; cursor: pointer; text-align: center; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
     .quarter-btn.active { background: var(--gold); color: #000; border-color: var(--gold); }
     .live-footer { font-size: 10px; color: var(--muted); text-align: center; margin-top: 8px; opacity: 0.65; letter-spacing: 0.02em; }
-    .final-score-box { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
-    .final-score-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 6px; }
 
     /* ── Upload sheet ── */
     .upload-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 200; align-items: flex-end; justify-content: center; backdrop-filter: blur(4px); }
@@ -2282,9 +2280,6 @@ function buildResultCard(g, ourName, tournamentId) {
           <span class="team-row-score theirs">${g.opp_score ?? ''}</span>
         </div>
         ${oppRec ? `<div class="team-row-record">${oppRec}</div>` : ''}
-      </div>
-      <div class="final-score-box">
-        <div class="final-score-label">Final Score</div>
       </div>
     </div>`;
   if (tournamentId) _addCommentsSection(card, tournamentId, g.game_id);
