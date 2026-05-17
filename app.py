@@ -1445,37 +1445,52 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
 
         # After all round-robin games, one finish-slot placement game
         if prev_node and pool_group:
-            # Determine actual finish using only official scores from the spreadsheet.
-            # Parent-entered live scores are display-only and not used here.
-            all_played = all(g.get("white_score") is not None for g in recent_explicit)
-            if all_played:
-                standings = _standings_for_group(pool_group, division_games)
-                rank = next((i + 1 for i, s in enumerate(standings)
-                             if team_matches(s["team"], team)), None)
-                # Fallback: standings can't identify the team when pool opponents use
-                # composite slots (e.g. "H2 (WIN GM #410) - SOUTH COAST").  Infer rank
-                # directly from the team's win/loss record in their pool games.
-                if rank is None and recent_explicit:
-                    wins   = sum(1 for g in recent_explicit
-                                 if g.get("white_score") is not None
-                                 and (( team_matches(g["white_team"], team) and g["white_score"] > g["dark_score"])
-                                   or (not team_matches(g["white_team"], team) and g["dark_score"] > g["white_score"])))
-                    losses = len(recent_explicit) - wins
-                    worst  = max(sunday_by_rank.keys()) if sunday_by_rank else len(recent_explicit)
-                    if   wins == len(recent_explicit): rank = 1
-                    elif losses == len(recent_explicit): rank = worst
-                    else:                              rank = 2
-                placement_games = [(pg, rank) for pg in sunday_by_rank.get(rank, [])] if rank else []
+            # Highest-priority: organiser has already written the team's name into the
+            # specific placement slot (e.g. "1stH-TROJAN GOLD").  Read it directly —
+            # no score inference needed, works even before all scores are entered.
+            named_placement = None
+            for rank_num, games_list in sunday_by_rank.items():
+                for pg in games_list:
+                    for slot in (pg["white_team"], pg["dark_team"]):
+                        if team_matches(slot, team):
+                            named_placement = (pg, rank_num)
+                            break
+                    if named_placement:
+                        break
+                if named_placement:
+                    break
+
+            if named_placement:
+                placement_games = [named_placement]
             else:
-                # Show all possible placement games as placeholders, preserving rank label
-                placement_games = []
-                for rank_num, games_list in sunday_by_rank.items():
-                    for pg in games_list:
-                        placement_games.append((pg, rank_num))
-                placement_games.sort(
-                    key=lambda x: (x[0].get("date") or date.min, x[0].get("time") or datetime.min.time()),
-                )
-                placement_games = placement_games[:4]
+                # Fall back to score-based rank inference (official spreadsheet scores only).
+                all_played = all(g.get("white_score") is not None for g in recent_explicit)
+                if all_played:
+                    standings = _standings_for_group(pool_group, division_games)
+                    rank = next((i + 1 for i, s in enumerate(standings)
+                                 if team_matches(s["team"], team)), None)
+                    # Fallback: standings can't identify team when opponents use composite
+                    # slots (e.g. "H2 (WIN GM #410) - SOUTH COAST").  Use W/L count instead.
+                    if rank is None and recent_explicit:
+                        wins  = sum(1 for g in recent_explicit
+                                    if g.get("white_score") is not None
+                                    and (( team_matches(g["white_team"], team) and g["white_score"] > g["dark_score"])
+                                      or (not team_matches(g["white_team"], team) and g["dark_score"] > g["white_score"])))
+                        worst = max(sunday_by_rank.keys()) if sunday_by_rank else len(recent_explicit)
+                        if   wins == len(recent_explicit): rank = 1
+                        elif wins == 0:                    rank = worst
+                        else:                              rank = 2
+                    placement_games = [(pg, rank) for pg in sunday_by_rank.get(rank, [])] if rank else []
+                else:
+                    # Neither the slots nor scores tell us the rank yet — show all options.
+                    placement_games = []
+                    for rank_num, games_list in sunday_by_rank.items():
+                        for pg in games_list:
+                            placement_games.append((pg, rank_num))
+                    placement_games.sort(
+                        key=lambda x: (x[0].get("date") or date.min, x[0].get("time") or datetime.min.time()),
+                    )
+                    placement_games = placement_games[:4]
 
             for pg_item in placement_games:
                 pg, pg_rank = pg_item if isinstance(pg_item, tuple) else (pg_item, None)
