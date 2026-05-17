@@ -2710,7 +2710,67 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
                 f"node in bracket — Sunday placement data may be missing from spreadsheet"
             )
 
-    # Data-quality checks on serialized nodes (resolved opponent strings).
+    # ── Check 1: node count ceiling ───────────────────────────────────────────
+    # FORMAT A (bracket crossover) can have up to 7 nodes: root + 2 Saturday +
+    # 4 Sunday.  FORMAT B (round-robin) peaks around 5-6.  Anything above 7 is
+    # almost certainly runaway expansion from a mis-identified prelim game.
+    if len(nodes) > 7:
+        warnings.append(
+            f"tree has {len(nodes)} nodes — expected ≤7 for any WPL weekend format; "
+            "possible runaway expansion from an incorrectly-identified prelim or "
+            "finish-slot game pulling in unrelated WIN GM # games"
+        )
+
+    # ── Check 2: chain legitimacy ──────────────────────────────────────────────
+    # For every non-root node, at least one of its team slots must either name
+    # the team directly OR reference a tree game via WIN GM #N / LOS GM #N.
+    # A node that passes neither test is a foreign game that snuck in.
+    tree_game_nums = {_game_num(n["game_id"]) for n in nodes} - {None}
+    for n in nodes:
+        if not n.get("src_game_id"):
+            continue  # root is exempt
+        gid = n["game_id"]
+        direct = (team_matches(n.get("white_team", ""), team)
+                  or team_matches(n.get("dark_team", ""), team))
+        if not direct:
+            ref_found = any(
+                (wgm := re.search(r'\b(?:WIN|LOS)\s+GM\s+#(\d+)', slot, re.IGNORECASE))
+                and str(int(wgm.group(1))) in tree_game_nums
+                for slot in (n.get("white_team", ""), n.get("dark_team", ""))
+            )
+            if not ref_found:
+                warnings.append(
+                    f"game {gid}: foreign game — neither slot names {team!r} "
+                    f"nor references a tree game via WIN/LOS GM # "
+                    f"(slots: {n.get('white_team')!r} / {n.get('dark_team')!r})"
+                )
+
+    # ── Check 3: chronological monotonicity ───────────────────────────────────
+    # Walking win_next_ids from the root, each node's datetime should be ≥ its
+    # parent's.  A backwards jump means a foreign game broke the ordering.
+    node_map = {n["game_id"]: n for n in nodes}
+    root_node = next((n for n in nodes if not n.get("src_game_id")), None)
+    if root_node:
+        visited: set = set()
+        stack = [(root_node, None)]  # (node, parent_datetime)
+        while stack:
+            cur, parent_dt = stack.pop()
+            cid = cur["game_id"]
+            if cid in visited:
+                continue
+            visited.add(cid)
+            cur_dt = (datetime.combine(cur["date"], cur["time"])
+                      if cur.get("date") and cur.get("time") else None)
+            if parent_dt and cur_dt and cur_dt < parent_dt:
+                warnings.append(
+                    f"game {cid}: time {cur_dt} precedes its parent {parent_dt} "
+                    "— chain has a backwards time jump (likely a foreign game)"
+                )
+            for nid in (cur.get("win_next_ids") or []):
+                if nid in node_map and nid not in visited:
+                    stack.append((node_map[nid], cur_dt or parent_dt))
+
+    # ── Data-quality checks on serialized nodes (resolved opponent strings) ───
     if serialized_nodes:
         for sn in serialized_nodes:
             opp = sn.get("opponent", "")
