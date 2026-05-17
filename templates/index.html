@@ -125,16 +125,16 @@
       .subnav-inner { padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
       main { max-width: 700px; padding: 16px max(16px, env(safe-area-inset-right)) 16px max(16px, env(safe-area-inset-left)); }
       .bracket-stair-wrap { margin: 0 calc(-1 * max(16px, env(safe-area-inset-left))); padding: 0 max(16px, env(safe-area-inset-left)) 32px; }
-      .bracket-step { width: 310px; }
+      .bracket-step { width: 310px; flex-shrink: 0; }
     }
     @media (min-width: 860px) {
       main { max-width: 820px; }
       .game-card { margin-bottom: 16px; }
-      .bracket-step { width: 420px; }
+      .bracket-step { width: 420px; flex-shrink: 0; }
     }
     @media (min-width: 1100px) {
       main { max-width: 1040px; }
-      .bracket-step { width: 480px; }
+      .bracket-step { width: 480px; flex-shrink: 0; }
     }
 
     /* ── Section labels ── */
@@ -303,8 +303,8 @@
     /* ── Bracket staircase view ── */
     .cache-tag { font-size: 10px; color: var(--muted); text-align: center; margin-bottom: 8px; opacity: 0.6; letter-spacing: 0.03em; }
     .bracket-stair-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -16px; padding: 0 16px 32px; }
-    .bracket-stair-inner { position: relative; }
-    .bracket-step { width: 340px; margin-bottom: 6px; }
+    .bracket-stair-inner { position: relative; display: flex; flex-direction: row; align-items: flex-start; }
+    .bracket-step { width: 340px; flex-shrink: 0; }
     .bracket-game-num-header { font-size: 16px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); padding: 0 0 4px; text-align: center; }
     .bracket-day-header { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.18em; color: rgba(255,255,255,0.55); text-align: center; padding: 0 0 10px; }
 
@@ -1753,7 +1753,7 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
 
   const vw = window.innerWidth;
   const CARD_W = vw >= 1100 ? 480 : vw >= 860 ? 420 : 340;
-  const STEP   = CARD_W + 80;
+  const GAP    = 80; // horizontal gap between columns (connector line space)
 
   const rounds = {};
   allGames.forEach(g => {
@@ -1773,19 +1773,17 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
     return a - b;
   });
 
-  const maxIdx = roundNums.length - 1;
-
   const wrap = document.createElement('div');
   wrap.className = 'bracket-stair-wrap';
 
   const inner = document.createElement('div');
   inner.className = 'bracket-stair-inner';
-  inner.style.minWidth = (maxIdx * STEP + CARD_W + 32) + 'px';
+  inner.style.gap = GAP + 'px';
 
   roundNums.forEach((r, idx) => {
     const step = document.createElement('div');
     step.className = 'bracket-step' + (idx === 0 ? ' first-step' : '');
-    step.style.marginLeft = (idx * STEP) + 'px';
+    step.style.width = CARD_W + 'px';
     const stepGames = rounds[r];
 
     // Game number label above all cards in this column (once)
@@ -1978,7 +1976,7 @@ function drawBracketLines(inner, rounds, roundNums) {
     const fromRect = fromCard.getBoundingClientRect();
     const sx = fromRect.right - innerRect.left;
     const sy = fromRect.top - innerRect.top + fromRect.height / 2;
-    const gx = sx + 40;
+    const gx = sx + 40; // midpoint of the 80px gap between columns
     const R = 7;
 
     let dayPillAdded = false;
