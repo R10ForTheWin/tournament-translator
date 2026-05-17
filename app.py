@@ -3067,7 +3067,7 @@ def api_games(tournament_id, team):
                 other_sl = node["white_team"] if opp_sl == node["dark_team"] else node["dark_team"]
                 opp_name = describe_slot(other_sl, dg, ref_date=latest_team_date)
             is_current = False
-            if not node.get("placeholder") and node.get("date") and node.get("time"):
+            if node.get("date") and node.get("time"):
                 game_dt = datetime.combine(node["date"], node["time"])
                 elapsed_s = (now_la - game_dt).total_seconds()
                 is_current = -900 <= elapsed_s <= 7200
