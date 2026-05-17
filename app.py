@@ -3352,7 +3352,9 @@ def api_status():
             "sheets":      sheet_count,
             "error":       error,
         })
-    return jsonify({"server_time": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), "tournaments": results})
+    return jsonify({"server_time": dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    "deploy_id": "1def61f",  # bump on each deploy to confirm Railway picked up latest code
+                    "tournaments": results})
 
 
 @app.route("/api/client-error", methods=["POST"])
