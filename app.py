@@ -2791,6 +2791,43 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
     return warnings
 
 
+def _last_meeting(team: str, opponent: str, all_games: list,
+                  before_date=None) -> dict | None:
+    """Return the most recent played game between team and opponent.
+
+    Searches all_games (unfiltered, all weekends) for a played game where
+    both teams appear.  before_date excludes games on or after that date so
+    the current game isn't counted as its own last meeting.
+    """
+    if not opponent or _SLOT_LIKE_RE.match(opponent):
+        return None  # opponent is TBD / unresolved slot — nothing to look up
+    best = None
+    for g in all_games:
+        if not g.get("played"):
+            continue
+        if before_date and g.get("date") and g["date"] >= before_date:
+            continue
+        wt = strip_prefix(g["white_team"]).strip()
+        dt = strip_prefix(g["dark_team"]).strip()
+        if not (team_matches(wt, team) or team_matches(dt, team)):
+            continue
+        if not (team_matches(wt, opponent) or team_matches(dt, opponent)):
+            continue
+        if best is None or (g.get("date") and (best.get("date") is None
+                                                or g["date"] > best["date"])):
+            best = g
+    if best is None:
+        return None
+    color = "WHITE" if team_matches(strip_prefix(best["white_team"]).strip(), team) else "DARK"
+    ws = best.get("white_score") or 0
+    ds = best.get("dark_score")  or 0
+    return {
+        "date":      _fmt_date(best["date"]),
+        "our_score": ws if color == "WHITE" else ds,
+        "opp_score": ds if color == "WHITE" else ws,
+    }
+
+
 @app.route("/api/games/<tournament_id>/<path:team>")
 def api_games(tournament_id, team):
     excel = find_excel(tournament_id)
@@ -2948,6 +2985,8 @@ def api_games(tournament_id, team):
             if loser_next and loser_next["game_id"] not in my_game_ids:
                 scenarios["lose"] = _next_summary(loser_next,  team, dg, ref_date=_weekend_ref_date)
             base["scenarios"] = scenarios if scenarios else None
+            base["last_meeting"] = _last_meeting(team, opponent_label, _all_games,
+                                                  before_date=g.get("date"))
             upcoming_out.append(base)
 
     placement = _infer_placement(played_out)
@@ -3055,6 +3094,9 @@ def api_games(tournament_id, team):
                     d["our_score"] = ws if color == "WHITE" else ds
                     d["opp_score"] = ds if color == "WHITE" else ws
                     d["result"]    = _result_str(node, team)
+                if not node.get("played") and not node.get("placeholder"):
+                    d["last_meeting"] = _last_meeting(
+                        team, opp_name, _all_games, before_date=node.get("date"))
                 if live:
                     d["live_score"] = live
                 return d

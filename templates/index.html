@@ -378,6 +378,7 @@
     .wpl-card-opp { font-size: 14px; font-weight: 800; color: var(--white); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .wpl-card-opp .vs { font-size: 11px; font-weight: 400; color: var(--muted); margin-right: 4px; }
     .wpl-card-rec { font-size: 10px; color: var(--muted); margin-top: 2px; }
+    .last-meeting { font-size: 10px; color: var(--muted); margin-top: 3px; opacity: 0.8; }
     .wpl-card-score { font-size: 18px; font-weight: 900; color: var(--gold); letter-spacing: -0.5px; margin-top: 4px; }
     /* Full-width root card */
     .wpl-root-card { max-width: 100%; }
@@ -1076,6 +1077,11 @@ async function loadTeams(tournament) {
 }
 
 
+function fmtLastMeeting(lm) {
+  if (!lm) return '';
+  return `<div class="last-meeting">Last met ${lm.date} · ${lm.our_score}–${lm.opp_score}</div>`;
+}
+
 function fmtRec(r) {
   if (!r) return null;
   const total = r.wins + r.losses + r.ties;
@@ -1456,6 +1462,7 @@ function buildWplTree(data, tournamentId, team, ourName) {
         <div class="wpl-card-opp" style="margin-bottom:2px">${ourName || ''}${badge(ourRank, ourDiv)}</div>
         <div class="wpl-card-opp"><span class="vs">vs</span>${g.opponent || '?'}${badge(oppRank, oppDiv)}</div>
         ${rec ? `<div class="wpl-card-rec">${rec}</div>` : ''}
+        ${!g.result && !g.placeholder ? fmtLastMeeting(g.last_meeting) : ''}
         ${scoreHtml}
       </div>`;
     return card;
@@ -2361,6 +2368,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
           </div>
         </div>
         ${oppRec ? `<div class="team-row-record">${oppRec}</div>` : ''}
+        ${fmtLastMeeting(g.last_meeting)}
         <div class="quarter-strip">${qBtns}</div>
         <div class="live-footer">Unofficial${updAgo ? ` · Updated ${updAgo}` : ''}</div>
       </div>`;
@@ -2375,6 +2383,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
           <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${rankDivBadge(g.opponent)}</span>
         </div>
         ${oppRec ? `<div class="team-row-record">${oppRec}</div>` : ''}
+        ${fmtLastMeeting(g.last_meeting)}
       </div>`;
   }
 
