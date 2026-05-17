@@ -28,8 +28,8 @@ def normalize_team_slot(s: str) -> str:
     if lm:
         return f"L#{lm.group(2)}"
 
-    # Pool slot: "B1 - Trojan Gold"
-    m = re.match(r"^([A-Z]\d+)\s*-\s*(.*)$", s, re.IGNORECASE)
+    # Pool slot: "B1 - Trojan Gold" or "G1--DEL MAR WHITE" (NJO uses double-dashes)
+    m = re.match(r"^([A-Z]\d+)\s*-+\s*(.*)$", s, re.IGNORECASE)
     if m:
         return f"{m.group(1).upper()}-{m.group(2).strip().upper()}"
 
@@ -37,5 +37,10 @@ def normalize_team_slot(s: str) -> str:
     m2 = re.match(r"^(\d+(?:st|nd|rd|th))\s+in\s+([A-Z])\s*-\s*(.*)$", s, re.IGNORECASE)
     if m2:
         return f"{m2.group(1)}{m2.group(2).upper()}-{m2.group(3).strip().upper()}"
+
+    # Seed-number slot: "8-TEAM" or "8--TEAM" (NJO uses double-dashes)
+    m3 = re.match(r"^(\d+)\s*-+\s*(.+)$", s, re.IGNORECASE)
+    if m3:
+        return f"{m3.group(1)}-{m3.group(2).strip().upper()}"
 
     return s.upper()

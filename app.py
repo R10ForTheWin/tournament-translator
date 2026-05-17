@@ -2888,9 +2888,9 @@ def api_games(tournament_id, team):
         div_games_for_tree = [g for g in _all_games if g['sheet'] == tree_sheet]
         latest_team_date = max((g["date"] for g in my_games if g.get("date")), default=None)
         tree = _build_njo_game_tree(team, div_games_for_tree, anchor_date=latest_team_date)
-        struct_issues = _check_bracket_structure(
-            team, tree, div_games=div_games_for_tree, anchor_date=latest_team_date
-        )
+        # NJO uses w_to/l_to integer links, not WPL-style WIN GM # slots — skip
+        # ground-truth depth checks (_derive_expected_bracket is WPL-specific).
+        struct_issues = _check_bracket_structure(team, tree)
         if struct_issues:
             for _si in struct_issues:
                 print(f"[bracket-struct] {team!r} | {tournament_id}: {_si}", flush=True)

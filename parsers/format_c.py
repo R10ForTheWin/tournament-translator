@@ -134,8 +134,9 @@ def _normalize_slot(raw: str) -> str:
         suffix = f"-{team.upper()}" if team else ""
         return f"{wl}#{num}{suffix}"
 
-    # Pool slot with national seed:  A2(8)-SAN CLEMENTE  or  G1(L16)-TEAM
-    m = re.match(r'^([A-Z]\d+)\([^)]*\)-(.*)', s, re.IGNORECASE)
+    # Pool slot with national seed:  A2(8)-SAN CLEMENTE  or  G1(1)--DEL MAR WHITE
+    # NJO uses double-dash after the closing paren — consume all dashes with -+
+    m = re.match(r'^([A-Z]\d+)\([^)]*\)-+(.*)', s, re.IGNORECASE)
     if m:
         pos  = m.group(1).upper()
         team = m.group(2).strip().upper()
