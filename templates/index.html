@@ -1130,7 +1130,9 @@ function _startRefreshTimers(tournamentId, team, sheet) {
     const view = document.querySelector('.view.active');
     if (!view || view.id !== 'view-games') return;
     _updateFreshnessBar(true);
-    await loadGames(..._refreshArgs, null, { silent: true });
+    const bp = document.getElementById('wpl-pane-bracket');
+    const curView = (bp && bp.style.display !== 'none') ? 'bracket' : 'standings';
+    await loadGames(..._refreshArgs, curView, { silent: true });
   }, 120000);
 }
 

@@ -2762,7 +2762,12 @@ def api_games(tournament_id, team):
     slot_to_num: dict[tuple, int] = {}
     counter = 0
     for g in my_games_ranked:
-        key = (g.get("date"), g.get("time"))
+        # Placement games (finish-slot teams like "1stH-", "2ndH-") are mutually
+        # exclusive alternatives — group ALL on the same date into one column so
+        # they appear side-by-side rather than as sequential separate columns.
+        is_placement = any(_FINISH_SLOT_RE.match(s.strip())
+                           for s in (g["white_team"], g["dark_team"]))
+        key = (g.get("date"), "__placement__") if is_placement else (g.get("date"), g.get("time"))
         if key not in slot_to_num:
             counter += 1
             slot_to_num[key] = counter
