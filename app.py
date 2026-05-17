@@ -3,7 +3,7 @@ Tournament Translator — Flask app
 """
 from __future__ import annotations
 import os, re, json, glob, io, time, base64, random, threading
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from functools import lru_cache
 import requests
@@ -29,8 +29,9 @@ def load_and_parse(filepath) -> list[dict]:
 
 app = Flask(__name__)
 
-EXCEL_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Tournaments Excels")
-RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "results")
+EXCEL_DIR    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Tournaments Excels")
+RESULTS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "results")
+COMMENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "comments")
 ADMIN_PW    = os.environ.get("ADMIN_PASSWORD", "trojan")  # override via Railway env var
 
 # ── Live URL sources ────────────────────────────────────────────────────────
@@ -56,7 +57,6 @@ _URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
 URL_CACHE_TTL      = 300  # re-fetch at most every 5 minutes
 
 _LIVE_SCORES: dict = {}   # {(tournament_id, game_id): {our_score, opp_score, quarter, updated_at}}
-_COMMENTS:    dict = {}   # {(tournament_id, game_id): [{text, ts}]}
 _FEEDBACK:    list = []   # [{text, ts}]
 
 _MONTH_MAP = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
@@ -64,8 +64,9 @@ _MONTH_MAP = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
 _RE_YEAR   = re.compile(r"(\d{4})")
 _RE_MONTH  = re.compile(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)", re.I)
 
-os.makedirs(RESULTS_DIR, exist_ok=True)
-os.makedirs(EXCEL_DIR, exist_ok=True)
+os.makedirs(RESULTS_DIR,  exist_ok=True)
+os.makedirs(COMMENTS_DIR, exist_ok=True)
+os.makedirs(EXCEL_DIR,    exist_ok=True)
 
 # ── Tournament registry ────────────────────────────────────────────────────────
 
@@ -3009,19 +3010,50 @@ def api_live_score_post(tournament_id, game_id):
     return jsonify({"ok": True})
 
 
+def _comments_path(tournament_id: str) -> str:
+    return os.path.join(COMMENTS_DIR, f"{tournament_id}.json")
+
+def _comments_expired(tournament_id: str) -> bool:
+    """True if tournament ended more than 24 h ago."""
+    meta = _tournament_meta(tournament_id)
+    if not meta or not meta.get("date_end"):
+        return False
+    cutoff = datetime.combine(meta["date_end"], datetime.min.time()) + timedelta(hours=24)
+    return datetime.utcnow() > cutoff
+
+def _load_comments(tournament_id: str) -> dict:
+    if _comments_expired(tournament_id):
+        return {}
+    path = _comments_path(tournament_id)
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def _save_comments(tournament_id: str, data: dict):
+    with open(_comments_path(tournament_id), "w") as f:
+        json.dump(data, f)
+
 @app.route("/api/comments/<tournament_id>/<game_id>", methods=["GET"])
 def api_comments_get(tournament_id, game_id):
-    return jsonify(_COMMENTS.get((tournament_id, game_id), []))
+    all_comments = _load_comments(tournament_id)
+    return jsonify(all_comments.get(game_id, []))
 
 @app.route("/api/comments/<tournament_id>/<game_id>", methods=["POST"])
 def api_comments_post(tournament_id, game_id):
+    if _comments_expired(tournament_id):
+        abort(410)  # Gone — tournament window closed
     data = request.get_json(silent=True) or {}
     text = str(data.get("text", "")).strip()[:280]
     if not text:
         abort(400)
-    entry = {"text": text, "ts": int(time.time())}
-    _COMMENTS.setdefault((tournament_id, game_id), []).append(entry)
-    return jsonify({"ok": True, "count": len(_COMMENTS[(tournament_id, game_id)])})
+    all_comments = _load_comments(tournament_id)
+    all_comments.setdefault(game_id, []).append({"text": text, "ts": int(time.time())})
+    _save_comments(tournament_id, all_comments)
+    return jsonify({"ok": True, "count": len(all_comments[game_id])})
 
 @app.route("/api/feedback", methods=["POST"])
 def api_feedback_post():
