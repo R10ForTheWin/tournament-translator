@@ -3093,7 +3093,7 @@ def api_games(tournament_id, team):
                 d["our_score"] = ws if color == "WHITE" else ds
                 d["opp_score"] = ds if color == "WHITE" else ws
                 d["result"]    = _result_str(node, team)
-            if not node.get("played") and not node.get("placeholder"):
+            if not node.get("played"):
                 d["last_meeting"] = _last_meeting(
                     team, opp_name, _all_games, before_date=node.get("date"))
             if live:

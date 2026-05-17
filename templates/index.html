@@ -1462,7 +1462,7 @@ function buildWplTree(data, tournamentId, team, ourName) {
         <div class="wpl-card-opp" style="margin-bottom:2px">${ourName || ''}${badge(ourRank, ourDiv)}</div>
         <div class="wpl-card-opp"><span class="vs">vs</span>${g.opponent || '?'}${badge(oppRank, oppDiv)}</div>
         ${rec ? `<div class="wpl-card-rec">${rec}</div>` : ''}
-        ${!g.result && !g.placeholder ? fmtLastMeeting(g.last_meeting) : ''}
+        ${!g.result ? fmtLastMeeting(g.last_meeting) : ''}
         ${scoreHtml}
       </div>`;
     return card;
