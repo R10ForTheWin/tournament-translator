@@ -503,6 +503,31 @@
     .upload-msg.error   { background: var(--loss-bg); color: var(--loss-text); }
     .upload-msg.success { background: var(--win-bg);  color: var(--win-text); }
 
+    /* ── Game comments ── */
+    .comments-toggle { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; border-top: 1px solid var(--border); padding: 10px 14px; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; text-align: left; letter-spacing: 0.04em; margin-top: 10px; }
+    .comments-toggle:hover { color: var(--white); }
+    .comments-section { padding: 0 14px 12px; display: none; }
+    .comments-section.open { display: block; }
+    .comment-item { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13px; color: var(--white); line-height: 1.45; }
+    .comment-item:last-child { border-bottom: none; }
+    .comment-time { font-size: 10px; color: var(--muted); margin-top: 2px; }
+    .comment-input-row { display: flex; gap: 8px; margin-top: 10px; }
+    .comment-input { flex: 1; background: rgba(255,255,255,0.07); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 9px 12px; font-size: 14px; color: var(--white); font-family: inherit; outline: none; }
+    .comment-input:focus { border-color: rgba(255,255,255,0.3); }
+    .comment-send { background: var(--cardinal); border: none; border-radius: var(--radius-sm); color: var(--white); font-size: 13px; font-weight: 700; padding: 9px 14px; cursor: pointer; font-family: inherit; white-space: nowrap; }
+    .comment-send:active { opacity: 0.8; }
+
+    /* ── Feedback button + modal ── */
+    #feedback-btn { position: fixed; bottom: calc(20px + env(safe-area-inset-bottom)); right: 18px; background: rgba(30,30,30,0.92); border: 1px solid var(--border); border-radius: 20px; color: var(--muted); font-size: 12px; font-weight: 600; padding: 8px 14px; cursor: pointer; font-family: inherit; letter-spacing: 0.04em; backdrop-filter: blur(8px); z-index: 50; }
+    #feedback-btn:hover { color: var(--white); border-color: rgba(255,255,255,0.25); }
+    .feedback-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 300; align-items: flex-end; justify-content: center; padding: 0; }
+    .feedback-overlay.visible { display: flex; }
+    .feedback-sheet { background: #1e1e1e; border-radius: 20px 20px 0 0; padding: 20px 20px calc(24px + env(safe-area-inset-bottom)); width: 100%; max-width: 540px; border-top: 1px solid var(--border); animation: slideUp 0.25s ease; }
+    .feedback-title { font-size: 17px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; color: var(--white); }
+    .feedback-sub { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+    .feedback-textarea { width: 100%; background: rgba(255,255,255,0.07); border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; font-size: 15px; color: var(--white); font-family: inherit; outline: none; resize: none; min-height: 100px; box-sizing: border-box; }
+    .feedback-textarea:focus { border-color: rgba(255,255,255,0.3); }
+
     /* ── Password modal ── */
     .pw-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 300; align-items: center; justify-content: center; padding: 20px; }
     .pw-overlay.visible { display: flex; }
@@ -1815,7 +1840,7 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
       // don't add their own banner — the column-level banner above handles it.
       const cardG = hasScenarios ? Object.assign({}, g, {path: null}) : g;
       const card = cardG.result
-        ? buildResultCard(cardG, ourName)
+        ? buildResultCard(cardG, ourName, tournamentId)
         : buildUpcomingCard(cardG, tournamentId, team, ourName);
       // Restore branch-card indent class for scenario cards (path was stripped above)
       if (hasScenarios && g.path) card.classList.add('branch-card');
@@ -2174,7 +2199,63 @@ async function liveQuarterBtn(tournamentId, gameId, quarter) {
   try { await fetch(`/api/live-score/${tournamentId}/${gameId}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({our_score:our, opp_score:opp, quarter}) }); } catch(e) {}
 }
 
-function buildResultCard(g, ourName) {
+function _fmtCommentAge(ts) {
+  const s = Math.floor(Date.now()/1000 - ts);
+  if (s < 60)  return 'just now';
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  return `${Math.floor(s/3600)}h ago`;
+}
+function _addCommentsSection(card, tournamentId, gameId) {
+  let loaded = false;
+  const toggle = document.createElement('button');
+  toggle.className = 'comments-toggle';
+  toggle.innerHTML = '💬 <span class="comments-label">Comments</span>';
+  const section = document.createElement('div');
+  section.className = 'comments-section';
+  section.innerHTML = `
+    <div class="comment-list"></div>
+    <div class="comment-input-row">
+      <input class="comment-input" type="text" placeholder="Add a comment…" maxlength="280">
+      <button class="comment-send">Post</button>
+    </div>`;
+  const list  = section.querySelector('.comment-list');
+  const input = section.querySelector('.comment-input');
+  const send  = section.querySelector('.comment-send');
+
+  async function loadComments() {
+    try {
+      const r = await fetch(`/api/comments/${encodeURIComponent(tournamentId)}/${encodeURIComponent(gameId)}`);
+      const items = await r.json();
+      list.innerHTML = items.length
+        ? items.map(c => `<div class="comment-item">${c.text.replace(/</g,'&lt;')}<div class="comment-time">${_fmtCommentAge(c.ts)}</div></div>`).join('')
+        : '<div style="font-size:12px;color:var(--muted);padding:4px 0">No comments yet.</div>';
+      toggle.querySelector('.comments-label').textContent = `Comments${items.length ? ` (${items.length})` : ''}`;
+    } catch(e) {}
+  }
+  async function postComment() {
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    send.disabled = true;
+    try {
+      await fetch(`/api/comments/${encodeURIComponent(tournamentId)}/${encodeURIComponent(gameId)}`, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({text})
+      });
+      await loadComments();
+    } catch(e) {}
+    send.disabled = false;
+  }
+  toggle.onclick = () => {
+    const open = section.classList.toggle('open');
+    if (open && !loaded) { loaded = true; loadComments(); }
+  };
+  send.onclick  = postComment;
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') postComment(); });
+  card.appendChild(toggle);
+  card.appendChild(section);
+}
+
+function buildResultCard(g, ourName, tournamentId) {
   const card = document.createElement('div');
   card.className = `game-card ${dayClass(g.date)}`;
   const cls   = g.result === 'win' ? 'win' : g.result === 'loss' ? 'loss' : 'tie';
@@ -2206,6 +2287,7 @@ function buildResultCard(g, ourName) {
         <div class="final-score-label">Final Score</div>
       </div>
     </div>`;
+  if (tournamentId) _addCommentsSection(card, tournamentId, g.game_id);
   return card;
 }
 
@@ -2324,6 +2406,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
       ${teamSection}
       ${bottomSection}
     </div>`;
+  if (!g.placeholder) _addCommentsSection(card, tournamentId, g.game_id);
   return card;
 }
 
@@ -2410,6 +2493,56 @@ async function doSubmitUrl() {
 loadTournaments();
 maybeShowA2HS();
 
+</script>
+<!-- Feedback button -->
+<button id="feedback-btn" onclick="openFeedback()">✉ Feedback</button>
+
+<!-- Feedback sheet -->
+<div class="feedback-overlay" id="feedback-overlay" onclick="closeFeedback(event)">
+  <div class="feedback-sheet" onclick="event.stopPropagation()">
+    <div class="upload-handle"></div>
+    <div class="feedback-title">Send Feedback</div>
+    <div class="feedback-sub">Anonymous — goes straight to the app admin (DJ).</div>
+    <textarea class="feedback-textarea" id="feedback-text" placeholder="What's working well? What's broken? Ideas?" maxlength="1000"></textarea>
+    <button class="upload-btn" id="feedback-submit-btn" onclick="submitFeedback()" style="margin-top:10px">Send</button>
+    <button class="cancel-btn" onclick="closeFeedback()">Cancel</button>
+    <div class="upload-msg" id="feedback-msg" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+function openFeedback() {
+  document.getElementById('feedback-text').value = '';
+  document.getElementById('feedback-msg').style.display = 'none';
+  document.getElementById('feedback-overlay').classList.add('visible');
+  setTimeout(() => document.getElementById('feedback-text').focus(), 200);
+}
+function closeFeedback(e) {
+  if (e && e.target !== document.getElementById('feedback-overlay')) return;
+  document.getElementById('feedback-overlay').classList.remove('visible');
+}
+async function submitFeedback() {
+  const text = document.getElementById('feedback-text').value.trim();
+  if (!text) return;
+  const btn = document.getElementById('feedback-submit-btn');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/feedback', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text}) });
+    const msg = document.getElementById('feedback-msg');
+    msg.style.display = '';
+    if (r.ok) {
+      msg.className = 'upload-msg success';
+      msg.textContent = 'Sent — thanks!';
+      setTimeout(() => document.getElementById('feedback-overlay').classList.remove('visible'), 1400);
+    } else {
+      msg.className = 'upload-msg error';
+      msg.textContent = 'Something went wrong. Try again.';
+      btn.disabled = false;
+    }
+  } catch(e) {
+    btn.disabled = false;
+  }
+}
 </script>
 </body>
 </html>

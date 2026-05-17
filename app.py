@@ -56,6 +56,8 @@ _URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
 URL_CACHE_TTL      = 300  # re-fetch at most every 5 minutes
 
 _LIVE_SCORES: dict = {}   # {(tournament_id, game_id): {our_score, opp_score, quarter, updated_at}}
+_COMMENTS:    dict = {}   # {(tournament_id, game_id): [{text, ts}]}
+_FEEDBACK:    list = []   # [{text, ts}]
 
 _MONTH_MAP = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
               "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
@@ -3005,6 +3007,36 @@ def api_live_score_post(tournament_id, game_id):
         "updated_at": time.time(),
     }
     return jsonify({"ok": True})
+
+
+@app.route("/api/comments/<tournament_id>/<game_id>", methods=["GET"])
+def api_comments_get(tournament_id, game_id):
+    return jsonify(_COMMENTS.get((tournament_id, game_id), []))
+
+@app.route("/api/comments/<tournament_id>/<game_id>", methods=["POST"])
+def api_comments_post(tournament_id, game_id):
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text", "")).strip()[:280]
+    if not text:
+        abort(400)
+    entry = {"text": text, "ts": int(time.time())}
+    _COMMENTS.setdefault((tournament_id, game_id), []).append(entry)
+    return jsonify({"ok": True, "count": len(_COMMENTS[(tournament_id, game_id)])})
+
+@app.route("/api/feedback", methods=["POST"])
+def api_feedback_post():
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text", "")).strip()[:1000]
+    if not text:
+        abort(400)
+    entry = {"text": text, "ts": int(time.time())}
+    _FEEDBACK.append(entry)
+    print(f"[feedback] {entry}", flush=True)
+    return jsonify({"ok": True})
+
+@app.route("/api/feedback", methods=["GET"])
+def api_feedback_get():
+    return jsonify(_FEEDBACK)
 
 
 @app.route("/api/result/<tournament_id>/<game_id>", methods=["POST"])
