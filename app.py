@@ -3037,70 +3037,69 @@ def api_games(tournament_id, team):
         if struct_issues:
             for _si in struct_issues:
                 print(f"[bracket-struct] {team!r} | {tournament_id}: {_si}", flush=True)
-        if tree:
-            # Serialize tree nodes: format dates/times, add opponent label
-            def _serialize_tree_node(node, dg):
-                gid   = node["game_id"]
-                # Try raw slot match first; fall back to resolving W#/L# refs for bracket games
-                # where neither slot directly names our team.
-                if team_matches(node["white_team"], team):
+
+    if tree:
+        # Serialize tree nodes: format dates/times, add opponent label
+        def _serialize_tree_node(node, dg):
+            gid = node["game_id"]
+            # Try raw slot match first; fall back to resolving W#/L# refs
+            if team_matches(node["white_team"], team):
+                opp_sl, color = node["dark_team"],  "WHITE"
+            elif team_matches(node["dark_team"], team):
+                opp_sl, color = node["white_team"], "DARK"
+            else:
+                t_w = describe_slot(node["white_team"], dg, ref_date=latest_team_date)
+                t_d = describe_slot(node["dark_team"],  dg, ref_date=latest_team_date)
+                if team_matches(t_w, team):
                     opp_sl, color = node["dark_team"],  "WHITE"
-                elif team_matches(node["dark_team"], team):
+                elif team_matches(t_d, team):
                     opp_sl, color = node["white_team"], "DARK"
                 else:
-                    t_w = describe_slot(node["white_team"], dg, ref_date=latest_team_date)
-                    t_d = describe_slot(node["dark_team"],  dg, ref_date=latest_team_date)
-                    if team_matches(t_w, team):
-                        opp_sl, color = node["dark_team"],  "WHITE"
-                    elif team_matches(t_d, team):
-                        opp_sl, color = node["white_team"], "DARK"
-                    else:
-                        opp_sl, color = node["white_team"], "DARK"
-                opp_name = describe_slot(opp_sl, dg, ref_date=latest_team_date)
-                # Guard: if resolved opponent still equals our own team, flip slots
-                if team_matches(opp_name, team):
-                    other_sl = node["white_team"] if opp_sl == node["dark_team"] else node["dark_team"]
-                    opp_name = describe_slot(other_sl, dg, ref_date=latest_team_date)
-                is_current = False
-                # Placeholder games (wrong bracket path) are never "current" for this team
-                if not node.get("placeholder") and node.get("date") and node.get("time"):
-                    game_dt = datetime.combine(node["date"], node["time"])
-                    elapsed_s = (now_la - game_dt).total_seconds()
-                    is_current = -900 <= elapsed_s <= 7200
-                live = _LIVE_SCORES.get((tournament_id, gid))
-                if live and not node.get("placeholder"):
-                    is_current = True
-                d = {
-                    "game_id":        gid,
-                    "date":           _fmt_date(node["date"]),
-                    "time":           _fmt_time(node["time"]),
-                    "location":       node["location"],
-                    "opponent":       opp_name,
-                    "your_color":     color,
-                    "placeholder":    node["placeholder"],
-                    "played":         bool(node.get("played", False)),
-                    "placement_rank": node.get("placement_rank"),
-                    "src_game_id":    node["src_game_id"],
-                    "src_path":       node["src_path"],
-                    "win_next_ids":   node["win_next_ids"],
-                    "lose_next_ids":  node["lose_next_ids"],
-                    "sunday_pair_id": node["sunday_pair_id"],
-                    "is_current":     is_current,
-                }
-                if node.get("played") and not node.get("placeholder"):
-                    ws = node.get("white_score") or 0
-                    ds = node.get("dark_score")  or 0
-                    d["score"]     = _fmt_score(node)
-                    d["our_score"] = ws if color == "WHITE" else ds
-                    d["opp_score"] = ds if color == "WHITE" else ws
-                    d["result"]    = _result_str(node, team)
-                if not node.get("played") and not node.get("placeholder"):
-                    d["last_meeting"] = _last_meeting(
-                        team, opp_name, _all_games, before_date=node.get("date"))
-                if live:
-                    d["live_score"] = live
-                return d
-            wpl_bracket = [_serialize_tree_node(n, div_games_for_tree) for n in tree]
+                    opp_sl, color = node["white_team"], "DARK"
+            opp_name = describe_slot(opp_sl, dg, ref_date=latest_team_date)
+            # Guard: if resolved opponent still equals our own team, flip slots
+            if team_matches(opp_name, team):
+                other_sl = node["white_team"] if opp_sl == node["dark_team"] else node["dark_team"]
+                opp_name = describe_slot(other_sl, dg, ref_date=latest_team_date)
+            is_current = False
+            if not node.get("placeholder") and node.get("date") and node.get("time"):
+                game_dt = datetime.combine(node["date"], node["time"])
+                elapsed_s = (now_la - game_dt).total_seconds()
+                is_current = -900 <= elapsed_s <= 7200
+            live = _LIVE_SCORES.get((tournament_id, gid))
+            if live and not node.get("placeholder"):
+                is_current = True
+            d = {
+                "game_id":        gid,
+                "date":           _fmt_date(node["date"]),
+                "time":           _fmt_time(node["time"]),
+                "location":       node["location"],
+                "opponent":       opp_name,
+                "your_color":     color,
+                "placeholder":    node["placeholder"],
+                "played":         bool(node.get("played", False)),
+                "placement_rank": node.get("placement_rank"),
+                "src_game_id":    node["src_game_id"],
+                "src_path":       node["src_path"],
+                "win_next_ids":   node["win_next_ids"],
+                "lose_next_ids":  node["lose_next_ids"],
+                "sunday_pair_id": node["sunday_pair_id"],
+                "is_current":     is_current,
+            }
+            if node.get("played") and not node.get("placeholder"):
+                ws = node.get("white_score") or 0
+                ds = node.get("dark_score")  or 0
+                d["score"]     = _fmt_score(node)
+                d["our_score"] = ws if color == "WHITE" else ds
+                d["opp_score"] = ds if color == "WHITE" else ws
+                d["result"]    = _result_str(node, team)
+            if not node.get("played") and not node.get("placeholder"):
+                d["last_meeting"] = _last_meeting(
+                    team, opp_name, _all_games, before_date=node.get("date"))
+            if live:
+                d["live_score"] = live
+            return d
+        wpl_bracket = [_serialize_tree_node(n, div_games_for_tree) for n in tree]
 
     bracket_warnings = (_validate_wpl_bracket(team, tree, upcoming=upcoming_out,
                                                serialized_nodes=wpl_bracket)
