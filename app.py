@@ -1192,7 +1192,11 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
             return strip_prefix(slot).strip().upper() == team.upper()
 
         def _is_pool_pos_slot(s: str) -> bool:
-            return bool(re.match(r'^[A-Z]\d+[-\s(]', s.strip(), re.IGNORECASE))
+            # Matches pool-position slots like "E2-TEAM", "E2 (WIN GM #399)-TEAM"
+            # AND finish-slot positions like "2ndE-TEAM", "1stH-TEAM" — both must be
+            # skipped during prelim detection to prevent them being treated as seed games.
+            return bool(re.match(r'^[A-Z]\d+[-\s(]', s.strip(), re.IGNORECASE)
+                        or re.match(r'^\d+(?:st|nd|rd|th)[A-Z]-', s.strip(), re.IGNORECASE))
 
         prelim_nums: set[str] = set()
         for g in sorted_games:
