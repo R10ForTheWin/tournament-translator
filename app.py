@@ -1500,7 +1500,8 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
                 pg, pg_rank = pg_item if isinstance(pg_item, tuple) else (pg_item, None)
                 if pg["game_id"] in seen: continue
                 if _game_num(pg["game_id"]) is None: continue  # skip embedded standings rows
-                pn = _make_node(pg, prev_node["game_id"], None, True, "roundrobin")
+                # Placeholder only if not yet played — once the game has a score it's real
+                pn = _make_node(pg, prev_node["game_id"], None, not pg.get("played"), "roundrobin")
                 pn["placement_rank"] = pg_rank
                 prev_node["win_next_ids"].append(pg["game_id"])
                 prev_node["lose_next_ids"].append(pg["game_id"])
