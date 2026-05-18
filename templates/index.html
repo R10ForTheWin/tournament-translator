@@ -219,7 +219,7 @@
 
 
     .standings-wrap { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 16px; }
-    .standings-title { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 10px 14px 8px; }
+    .standings-title { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 10px 14px 8px; display: flex; justify-content: space-between; align-items: center; }
     .standings-row { display: flex; align-items: center; padding: 7px 14px; gap: 8px; font-size: 13px; border-top: 1px solid var(--border); }
     .standings-row.mine { background: rgba(157,34,53,0.14); }
     .standings-rank { color: var(--muted); font-size: 12px; width: 18px; text-align: right; flex-shrink: 0; }
@@ -1387,7 +1387,7 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opt
       const divLabel = myDiv || 'Season Standings';
       const showMv   = divTeams.some(s => 'rank_movement' in s);
       sPane.innerHTML = `<div class="standings-wrap">
-        <div class="standings-title">${data.cumulative_division || 'Season'} · ${divLabel} · ${divTeams.length} teams<span style="float:right;letter-spacing:0.04em">${showMv ? '±&nbsp;&nbsp;' : ''}PTS &nbsp;&nbsp;&nbsp;&nbsp; W–L</span></div>
+        <div class="standings-title"><span>${data.cumulative_division || 'Season'} · ${divLabel} · ${divTeams.length} teams</span><span style="letter-spacing:0.04em">${showMv ? '±&nbsp;&nbsp;' : ''}PTS &nbsp;&nbsp;&nbsp;&nbsp; W–L</span></div>
         ${divTeams.map(mkRow).join('')}
       </div>`;
     } else {
@@ -1422,7 +1422,7 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opt
     const grp = document.createElement('div');
     grp.className = 'games-group';
     grp.innerHTML = `<div class="standings-wrap">
-      <div class="standings-title">${data.cumulative_division || 'Season'} · ${divLabel} · ${divTeams.length} teams<span style="float:right;letter-spacing:0.04em">PTS &nbsp;&nbsp;&nbsp;&nbsp; W–L</span></div>
+      <div class="standings-title"><span>${data.cumulative_division || 'Season'} · ${divLabel} · ${divTeams.length} teams</span><span style="letter-spacing:0.04em">PTS &nbsp;&nbsp;&nbsp;&nbsp; W–L</span></div>
       ${divTeams.map(mkRow).join('')}
     </div>`;
     document.getElementById('games-content').appendChild(grp);
