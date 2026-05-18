@@ -227,6 +227,11 @@
     .standings-row.mine .standings-name { font-weight: 700; color: var(--white); }
     .standings-pts { font-weight: 700; width: 36px; text-align: right; flex-shrink: 0; }
     .standings-record { font-size: 11px; color: var(--muted); width: 54px; text-align: right; flex-shrink: 0; }
+    .standings-mv { font-size: 10px; font-weight: 800; width: 28px; text-align: center; flex-shrink: 0; }
+    .mv-up   { color: #4cd964; }
+    .mv-down { color: var(--loss-text); }
+    .mv-flat { color: var(--muted); opacity: 0.5; }
+    .mv-new  { color: var(--muted); font-size: 9px; letter-spacing: 0.05em; }
     .standings-div { font-size: 10px; font-weight: 700; color: var(--muted); background: rgba(255,255,255,0.07); border-radius: 4px; padding: 1px 5px; flex-shrink: 0; }
     .standings-gap { text-align: center; color: var(--muted); font-size: 12px; padding: 4px; border-top: 1px solid var(--border); }
     .standings-div-header { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 14px 6px; border-top: 1px solid var(--border); background: rgba(255,255,255,0.03); }
@@ -1343,8 +1348,17 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opt
         const l = (s.reg_losses || 0) + (s.shootout_losses || 0);
         return `${w}W–${l}L`;
       };
+      const mvArrow = s => {
+        const m = s.rank_movement;
+        if (m == null) return '<span class="mv-new">NEW</span>';
+        if (m > 0)  return `<span class="mv-up">▲${m}</span>`;
+        if (m < 0)  return `<span class="mv-down">▼${Math.abs(m)}</span>`;
+        return '<span class="mv-flat">—</span>';
+      };
+      const hasMv = divTeams => divTeams.some(s => s.rank_movement != null || s.rank_movement === null && s.rank_movement !== undefined);
       const mkRow = s => `<div class="standings-row${s.is_mine ? ' mine' : ''}">
         <div class="standings-rank">${s.rank}</div>
+        ${'rank_movement' in s ? `<div class="standings-mv">${mvArrow(s)}</div>` : ''}
         <div class="standings-name">${s.name}${s.is_mine ? ' ★' : ''}</div>
         <div class="standings-pts">${s.points}</div>
         <div class="standings-record">${recStr(s)}</div>
@@ -1352,8 +1366,9 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opt
       const myDiv    = mine ? (mine.division || 'Unknown') : null;
       const divTeams = myDiv ? all.filter(s => (s.division || 'Unknown') === myDiv) : all;
       const divLabel = myDiv || 'Season Standings';
+      const showMv   = divTeams.some(s => 'rank_movement' in s);
       sPane.innerHTML = `<div class="standings-wrap">
-        <div class="standings-title">${data.cumulative_division || 'Season'} · ${divLabel} · ${divTeams.length} teams<span style="float:right;letter-spacing:0.04em">PTS &nbsp;&nbsp;&nbsp;&nbsp; W–L</span></div>
+        <div class="standings-title">${data.cumulative_division || 'Season'} · ${divLabel} · ${divTeams.length} teams<span style="float:right;letter-spacing:0.04em">${showMv ? '±&nbsp;&nbsp;' : ''}PTS &nbsp;&nbsp;&nbsp;&nbsp; W–L</span></div>
         ${divTeams.map(mkRow).join('')}
       </div>`;
     } else {

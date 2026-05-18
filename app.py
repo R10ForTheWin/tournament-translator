@@ -1838,12 +1838,14 @@ def _read_futures_team_div_map(excel_src) -> dict:
     return {k: v[1] for k, v in team_div.items()}
 
 
-def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
+def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str,
+                                        max_weekend: int | None = None):
     """Aggregate season standings for all teams in the same age/gender group across all Futures weekends.
 
     Teams are grouped by age/gender only (not division) so promotion/relegation between
     weekends doesn't drop any weekend's data. Returns (label, standings_list) where each
     entry has: {name, points, reg_wins, shootout_wins, shootout_losses, reg_losses, rank, total, is_mine}.
+    max_weekend: if set, only include weekends ≤ this number (used to compute previous-weekend rank).
     Returns (None, None) on failure.
     """
     try:
@@ -1899,9 +1901,9 @@ def _read_futures_cumulative_standings(excel_src, team: str, sheet_name: str):
             c0 = cell0.strip()
             if c0:
                 if _is_our_section(c0):
-                    in_section = True
                     m = re.search(r'Weekend\s*(\d+)', c0, re.I)
                     current_weekend = int(m.group(1)) if m else None
+                    in_section = (max_weekend is None or (current_weekend is not None and current_weekend <= max_weekend))
                     current_div = None
                     continue
                 elif _is_any_section(c0):
@@ -3022,6 +3024,32 @@ def api_games(tournament_id, team):
         if hasattr(excel, 'seek'):
             excel.seek(0)
         cumulative_division, cumulative_standings = _read_futures_cumulative_standings(excel, team, sheet)
+
+        # Compute rank movement vs previous weekend (show ↑/↓ on scoreboard)
+        if cumulative_standings and weekend_num and weekend_num >= 3:
+            if hasattr(excel, 'seek'):
+                excel.seek(0)
+            _, prev_standings = _read_futures_cumulative_standings(
+                excel, team, sheet, max_weekend=weekend_num - 1)
+            if prev_standings:
+                prev_rank_by_name = {}
+                for s in prev_standings:
+                    key = s['name'].upper().strip()
+                    if s.get('division') == cumulative_standings[0].get('division') if cumulative_standings else True:
+                        prev_rank_by_name[key] = s['rank']
+                # Build per-division prev rank maps
+                prev_rank_by_div: dict = {}
+                for s in prev_standings:
+                    div = s.get('division') or 'D?'
+                    prev_rank_by_div.setdefault(div, {})[s['name'].upper().strip()] = s['rank']
+                for s in cumulative_standings:
+                    div = s.get('division') or 'D?'
+                    key = s['name'].upper().strip()
+                    prev_r = prev_rank_by_div.get(div, {}).get(key)
+                    if prev_r is not None:
+                        s['rank_movement'] = prev_r - s['rank']  # positive = moved up
+                    else:
+                        s['rank_movement'] = None  # new team this weekend
 
     # WPL crossover game tree
     wpl_bracket = None
