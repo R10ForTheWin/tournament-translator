@@ -2938,12 +2938,28 @@ def api_games(tournament_id, team):
                 if (sheet is None or g["sheet"] == sheet)
                 and (team_matches(g["white_team"], team) or team_matches(g["dark_team"], team))]
 
+    # ── Phase 2: team identity scoping ────────────────────────────────────────
+    # Team names (e.g. "Trojan Gold") are reused across age groups and divisions.
+    # If no sheet was specified and the team appears in multiple sheets, lock to
+    # the one with the most direct game matches — that's the relevant division.
+    # This prevents 12u Boys games bleeding into a 16u Boys search.
+    if sheet is None and my_games:
+        from collections import Counter
+        sheet_counts = Counter(g["sheet"] for g in my_games)
+        if len(sheet_counts) > 1:
+            primary_sheet = sheet_counts.most_common(1)[0][0]
+            print(f"[team-scope] {team!r}: found in {sorted(sheet_counts)} — "
+                  f"scoping to {primary_sheet!r} ({sheet_counts[primary_sheet]} games)")
+            my_games = [g for g in my_games if g["sheet"] == primary_sheet]
+
     div_map = {}
     for g in games:
         div_map.setdefault(g["sheet"], []).append(g)
 
-    # Expand to include bracket games (pool-finish and W#/L# slots) the team can reach
-    for sheet_key in {g["sheet"] for g in my_games}:
+    # Expand to include bracket games (pool-finish and W#/L# slots) the team can reach.
+    # Scoped to the primary sheet — never expand across age groups.
+    primary_sheets = {g["sheet"] for g in my_games}
+    for sheet_key in primary_sheets:
         direct = [g for g in my_games if g["sheet"] == sheet_key]
         my_games.extend(_expand_bracket_games(team, direct, div_map.get(sheet_key, [])))
 
