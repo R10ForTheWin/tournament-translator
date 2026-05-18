@@ -3381,19 +3381,19 @@ def api_games(tournament_id, team):
     # RED forces flat schedule; GREEN/YELLOW allow bracket
     display_mode = "bracket" if bracket_confidence in ("green", "yellow") and wpl_bracket else "flat_schedule"
 
-    # Build canonical bracket object (Phase 4 — single source of truth for rendering)
-    canonical_bracket = _build_canonical_bracket(
-        team, our_team_name, wpl_bracket,
-        bracket_confidence, bracket_warnings, display_mode,
-        my_games[0].get("sheet", "") if my_games else "",
-    ) if wpl_bracket else None
-
     our_team_name = team.title()
     if my_games:
         sname = my_games[0].get("sheet", "")
         fn = friendly_team_name(team, sname)
         if fn:
             our_team_name = fn.split("·")[0].strip()
+
+    # Build canonical bracket object (Phase 4 — single source of truth for rendering)
+    canonical_bracket = _build_canonical_bracket(
+        team, our_team_name, wpl_bracket,
+        bracket_confidence, bracket_warnings, display_mode,
+        my_games[0].get("sheet", "") if my_games else "",
+    ) if wpl_bracket else None
 
     parse_format = games[0].get("format") if games else None
     return jsonify({
