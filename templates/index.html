@@ -1287,10 +1287,30 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opt
     el.appendChild(bracketPane);
     el.appendChild(standingsPane);
 
-    // Schedule pane — show full played + upcoming list (and bracket tree if available)
-    const schedGames = data.wpl_bracket && data.wpl_bracket.length
+    // ── Bracket confidence + display mode ──────────────────────────────────
+    // display_mode comes from the API. 'bracket' = staircase is trustworthy.
+    // 'flat_schedule' = bracket failed validation; show clean chronological list.
+    const useBracket = data.display_mode === 'bracket'
+                    && data.wpl_bracket && data.wpl_bracket.length;
+    const schedGames = useBracket
       ? wplBracketToStaircase(data.wpl_bracket)
       : [...(data.played || []), ...(data.upcoming || [])];
+
+    // ── Debug/admin warning banner ──────────────────────────────────────────
+    // Only visible when ?debug=1 is in the URL. Parents never see this.
+    const isDebug = new URLSearchParams(window.location.search).get('debug') === '1';
+    if (isDebug && data.bracket_confidence && data.bracket_confidence !== 'green') {
+      const conf    = data.bracket_confidence.toUpperCase();
+      const clr     = data.bracket_confidence === 'red' ? '#ff3b30' : '#ff9500';
+      const banner  = document.createElement('div');
+      banner.style.cssText = `background:${clr}22;border:1px solid ${clr};border-radius:8px;`
+        + `padding:10px 14px;margin-bottom:12px;font-size:12px;color:${clr};`;
+      const mode = data.display_mode === 'flat_schedule' ? ' · Showing flat schedule' : '';
+      banner.innerHTML = `<strong>⚠ Bracket ${conf}${mode}</strong><br>`
+        + (data.bracket_warnings || []).map(w => `• ${w}`).join('<br>');
+      bracketPane.appendChild(banner);
+    }
+
     bracketPane.appendChild(buildBracketView(schedGames, tournamentId, team, ourName));
 
     // Show subnav tabs and set active state

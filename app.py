@@ -2668,51 +2668,161 @@ def _check_bracket_structure(team: str, tree: list,
     return issues
 
 
-def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
-                           serialized_nodes: list = None) -> list:
-    """Deterministic bracket integrity checks. Returns list of warning strings.
-    Fires a background Haiku diagnosis when issues are found.
-    serialized_nodes: the JSON-ready nodes with resolved 'opponent' strings,
-    used for data-quality checks (unresolved slots, stale names)."""
-    if not nodes:
-        return ["bracket is empty"]
+def _bracket_has_cycle(nodes: list) -> bool:
+    """DFS cycle detection on bracket graph. Returns True if a cycle exists."""
+    node_map = {n["game_id"]: n for n in nodes}
+    visited: set = set()
+    rec_stack: set = set()
 
-    warnings = []
-    all_ids = {n["game_id"] for n in nodes}
+    def dfs(gid: str) -> bool:
+        visited.add(gid)
+        rec_stack.add(gid)
+        node = node_map.get(gid)
+        if node:
+            for nid in (node.get("win_next_ids") or []) + (node.get("lose_next_ids") or []):
+                if nid not in visited:
+                    if dfs(nid):
+                        return True
+                elif nid in rec_stack:
+                    return True
+        rec_stack.discard(gid)
+        return False
+
+    for n in nodes:
+        if n["game_id"] not in visited:
+            if dfs(n["game_id"]):
+                return True
+    return False
+
+
+def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
+                           serialized_nodes: list = None) -> tuple[str, list]:
+    """Deterministic bracket integrity checks.
+
+    Returns (confidence, warnings) where confidence is 'green' | 'yellow' | 'red'.
+    RED  → bracket is not trustworthy; caller must force display_mode='flat_schedule'.
+    YELLOW → bracket is usable but has warnings visible to admin/debug users.
+    GREEN  → bracket is structurally sane and safe to render.
+
+    Fires a background LLM diagnosis when issues are found.
+    """
+    red: list   = []
+    yellow: list = []
+
+    # ── Empty tree ─────────────────────────────────────────────────────────────
+    if not nodes:
+        red.append("bracket is empty — wpl_bracket could not be built")
+        _fire_llm_check(team, nodes, red)
+        return "red", red
+
+    all_ids    = {n["game_id"] for n in nodes}
     seen_ids: set = set()
+    node_map   = {n["game_id"]: n for n in nodes}
     non_placeholder = [n for n in nodes if not n.get("placeholder")]
 
+    # ── Duplicate game IDs ─────────────────────────────────────────────────────
     for n in nodes:
         gid = n["game_id"]
-
         if gid in seen_ids:
-            warnings.append(f"duplicate game_id {gid!r}")
+            red.append(f"duplicate game_id {gid!r} in bracket")
         seen_ids.add(gid)
 
+    # ── Dangling next_ids ──────────────────────────────────────────────────────
+    for n in nodes:
+        gid = n["game_id"]
         for ref_id in (n.get("win_next_ids") or []):
             if ref_id not in all_ids:
-                warnings.append(f"game {gid}: win_next_id {ref_id!r} missing from tree")
+                red.append(f"game {gid}: win_next_id {ref_id!r} missing from tree")
         for ref_id in (n.get("lose_next_ids") or []):
             if ref_id not in all_ids:
-                warnings.append(f"game {gid}: lose_next_id {ref_id!r} missing from tree")
+                red.append(f"game {gid}: lose_next_id {ref_id!r} missing from tree")
 
-        if not n.get("placeholder") and team_matches(n.get("opponent", ""), team):
-            warnings.append(f"game {gid}: opponent resolves to own team")
+    # ── Cycle detection ────────────────────────────────────────────────────────
+    if _bracket_has_cycle(nodes):
+        red.append("bracket graph contains a cycle — impossible bracket structure")
 
-    if not non_placeholder:
-        warnings.append("all bracket nodes are placeholders — no real games found")
+    # ── Node count ceiling ────────────────────────────────────────────────────
+    # FORMAT A max = 7 (root + 2 Saturday + 4 Sunday).
+    # FORMAT B max ≈ 5–6.  Anything above 7 = runaway expansion.
+    if len(nodes) > 7:
+        red.append(
+            f"bracket has {len(nodes)} nodes — expected ≤7; "
+            "likely a mis-identified prelim or finish-slot pulling in unrelated games"
+        )
 
-    # Invariant check: a played node must never be a placeholder
+    # ── Played game still placeholder (invariant violation) ───────────────────
     for n in nodes:
         if n.get("played") and n.get("placeholder"):
-            warnings.append(
+            red.append(
                 f"game {n['game_id']}: played=True but placeholder=True — "
-                "score exists in spreadsheet but node will render as upcoming; "
-                "tree builder invariant violated"
+                "score exists in spreadsheet but node will render as upcoming"
             )
 
-    # Championship completeness: if team has multiple upcoming games all on Saturday
-    # with no Sunday game in the bracket, flag it — Sunday data is likely missing.
+    # ── Played game missing score ──────────────────────────────────────────────
+    for n in nodes:
+        if n.get("played") and not n.get("placeholder"):
+            if n.get("white_score") is None or n.get("dark_score") is None:
+                red.append(
+                    f"game {n['game_id']}: played=True but score is None — "
+                    "game marked played with no score data"
+                )
+
+    # ── All nodes are placeholders ─────────────────────────────────────────────
+    if not non_placeholder:
+        red.append("all bracket nodes are placeholders — no real games confirmed")
+
+    # ── Self-referential opponent ──────────────────────────────────────────────
+    for n in nodes:
+        if not n.get("placeholder") and team_matches(n.get("opponent", ""), team):
+            red.append(f"game {n['game_id']}: opponent resolves to own team")
+
+    # ── Foreign game detection ─────────────────────────────────────────────────
+    # Each non-root node must name the team directly OR reference a tree game
+    # via WIN GM #N / LOS GM #N.
+    tree_game_nums = {_game_num(n["game_id"]) for n in nodes} - {None}
+    for n in nodes:
+        if not n.get("src_game_id"):
+            continue  # root exempt
+        gid = n["game_id"]
+        direct = (team_matches(n.get("white_team", ""), team)
+                  or team_matches(n.get("dark_team", ""), team))
+        if not direct:
+            ref_found = any(
+                (wgm := re.search(r'\b(?:WIN|LOS)\s+GM\s+#(\d+)', slot, re.IGNORECASE))
+                and str(int(wgm.group(1))) in tree_game_nums
+                for slot in (n.get("white_team", ""), n.get("dark_team", ""))
+            )
+            if not ref_found:
+                red.append(
+                    f"game {gid}: foreign game — neither slot names {team!r} "
+                    f"nor references a tree game via WIN/LOS GM # "
+                    f"(slots: {n.get('white_team')!r} / {n.get('dark_team')!r})"
+                )
+
+    # ── Chronological monotonicity ─────────────────────────────────────────────
+    # Walking win_next_ids from root, each node's datetime must be ≥ parent's.
+    root_node = next((n for n in nodes if not n.get("src_game_id")), None)
+    if root_node:
+        visited2: set = set()
+        stack = [(root_node, None)]
+        while stack:
+            cur, parent_dt = stack.pop()
+            cid = cur["game_id"]
+            if cid in visited2:
+                continue
+            visited2.add(cid)
+            cur_dt = (datetime.combine(cur["date"], cur["time"])
+                      if cur.get("date") and cur.get("time") else None)
+            if parent_dt and cur_dt and cur_dt < parent_dt:
+                red.append(
+                    f"game {cid}: datetime {cur_dt} precedes parent {parent_dt} "
+                    "— backwards time jump, likely a foreign game"
+                )
+            for nid in (cur.get("win_next_ids") or []):
+                if nid in node_map and nid not in visited2:
+                    stack.append((node_map[nid], cur_dt or parent_dt))
+
+    # ── Missing Sunday node ────────────────────────────────────────────────────
     if upcoming:
         from datetime import date as _date
         upcoming_dates = {g.get("date") for g in upcoming if g.get("date")}
@@ -2724,90 +2834,48 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
             isinstance(d, _date) and d.weekday() == 6 for d in node_dates
         )
         if all_sat and len(upcoming_dates) >= 1 and not has_sun_node:
-            warnings.append(
+            yellow.append(
                 f"all {len(upcoming)} upcoming game(s) are on Saturday with no Sunday "
-                f"node in bracket — Sunday placement data may be missing from spreadsheet"
+                "node in bracket — Sunday placement data may be missing"
             )
 
-    # ── Check 1: node count ceiling ───────────────────────────────────────────
-    # FORMAT A (bracket crossover) can have up to 7 nodes: root + 2 Saturday +
-    # 4 Sunday.  FORMAT B (round-robin) peaks around 5-6.  Anything above 7 is
-    # almost certainly runaway expansion from a mis-identified prelim game.
-    if len(nodes) > 7:
-        warnings.append(
-            f"tree has {len(nodes)} nodes — expected ≤7 for any WPL weekend format; "
-            "possible runaway expansion from an incorrectly-identified prelim or "
-            "finish-slot game pulling in unrelated WIN GM # games"
-        )
-
-    # ── Check 2: chain legitimacy ──────────────────────────────────────────────
-    # For every non-root node, at least one of its team slots must either name
-    # the team directly OR reference a tree game via WIN GM #N / LOS GM #N.
-    # A node that passes neither test is a foreign game that snuck in.
-    tree_game_nums = {_game_num(n["game_id"]) for n in nodes} - {None}
-    for n in nodes:
-        if not n.get("src_game_id"):
-            continue  # root is exempt
-        gid = n["game_id"]
-        direct = (team_matches(n.get("white_team", ""), team)
-                  or team_matches(n.get("dark_team", ""), team))
-        if not direct:
-            ref_found = any(
-                (wgm := re.search(r'\b(?:WIN|LOS)\s+GM\s+#(\d+)', slot, re.IGNORECASE))
-                and str(int(wgm.group(1))) in tree_game_nums
-                for slot in (n.get("white_team", ""), n.get("dark_team", ""))
-            )
-            if not ref_found:
-                warnings.append(
-                    f"game {gid}: foreign game — neither slot names {team!r} "
-                    f"nor references a tree game via WIN/LOS GM # "
-                    f"(slots: {n.get('white_team')!r} / {n.get('dark_team')!r})"
-                )
-
-    # ── Check 3: chronological monotonicity ───────────────────────────────────
-    # Walking win_next_ids from the root, each node's datetime should be ≥ its
-    # parent's.  A backwards jump means a foreign game broke the ordering.
-    node_map = {n["game_id"]: n for n in nodes}
-    root_node = next((n for n in nodes if not n.get("src_game_id")), None)
-    if root_node:
-        visited: set = set()
-        stack = [(root_node, None)]  # (node, parent_datetime)
-        while stack:
-            cur, parent_dt = stack.pop()
-            cid = cur["game_id"]
-            if cid in visited:
-                continue
-            visited.add(cid)
-            cur_dt = (datetime.combine(cur["date"], cur["time"])
-                      if cur.get("date") and cur.get("time") else None)
-            if parent_dt and cur_dt and cur_dt < parent_dt:
-                warnings.append(
-                    f"game {cid}: time {cur_dt} precedes its parent {parent_dt} "
-                    "— chain has a backwards time jump (likely a foreign game)"
-                )
-            for nid in (cur.get("win_next_ids") or []):
-                if nid in node_map and nid not in visited:
-                    stack.append((node_map[nid], cur_dt or parent_dt))
-
-    # ── Data-quality checks on serialized nodes (resolved opponent strings) ───
+    # ── Unresolved opponent slot strings (yellow — data quality only) ──────────
     if serialized_nodes:
         for sn in serialized_nodes:
             opp = sn.get("opponent", "")
-            # Warn if opponent still looks like a raw slot string (resolution failed)
             if opp and _SLOT_LIKE_RE.match(opp):
-                warnings.append(
-                    f"game {sn['game_id']}: opponent {opp!r} looks like an unresolved slot"
+                yellow.append(
+                    f"game {sn['game_id']}: opponent {opp!r} is an unresolved slot string"
                 )
 
+    # ── Classify confidence ────────────────────────────────────────────────────
+    all_warnings = red + yellow
+    if red:
+        confidence = "red"
+    elif yellow:
+        confidence = "yellow"
+    else:
+        confidence = "green"
+
+    if all_warnings:
+        print(f"[bracket-validate] {team} → {confidence}: {all_warnings}")
+        threading.Thread(
+            target=_run_bracket_llm_check,
+            args=(team, nodes, all_warnings),
+            daemon=True,
+        ).start()
+
+    return confidence, all_warnings
+
+
+def _fire_llm_check(team, nodes, warnings):
+    """Convenience wrapper for the background LLM diagnosis thread."""
     if warnings:
-        print(f"[bracket-validate] {team}: {warnings}")
         threading.Thread(
             target=_run_bracket_llm_check,
             args=(team, nodes, warnings),
             daemon=True,
         ).start()
-
-    return warnings
 
 
 def _last_meeting(team: str, opponent: str, all_games: list,
@@ -3151,9 +3219,25 @@ def api_games(tournament_id, team):
             return d
         wpl_bracket = [_serialize_tree_node(n, div_games_for_tree) for n in tree]
 
-    bracket_warnings = (_validate_wpl_bracket(team, tree, upcoming=upcoming_out,
-                                               serialized_nodes=wpl_bracket)
-                        if wpl_bracket else [])
+    # ── Bracket confidence + display mode ────────────────────────────────────
+    # WPL tournaments always attempt a bracket. Non-WPL/NJO: no bracket expected.
+    is_bracket_tournament = (tournament_id in WPL_TOURNAMENTS
+                             or tournament_id in {"jo-quals", "junior-olympics"})
+
+    if wpl_bracket:
+        bracket_confidence, bracket_warnings = _validate_wpl_bracket(
+            team, tree, upcoming=upcoming_out, serialized_nodes=wpl_bracket)
+    elif is_bracket_tournament and my_games:
+        # Bracket expected but missing — hard RED
+        bracket_confidence = "red"
+        bracket_warnings   = ["bracket could not be built — wpl_bracket is null; "
+                               "check tree builder logs for this team"]
+    else:
+        bracket_confidence = "green"
+        bracket_warnings   = []
+
+    # RED forces flat schedule; GREEN/YELLOW allow bracket
+    display_mode = "bracket" if bracket_confidence in ("green", "yellow") and wpl_bracket else "flat_schedule"
 
     our_team_name = team.title()
     if my_games:
@@ -3173,6 +3257,8 @@ def api_games(tournament_id, team):
         "cumulative_standings": cumulative_standings,
         "cumulative_division":  cumulative_division,
         "wpl_bracket":          wpl_bracket,
+        "bracket_confidence":   bracket_confidence,
+        "display_mode":         display_mode,
         "bracket_warnings":     bracket_warnings or None,
         "cache_age_s":          _cache_age(tournament_id),
         "cache_ttl_s":          URL_CACHE_TTL,
