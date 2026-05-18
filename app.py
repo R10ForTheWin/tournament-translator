@@ -1500,12 +1500,19 @@ def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> l
                 pg, pg_rank = pg_item if isinstance(pg_item, tuple) else (pg_item, None)
                 if pg["game_id"] in seen: continue
                 if _game_num(pg["game_id"]) is None: continue  # skip embedded standings rows
-                # Placeholder only if not yet played — once the game has a score it's real
-                pn = _make_node(pg, prev_node["game_id"], None, not pg.get("played"), "roundrobin")
+                pn = _make_node(pg, prev_node["game_id"], None, True, "roundrobin")
                 pn["placement_rank"] = pg_rank
                 prev_node["win_next_ids"].append(pg["game_id"])
                 prev_node["lose_next_ids"].append(pg["game_id"])
                 out.append(pn); seen.add(pg["game_id"])
+
+    # Invariant: a played game is never a placeholder.
+    # Scores in the spreadsheet are ground truth — clear placeholder regardless of
+    # how the node was constructed. This catches any future build-time assumptions
+    # that go stale once the organiser enters results.
+    for node in out:
+        if node.get("played"):
+            node["placeholder"] = False
 
     return out
 
@@ -2694,6 +2701,15 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
 
     if not non_placeholder:
         warnings.append("all bracket nodes are placeholders — no real games found")
+
+    # Invariant check: a played node must never be a placeholder
+    for n in nodes:
+        if n.get("played") and n.get("placeholder"):
+            warnings.append(
+                f"game {n['game_id']}: played=True but placeholder=True — "
+                "score exists in spreadsheet but node will render as upcoming; "
+                "tree builder invariant violated"
+            )
 
     # Championship completeness: if team has multiple upcoming games all on Saturday
     # with no Sunday game in the bracket, flag it — Sunday data is likely missing.
