@@ -1290,10 +1290,9 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opt
     // ── Bracket confidence + display mode ──────────────────────────────────
     // display_mode comes from the API. 'bracket' = staircase is trustworthy.
     // 'flat_schedule' = bracket failed validation; show clean chronological list.
-    const useBracket = data.display_mode === 'bracket'
-                    && data.wpl_bracket && data.wpl_bracket.length;
+    const useBracket = data.display_mode === 'bracket' && data.canonical_bracket;
     const schedGames = useBracket
-      ? wplBracketToStaircase(data.wpl_bracket)
+      ? canonicalToStaircase(data.canonical_bracket)
       : [...(data.played || []), ...(data.upcoming || [])];
 
     // ── Debug/admin warning banner ──────────────────────────────────────────
@@ -1677,93 +1676,16 @@ function buildWplTree(data, tournamentId, team, ourName) {
 
 
 /**
- * Convert WPL bracket tree nodes (from data.wpl_bracket) into the flat
- * game-list format that buildBracketView expects, with game_num (column)
- * and path ("win"/"lose") assigned so the horizontal staircase renders correctly.
+ * Convert a canonical bracket object (data.canonical_bracket) into the flat
+ * game-list format that buildBracketView expects.
  *
- * Bracket format (Trojan Gold):
- *   col 1: root game
- *   col 2: Saturday W/L bracket games
- *   col 3: Sunday morning games (1 per path)
- *   col 4: Sunday afternoon pair games (1st/4th place doubles)
- *
- * Round-robin format (Trojan Cardinal):
- *   col 1..N: named games in order
- *   col N+1:  placement game alternatives
+ * Phase 4: game_num, path, and is_alternative are now pre-computed on the
+ * backend (_compute_staircase_layout). The frontend just merges guaranteed
+ * and possible games — no BFS, no bracket interpretation here.
  */
-function wplBracketToStaircase(bracket) {
-  if (!bracket || !bracket.length) return [];
-  const gameMap = {};
-  bracket.forEach(n => { gameMap[n.game_id] = n; });
-  const root = bracket.find(n => !n.src_game_id);
-  if (!root) return bracket;
-
-  // Neutral games: appear in BOTH win_next_ids AND lose_next_ids of the same parent.
-  // Round-robin sequential games and placement alternatives are neutral — no IF WE WIN/LOSE label.
-  const neutralIds = new Set();
-  // Alternative games: neutral games that have siblings (mutual exclusives from the same parent).
-  // Break tiles between alternatives are suppressed since only one will be played.
-  const alternativeIds = new Set();
-  bracket.forEach(n => {
-    const winSet = new Set(n.win_next_ids || []);
-    const neutralGroup = (n.lose_next_ids || []).filter(id => winSet.has(id));
-    neutralGroup.forEach(id => neutralIds.add(id));
-    if (neutralGroup.length > 1) neutralGroup.forEach(id => alternativeIds.add(id));
-  });
-
-  // Secondary games: non-neutral games where a parent has multiple next_ids in one branch;
-  // the later ones (by time) go one column deeper — e.g. Sunday afternoon finals for 1st/4th.
-  const secondaryIds = new Set();
-  bracket.forEach(n => {
-    [n.win_next_ids, n.lose_next_ids].forEach(ids => {
-      if (!ids || ids.length < 2) return;
-      const eligible = ids.filter(id => !neutralIds.has(id));
-      if (eligible.length < 2) return;
-      const sorted = eligible.map(id => gameMap[id]).filter(Boolean)
-        .sort((a, b) => (_dayNum(a.date) - _dayNum(b.date)) ||
-                        ((parseTimeMin(a.time) || 0) - (parseTimeMin(b.time) || 0)));
-      sorted.slice(1).forEach(g => secondaryIds.add(g.game_id));
-    });
-  });
-
-  const result = [];
-  const visited = new Set();
-  const queue = [{id: root.game_id, depth: 1, branch: undefined}];
-
-  while (queue.length) {
-    const {id, depth, branch} = queue.shift();
-    if (visited.has(id)) continue;
-    visited.add(id);
-    const node = gameMap[id];
-    if (!node) continue;
-    // Skip WRONG-PATH placeholders: parent is already played and this game is on a
-    // branch the team didn't take (non-neutral). Neutral placeholders (round-robin
-    // placement games that follow regardless of win/lose) are always kept.
-    const parentNode = node.src_game_id ? gameMap[node.src_game_id] : null;
-    if (node.placeholder && parentNode && parentNode.played && !neutralIds.has(id)) continue;
-
-    const isNeutral  = neutralIds.has(id);
-    const actualDepth = secondaryIds.has(id) ? depth + 1 : depth;
-
-    result.push(Object.assign({}, node, {
-      game_num:       actualDepth,
-      path:           isNeutral ? null : branch,
-      is_alternative: alternativeIds.has(id),
-    }));
-
-    // Neutral nodes pass no branch to children (they stay neutral).
-    // Branching nodes: all descendants stay on the same branch (win or lose from game-1 split).
-    const winBranch  = isNeutral ? undefined : (branch !== undefined ? branch : 'win');
-    const loseBranch = isNeutral ? undefined : (branch !== undefined ? branch : 'lose');
-
-    (node.win_next_ids  || []).forEach(cid => {
-      if (!visited.has(cid)) queue.push({id: cid, depth: actualDepth + 1, branch: winBranch});
-    });
-    (node.lose_next_ids || []).forEach(cid => {
-      if (!visited.has(cid)) queue.push({id: cid, depth: actualDepth + 1, branch: loseBranch});
-    });
-  }
-  return result;
+function canonicalToStaircase(cb) {
+  if (!cb) return [];
+  return [...(cb.guaranteed_games || []), ...(cb.possible_games || [])];
 }
 
 function buildBracketView(allGames, tournamentId, team, ourName) {

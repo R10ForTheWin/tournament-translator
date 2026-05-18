@@ -2878,6 +2878,125 @@ def _fire_llm_check(team, nodes, warnings):
         ).start()
 
 
+def _compute_staircase_layout(nodes: list) -> dict:
+    """BFS over raw bracket nodes to assign game_num, path, is_alternative.
+
+    Works on raw tree nodes (which have proper date/time objects) so sorting
+    is accurate. Returns {game_id: {game_num, path, is_alternative}}.
+
+    This is the backend equivalent of the frontend wplBracketToStaircase BFS —
+    moving it here means the frontend receives pre-ordered data and does no
+    bracket interpretation itself (Phase 4 canonical object requirement).
+    """
+    if not nodes:
+        return {}
+
+    node_map = {n["game_id"]: n for n in nodes}
+    root = next((n for n in nodes if not n.get("src_game_id")), None)
+    if not root:
+        return {}
+
+    # Neutral IDs: appear in BOTH win_next_ids AND lose_next_ids of same parent.
+    neutral_ids: set = set()
+    alternative_ids: set = set()
+    for n in nodes:
+        win_set = set(n.get("win_next_ids") or [])
+        neutral_group = [nid for nid in (n.get("lose_next_ids") or []) if nid in win_set]
+        neutral_ids.update(neutral_group)
+        if len(neutral_group) > 1:
+            alternative_ids.update(neutral_group)
+
+    # Secondary IDs: non-neutral siblings where the later-timed game goes one column deeper.
+    secondary_ids: set = set()
+    for n in nodes:
+        for ids in [n.get("win_next_ids") or [], n.get("lose_next_ids") or []]:
+            eligible = [nid for nid in ids if nid not in neutral_ids]
+            if len(eligible) < 2:
+                continue
+            eligible_nodes = sorted(
+                [node_map[nid] for nid in eligible if nid in node_map],
+                key=lambda g: (g.get("date") or date.min,
+                               g.get("time") or datetime.min.time()),
+            )
+            for g in eligible_nodes[1:]:
+                secondary_ids.add(g["game_id"])
+
+    layout: dict = {}
+    visited: set = set()
+    queue = [(root["game_id"], 1, None)]  # (game_id, depth, branch)
+
+    while queue:
+        gid, depth, branch = queue.pop(0)
+        if gid in visited:
+            continue
+        visited.add(gid)
+        node = node_map.get(gid)
+        if not node:
+            continue
+
+        # Skip wrong-path placeholders (non-neutral with a played parent).
+        parent = node_map.get(node.get("src_game_id")) if node.get("src_game_id") else None
+        if node.get("placeholder") and parent and parent.get("played") and gid not in neutral_ids:
+            continue
+
+        actual_depth = depth + 1 if gid in secondary_ids else depth
+        is_neutral   = gid in neutral_ids
+        layout[gid]  = {
+            "game_num":       actual_depth,
+            "path":           None if is_neutral else branch,
+            "is_alternative": gid in alternative_ids,
+        }
+
+        win_branch  = None if is_neutral else (branch if branch is not None else "win")
+        lose_branch = None if is_neutral else (branch if branch is not None else "lose")
+
+        for nid in (node.get("win_next_ids") or []):
+            if nid not in visited:
+                queue.append((nid, actual_depth + 1, win_branch))
+        for nid in (node.get("lose_next_ids") or []):
+            if nid not in visited:
+                queue.append((nid, actual_depth + 1, lose_branch))
+
+    return layout
+
+
+def _build_canonical_bracket(team: str, our_team_name: str, wpl_bracket: list,
+                              confidence: str, warnings: list, display_mode: str,
+                              sheet_name: str) -> dict | None:
+    """Build the canonical bracket object — single source of truth for rendering.
+
+    guaranteed_games: nodes that are confirmed in the team's bracket path (not placeholder)
+    possible_games:   placeholder nodes (uncertain path, shown dimmed)
+    edges:            explicit graph edges with win/loss/always conditions
+    """
+    if not wpl_bracket:
+        return None
+
+    guaranteed = [n for n in wpl_bracket if not n.get("placeholder")]
+    possible   = [n for n in wpl_bracket if n.get("placeholder")]
+
+    edges = []
+    for n in wpl_bracket:
+        win_ids  = set(n.get("win_next_ids")  or [])
+        lose_ids = set(n.get("lose_next_ids") or [])
+        for nid in win_ids | lose_ids:
+            in_win  = nid in win_ids
+            in_lose = nid in lose_ids
+            condition = "always" if (in_win and in_lose) else ("win" if in_win else "loss")
+            edges.append({"from": n["game_id"], "to": nid, "condition": condition})
+
+    return {
+        "team":               our_team_name,
+        "division":           sheet_name,
+        "bracket_confidence": confidence,
+        "display_mode":       display_mode,
+        "bracket_warnings":   warnings or [],
+        "guaranteed_games":   guaranteed,
+        "possible_games":     possible,
+        "edges":              edges,
+    }
+
+
 def _last_meeting(team: str, opponent: str, all_games: list,
                   before_date=None, sheet: str = None) -> dict | None:
     """Return the most recent played game between team and opponent.
@@ -3235,6 +3354,13 @@ def api_games(tournament_id, team):
             return d
         wpl_bracket = [_serialize_tree_node(n, div_games_for_tree) for n in tree]
 
+        # Annotate serialized nodes with staircase layout (game_num, path, is_alternative).
+        # Computed on raw nodes (proper date/time objects); applied to serialized copies.
+        layout = _compute_staircase_layout(tree)
+        for sn in wpl_bracket:
+            sn.update(layout.get(sn["game_id"],
+                                 {"game_num": 1, "path": None, "is_alternative": False}))
+
     # ── Bracket confidence + display mode ────────────────────────────────────
     # WPL tournaments always attempt a bracket. Non-WPL/NJO: no bracket expected.
     is_bracket_tournament = (tournament_id in WPL_TOURNAMENTS
@@ -3255,6 +3381,13 @@ def api_games(tournament_id, team):
     # RED forces flat schedule; GREEN/YELLOW allow bracket
     display_mode = "bracket" if bracket_confidence in ("green", "yellow") and wpl_bracket else "flat_schedule"
 
+    # Build canonical bracket object (Phase 4 — single source of truth for rendering)
+    canonical_bracket = _build_canonical_bracket(
+        team, our_team_name, wpl_bracket,
+        bracket_confidence, bracket_warnings, display_mode,
+        my_games[0].get("sheet", "") if my_games else "",
+    ) if wpl_bracket else None
+
     our_team_name = team.title()
     if my_games:
         sname = my_games[0].get("sheet", "")
@@ -3273,6 +3406,7 @@ def api_games(tournament_id, team):
         "cumulative_standings": cumulative_standings,
         "cumulative_division":  cumulative_division,
         "wpl_bracket":          wpl_bracket,
+        "canonical_bracket":    canonical_bracket,
         "bracket_confidence":   bracket_confidence,
         "display_mode":         display_mode,
         "bracket_warnings":     bracket_warnings or None,
