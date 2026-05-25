@@ -382,6 +382,50 @@ def test_cca_opponent_slots() -> int:
     return failures
 
 
+# ── Game-num (bracket depth) regression test ─────────────────────────────────
+# Regression: lose-path game (Saturday) was getting game_num=3 while win-path
+# (Friday) got game_num=2. Both are "Game 2" — the second game in the journey.
+# Fixed by using BFS depth from root instead of chronological slot order.
+
+CCA_GAME_NUM_CHECKS = [
+    # (tournament_id, team, sheet, game_id, expected_game_num, reason)
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-23", 1, "first game = Game 1"),
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-24", 2, "win-path Game 2 = depth 2"),
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-46", 2, "lose-path Game 2 = same depth as win"),
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-38", 3, "placement Game 3"),
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-40", 3, "placement Game 3"),
+]
+
+def test_cca_game_nums() -> int:
+    """Verify win-path and lose-path games share the same game_num (same bracket depth).
+
+    The bug: lose-path game (Saturday) got game_num=3 because chronological sort
+    placed it after the win-path game (Friday). Fix: BFS depth from root game.
+    """
+    from app import app as _flask_app
+    import json as _json
+
+    failures = 0
+    with _flask_app.test_client() as c:
+        # Group by (tournament_id, team, sheet) to fetch once
+        seen: dict = {}
+        for tid, team, sheet, game_id, expected_num, reason in CCA_GAME_NUM_CHECKS:
+            key = (tid, team, sheet)
+            if key not in seen:
+                r = c.get(f"/api/games/{tid}/{team}?sheet={sheet}")
+                data = _json.loads(r.data)
+                by_id = {g["game_id"]: g for g in (data.get("upcoming", []) + data.get("played", []))}
+                seen[key] = by_id
+            by_id = seen[key]
+            g = by_id.get(game_id)
+            got = g.get("game_num") if g else None
+            ok = _check(f"{game_id} game_num={expected_num} ({reason})", got == expected_num,
+                        f"got {got!r}")
+            if not ok:
+                failures += 1
+    return failures
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -417,6 +461,11 @@ def main():
     print("CCA opponent-slot tests (self-reference regression guard)")
     print("=" * 60)
     total_failures += test_cca_opponent_slots()
+
+    print("\n" + "=" * 60)
+    print("CCA game-num tests (win/lose paths share same game_num)")
+    print("=" * 60)
+    total_failures += test_cca_game_nums()
 
     print("\n" + "=" * 60)
     if total_failures == 0:

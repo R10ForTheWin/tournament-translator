@@ -3225,27 +3225,44 @@ def api_games(tournament_id, team):
         if succs:
             _adj[g["game_id"]] = succs
 
-    # ── Game numbering: chronological time-slot order ───────────────────────
-    # Each unique (date, time) gets the next sequential game number.
-    # Games at the same time slot (alternate bracket paths) share a number.
-    my_games_ranked = sorted(
-        my_games,
-        key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
-    )
+    # ── Game numbering: BFS depth from root game ────────────────────────────
+    # Win-path and lose-path games from the same parent are at the same depth
+    # and share the same game_num ("Game 2"), regardless of their time/date.
+    # Root = chronologically first game not reachable as a successor.
+    # Games not reached by BFS (pool placement orphans) get the fallback.
     _game_num_map: dict[str, int] = {}
-    slot_to_num: dict[tuple, int] = {}
-    counter = 0
-    for g in my_games_ranked:
-        # Placement games (finish-slot teams like "1stH-", "2ndH-") are mutually
-        # exclusive alternatives — group ALL on the same date into one column so
-        # they appear side-by-side rather than as sequential separate columns.
+    if _adj:
+        from collections import deque as _deque
+        _all_succs = {nid for succs in _adj.values() for nid in succs}
+        # Use only the earliest non-successor as root (not all of them).
+        # Other non-successors (pool placement games) fall to the fallback below.
+        _non_succs = sorted(
+            [g for g in my_games if g["game_id"] not in _all_succs],
+            key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
+        )
+        if _non_succs:
+            _game_num_map[_non_succs[0]["game_id"]] = 1
+            _bfs_q: _deque = _deque([(_non_succs[0]["game_id"], 1)])
+            while _bfs_q:
+                _gid, _d = _bfs_q.popleft()
+                for _nid in _adj.get(_gid, []):
+                    if _nid not in _game_num_map:
+                        _game_num_map[_nid] = _d + 1
+                        _bfs_q.append((_nid, _d + 1))
+    # Chronological fallback for games not reached by BFS (or no tree at all)
+    _slot_to_num: dict[tuple, int] = {}
+    _counter = max(_game_num_map.values(), default=0)
+    for g in sorted(
+        [g for g in my_games if g["game_id"] not in _game_num_map],
+        key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
+    ):
         is_placement = any(_FINISH_SLOT_RE.match(s.strip())
                            for s in (g["white_team"], g["dark_team"]))
-        key = (g.get("date"), "__placement__") if is_placement else (g.get("date"), g.get("time"))
-        if key not in slot_to_num:
-            counter += 1
-            slot_to_num[key] = counter
-        _game_num_map[g["game_id"]] = slot_to_num[key]
+        _key = (g.get("date"), "__placement__") if is_placement else (g.get("date"), g.get("time"))
+        if _key not in _slot_to_num:
+            _counter += 1
+            _slot_to_num[_key] = _counter
+        _game_num_map[g["game_id"]] = _slot_to_num[_key]
 
     show_records = tournament_id not in WPL_TOURNAMENTS
     sheet_records: dict = {}
