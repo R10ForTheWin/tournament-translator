@@ -25,12 +25,15 @@ sys.path.insert(0, ROOT)
 
 from parsers.detect import load_and_parse
 from parsers.validate import _valid_slot
+from parsers.format_cca import parse_csv as cca_parse_csv
 from app import (
     _expand_bracket_games, _build_wpl_game_tree,
     team_matches, describe_slot, _SLOT_LIKE_RE, _tournament_meta,
+    _team_opp_slot,
 )
 
-FIXTURES_DIR = os.path.join(ROOT, "Tournaments Excels")
+FIXTURES_DIR   = os.path.join(ROOT, "Tournaments Excels")
+FIXTURES_CCA   = os.path.join(ROOT, "tests", "fixtures")
 
 WPL_FILE = "2026 KAP7 Futures WPL - Southern California - Presented by BIWPA.xlsx"
 
@@ -82,9 +85,9 @@ CHAMPIONSHIP_CHECKS: dict[str, list[tuple]] = {
         # Previously: Sunday games missing due to game-ID collision in format_b.py.
         ("16u Boys", "trojan gold",     2, 2, 1, 3, 1),
 
-        # Seed-number prelim team: 1 direct game, expands through WIN GM # chain.
+        # Seed-number prelim team: won prelim + played 2 bracket games = 3 direct.
         # Previously: showed only 1 game (seed-number root unhandled).
-        ("16u Boys", "trojan cardinal", 1, 1, 1, 3, 1),
+        ("16u Boys", "trojan cardinal", 1, 3, 1, 3, 1),
 
         # Seeded pool-E1 team — regression canary for pool-slot expansion.
         ("16u Boys", "imperial",        2, 2, 1, 3, 1),
@@ -281,6 +284,104 @@ def test_championship_team(sheet: str, team: str, anchor: date,
     return failures
 
 
+# ── CCA opponent-slot correctness ─────────────────────────────────────────────
+#
+# These tests catch the class of bug where _team_opp_slot returns the team's
+# OWN slot as the opponent ("Loser of game #23" when the team IS the loser of
+# game #23). This happens when team_matches() fails on a placeholder slot and
+# the code falls to a wrong default. Each entry pins a known-correct pre-
+# tournament opponent slot for a specific placeholder game type:
+#
+#   (csv_file, division, id_prefix, team_query, game_id, expected_opp_slot)
+#
+# "expected_opp_slot" is the raw normalized slot string, not a display label.
+# If the slot changes because results fill it in, update the expectation — the
+# important invariant is that the opponent is NEVER the team's own slot.
+#
+# Fixture files are snapshots of the live Google Sheets saved at
+# tests/fixtures/cca_{16u,18u}.csv. Refresh them before each tournament day
+# by running: python3 tests/refresh_cca_fixtures.py
+CCA_OPP_CHECKS = [
+    # 16U Trojan Gold (B) — pool G2 seed
+    #   finish-slot path: pool_rank_group="G", opp must not be "2ndG-"
+    ("cca_16u.csv", "16U Boys", "16U", "trojan gold", "16U-38", "1stH-"),
+    #   finish-slot path: pool_rank_group="G", team is "1stG-" here, opp must not be "1stG-"
+    ("cca_16u.csv", "16U Boys", "16U", "trojan gold", "16U-40", "2ndH-"),
+    #   W#/L# path: L#23 is team's slot (game 23 in my_ids), opp must not be "L#23"
+    ("cca_16u.csv", "16U Boys", "16U", "trojan gold", "16U-46", "L#22"),
+
+    # 16U Trojan Cardinal (A) — pool C1 seed
+    #   finish-slot path: opp must not be "1stC-"
+    ("cca_16u.csv", "16U Boys", "16U", "trojan cardinal", "16U-27", "2ndD-"),
+    #   W#/L# path: L#12 is team's slot
+    ("cca_16u.csv", "16U Boys", "16U", "trojan cardinal", "16U-25", "L#13"),
+
+    # 16U Trojan Silver (C) — pool E4 seed
+    #   W#/L# path: L#10 is team's slot
+    ("cca_16u.csv", "16U Boys", "16U", "trojan silver", "16U-35", "L#11"),
+
+    # 18U Trojan Cardinal A — bracket-entry BB1 (no pool play)
+    #   finish-slot path: team is direct white slot, opp is 1stC-
+    ("cca_18u.csv", "18U Boys", "18U", "trojan cardinal", "18U-15", "1stC-"),
+    #   W#/L# path: W#15 is team's slot (win of 15 in my_ids), opp must not be "W#15"
+    ("cca_18u.csv", "18U Boys", "18U", "trojan cardinal", "18U-20", "L#16"),
+]
+
+
+def test_cca_opponent_slots() -> int:
+    """Verify _team_opp_slot returns the correct (non-self) opponent for CCA placeholder games.
+
+    This test would have caught the bug where "Trojan Gold vs Loser of game #23"
+    was shown when the team IS the loser of game #23. The fix was _team_opp_slot;
+    this test ensures it never regresses.
+    """
+    failures = 0
+    print("\nCCA opponent-slot correctness")
+
+    # Load each CSV file once
+    csv_cache: dict[str, list] = {}
+    for csv_file, division, prefix, team, game_id, expected_opp in CCA_OPP_CHECKS:
+        path = os.path.join(FIXTURES_CCA, csv_file)
+        if not os.path.exists(path):
+            print(f"  [SKIP] fixture not found: {path}")
+            continue
+
+        if csv_file not in csv_cache:
+            with open(path) as f:
+                text = f.read()
+            csv_cache[csv_file] = cca_parse_csv(text, division, prefix)
+        div_games = csv_cache[csv_file]
+
+        direct = [g for g in div_games
+                  if team_matches(g["white_team"], team) or team_matches(g["dark_team"], team)]
+        extras  = _expand_bracket_games(team, direct, div_games)
+        all_g   = direct + extras
+        my_ids  = {g["game_id"] for g in all_g}
+
+        target = next((g for g in all_g if g["game_id"] == game_id), None)
+        label  = f"{game_id} {team!r} opp={expected_opp!r}"
+
+        if target is None:
+            ok = _check(f"{label} — game found in expansion", False, "game not in expansion")
+            failures += 1
+            continue
+
+        opp = _team_opp_slot(target, team, div_games, my_ids)
+
+        # Primary: must match expected slot exactly
+        ok = _check(f"{label}", opp == expected_opp, f"got {opp!r}")
+        if not ok: failures += 1
+
+        # Secondary (self-reference guard): opponent must never be the team's own slot
+        # This catches future regressions even if expected_opp drifts as results fill in
+        self_ref = team_matches(opp, team)
+        ok2 = _check(f"{game_id} {team!r} — no self-reference", not self_ref,
+                     f"opp={opp!r} matches team name")
+        if not ok2: failures += 1
+
+    return failures
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -311,6 +412,11 @@ def main():
             total_failures += test_championship_team(
                 sheet, team, anchor, min_d, max_d, min_e, min_t, min_s
             )
+
+    print("\n" + "=" * 60)
+    print("CCA opponent-slot tests (self-reference regression guard)")
+    print("=" * 60)
+    total_failures += test_cca_opponent_slots()
 
     print("\n" + "=" * 60)
     if total_failures == 0:

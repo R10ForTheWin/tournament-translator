@@ -2220,6 +2220,12 @@ def _team_opp_slot(g: dict, team: str, dg: list, my_game_ids: set = None) -> str
                 if ref_game and ref_game["game_id"] in my_game_ids:
                     return other
 
+    # None of the strategies resolved the slot — log so we know about new formats.
+    import logging as _logging
+    _logging.warning(
+        "_team_opp_slot: unresolved slot for team=%r game=%s white=%r dark=%r pr=%r grp=%r",
+        team, g.get("game_id"), white, dark, g.get("pool_rank"), g.get("pool_rank_group"),
+    )
     return white  # default: team is dark, opponent is white
 
 
