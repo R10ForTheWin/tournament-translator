@@ -1439,9 +1439,14 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opt
 function _dayNum(d) {
   if (!d) return 99;
   const dl = d.toLowerCase();
-  if (dl.startsWith('sat')) return 0;
-  if (dl.startsWith('sun')) return 1;
-  return 2;
+  if (dl.startsWith('mon')) return 0;
+  if (dl.startsWith('tue')) return 1;
+  if (dl.startsWith('wed')) return 2;
+  if (dl.startsWith('thu')) return 3;
+  if (dl.startsWith('fri')) return 4;
+  if (dl.startsWith('sat')) return 5;
+  if (dl.startsWith('sun')) return 6;
+  return 99;
 }
 
 // ── WPL crossover game tree ───────────────────────────────────────────────────
