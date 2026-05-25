@@ -322,6 +322,16 @@ def step_api_smoke_test(tournament_id: str, teams: list) -> bool:
             if not ok:
                 failures += 1
 
+            # Placement-alternative games must not have scenarios
+            alt_with_scenarios = [
+                g.get("game_id") for g in upcoming
+                if g.get("is_alternative") and g.get("scenarios")
+            ]
+            ok = _check(f"{label}: placement-alt games have no scenarios",
+                        not alt_with_scenarios, "; ".join(str(x) for x in alt_with_scenarios[:3]))
+            if not ok:
+                failures += 1
+
             # Self-reference check
             self_refs = []
             for g in upcoming + played:
