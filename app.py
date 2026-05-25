@@ -2183,8 +2183,48 @@ def _result_str(game, team) -> str:
     if yours < opp:  return "loss"
     return "tie"
 
-def _next_summary(g, team, dg=None, ref_date=None):
-    opp = g["dark_team"] if team_matches(g["white_team"], team) else g["white_team"]
+def _team_opp_slot(g: dict, team: str, dg: list, my_game_ids: set = None) -> str:
+    """Return the opponent's slot for game g.
+
+    Handles three cases where team_matches() alone fails:
+      1. Direct name match (normal games) — delegates to team_matches
+      2. Finish-slot placeholder (1stG-, 2ndH-) — uses pool_rank_group stored by
+         _expand_bracket_games to identify which slot is the team's
+      3. W#/L# placeholder (L#23, W#38) — checks if the referenced game is in
+         the team's known game list (my_game_ids) to identify the team's slot
+    """
+    white, dark = g["white_team"], g["dark_team"]
+
+    # Direct name match
+    if team_matches(white, team): return dark
+    if team_matches(dark, team):  return white
+
+    # Finish-slot: pool_rank_group tells us which pool letter is ours
+    pr  = g.get("pool_rank")
+    grp = g.get("pool_rank_group")
+    if pr and grp:
+        for slot, other in ((white, dark), (dark, white)):
+            fm = _FINISH_SLOT_RE.match(slot.strip())
+            if fm and fm.group(1).upper() == grp:
+                rank_m = re.search(r'(\d+)', slot)
+                if rank_m and int(rank_m.group(1)) == pr:
+                    return other
+
+    # W#/L# reference: team is in the slot that points at one of their known games
+    if my_game_ids:
+        for slot, other in ((white, dark), (dark, white)):
+            wm = re.match(r'^[WL]#(\d+)', slot, re.IGNORECASE)
+            if wm:
+                ref_num = str(int(wm.group(1)))
+                ref_game = _game_by_num(ref_num, dg)
+                if ref_game and ref_game["game_id"] in my_game_ids:
+                    return other
+
+    return white  # default: team is dark, opponent is white
+
+
+def _next_summary(g, team, dg=None, ref_date=None, my_game_ids=None):
+    opp = _team_opp_slot(g, team, dg or [], my_game_ids)
     return {
         "opponent": describe_slot(opp, dg, ref_date=ref_date),
         "date":     _fmt_date(g["date"]),
@@ -3213,8 +3253,8 @@ def api_games(tournament_id, team):
         game_num = _game_num_map.get(g["game_id"], 1)
         dg     = div_map.get(g["sheet"], [])
         gid    = g["game_id"]
-        opp_sl = g["dark_team"] if team_matches(g["white_team"], team) else g["white_team"]
-        color  = "WHITE" if team_matches(g["white_team"], team) else "DARK"
+        opp_sl = _team_opp_slot(g, team, dg, my_game_ids)
+        color  = "WHITE" if opp_sl == g["dark_team"] else "DARK"
 
         our_rec  = None
         opp_rec  = None
@@ -3259,7 +3299,7 @@ def api_games(tournament_id, team):
             base["result"] = result
             next_game = winner_next if result == "win" else loser_next if result == "loss" else None
             if next_game:
-                base["next"] = _next_summary(next_game, team, dg, ref_date=_weekend_ref_date)
+                base["next"] = _next_summary(next_game, team, dg, ref_date=_weekend_ref_date, my_game_ids=my_game_ids)
             played_out.append(base)
         else:
             # Detect if this game is currently in progress (window: -15 min to +2 hr from start)
@@ -3276,9 +3316,9 @@ def api_games(tournament_id, team):
             scenarios = {}
             # Suppress a scenario if that game is already shown as its own card
             if winner_next and winner_next["game_id"] not in my_game_ids:
-                scenarios["win"]  = _next_summary(winner_next, team, dg, ref_date=_weekend_ref_date)
+                scenarios["win"]  = _next_summary(winner_next, team, dg, ref_date=_weekend_ref_date, my_game_ids=my_game_ids)
             if loser_next and loser_next["game_id"] not in my_game_ids:
-                scenarios["lose"] = _next_summary(loser_next,  team, dg, ref_date=_weekend_ref_date)
+                scenarios["lose"] = _next_summary(loser_next,  team, dg, ref_date=_weekend_ref_date, my_game_ids=my_game_ids)
             base["scenarios"] = scenarios if scenarios else None
             base["last_meeting"] = _last_meeting(team, opponent_label, _all_games,
                                                   before_date=g.get("date"),
