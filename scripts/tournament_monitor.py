@@ -75,14 +75,15 @@ TROJAN_TEAMS = [
 ]
 
 TOURNAMENTS = [
-    {"id": "jo-quals",        "name": "JO Qualifications",  "start": date(2026, 5, 29), "end": date(2026, 5, 31)},
+    {"id": "jo-quals",        "name": "JO Qualifications",  "start": date(2026, 5, 29), "end": date(2026, 5, 31), "days": 3},
     {"id": "futures-super",   "name": "Futures Superfinal", "start": date(2026, 6, 26), "end": date(2026, 6, 28)},
-    {"id": "junior-olympics", "name": "Junior Olympics",    "start": date(2026, 7, 23), "end": date(2026, 7, 26)},
+    {"id": "junior-olympics", "name": "Junior Olympics",    "start": date(2026, 7, 23), "end": date(2026, 7, 26), "days": 3},
 ]
 
 # Bracket game count thresholds — flag outside this range pre-tournament
 MIN_GAMES = 2
-MAX_GAMES = 9
+MAX_GAMES = 9       # 2-day tournaments (WPL Futures, Kap7, Newport)
+MAX_GAMES_3DAY = 18 # 3-day tournaments (JO Quals, Junior Olympics)
 
 
 def active_tournaments():
@@ -120,7 +121,7 @@ def check_team(base_url, tournament_id, team):
     }
 
 
-def llm_judge(team_name, tournament_name, division, upcoming_games):
+def llm_judge(team_name, tournament_name, division, upcoming_games, max_games=MAX_GAMES):
     """Ask Claude Haiku if this bracket display looks reasonable.
 
     Returns {"status": "OK"|"FLAG", "reason": str} or None if unavailable.
@@ -139,8 +140,8 @@ def llm_judge(team_name, tournament_name, division, upcoming_games):
     # Fast pre-filter: obvious count anomalies don't need LLM
     if n < MIN_GAMES:
         return {"status": "FLAG", "reason": f"Only {n} upcoming game(s) — bracket expansion may have failed."}
-    if n > MAX_GAMES:
-        return {"status": "FLAG", "reason": f"{n} upcoming games shown — likely over-expansion (expected ≤{MAX_GAMES})."}
+    if n > max_games:
+        return {"status": "FLAG", "reason": f"{n} upcoming games shown — likely over-expansion (expected ≤{max_games})."}
 
     lines = []
     for i, g in enumerate(upcoming_games, 1):
@@ -258,9 +259,10 @@ def main():
             n_up      = result["upcoming_count"]
 
             # ── Deterministic checks ────────────────────────────────────────
+            max_games = MAX_GAMES_3DAY if t.get("days", 2) >= 3 else MAX_GAMES
             det_flags = list(warns)  # existing app-level warnings
-            if n_up > MAX_GAMES:
-                det_flags.append(f"{n_up} upcoming games shown (expected ≤{MAX_GAMES})")
+            if n_up > max_games:
+                det_flags.append(f"{n_up} upcoming games shown (expected ≤{max_games})")
             elif n_up < MIN_GAMES and conf != "green":
                 det_flags.append(f"Only {n_up} upcoming game(s)")
             order_err = check_game_num_order(result["upcoming_games"])
@@ -274,6 +276,7 @@ def main():
                     team_name, name,
                     result.get("division", ""),
                     result["upcoming_games"],
+                    max_games=max_games,
                 )
 
             # ── Build report line ───────────────────────────────────────────
@@ -293,7 +296,7 @@ def main():
                 report_lines.append(f"       → {w}")
 
             # ── Classify severity ───────────────────────────────────────────
-            is_red    = conf == "red" or n_up > MAX_GAMES
+            is_red    = conf == "red" or n_up > max_games
             is_yellow = (conf == "yellow" and det_flags) or (
                 llm_result and llm_result["status"] == "FLAG"
             )

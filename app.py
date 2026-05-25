@@ -1127,7 +1127,7 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     add_pool_rank = rank
                     add_grp = grp
                     add_placeholder = True
-                    add_ph_depth = 2  # composite games don't expand further
+                    add_ph_depth = 2  # successors of placement games expand one more level
                     break
 
                 # W#/L# bracket (standard W#N / L#N, plus CCA extended formats)
@@ -1152,8 +1152,8 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     if ref_num not in reachable:
                         continue
                     src_game, src_ph, src_depth = reachable[ref_num]
-                    if src_depth >= 2:
-                        continue  # stop expanding beyond 2 levels of uncertainty
+                    if src_depth >= 4:
+                        continue  # stop expanding beyond 4 levels of uncertainty
                     won = _team_won(team, src_game)
 
                     # Drop paths made impossible by a known result
@@ -1187,6 +1187,8 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             if add_placeholder is not None:
                 if _game_num(g["game_id"]) is None:
                     continue  # skip non-game rows (e.g. embedded standings entries)
+                if len(extras) >= 15:
+                    continue  # hard cap — prevent bracket explosion in large multi-day tournaments
                 g_copy = dict(g)
                 g_copy["placeholder"] = add_placeholder
                 if add_pool_rank:
