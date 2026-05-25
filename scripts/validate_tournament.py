@@ -332,6 +332,18 @@ def step_api_smoke_test(tournament_id: str, teams: list) -> bool:
             if not ok:
                 failures += 1
 
+            # Win/lose path games (staircase branches) must not have scenarios —
+            # the staircase structure is the "what's next", WHAT'S NEXT inside a
+            # branch card is redundant and creates clutter
+            branch_with_scenarios = [
+                g.get("game_id") for g in upcoming
+                if g.get("path") in ("win", "lose") and g.get("scenarios")
+            ]
+            ok = _check(f"{label}: win/lose branch games have no scenarios",
+                        not branch_with_scenarios, "; ".join(str(x) for x in branch_with_scenarios[:3]))
+            if not ok:
+                failures += 1
+
             # Self-reference check
             self_refs = []
             for g in upcoming + played:

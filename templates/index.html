@@ -1851,7 +1851,7 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
 
       // When column has scenarios, strip path before passing to card builders so they
       // don't add their own banner — the column-level banner above handles it.
-      const cardG = hasScenarios ? Object.assign({}, g, {path: null}) : g;
+      const cardG = hasScenarios ? Object.assign({}, g, {path: null, scenarios: null}) : g;
       const card = cardG.result
         ? buildResultCard(cardG, ourName, tournamentId)
         : buildUpcomingCard(cardG, tournamentId, team, ourName);
