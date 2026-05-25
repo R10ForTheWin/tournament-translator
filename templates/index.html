@@ -147,14 +147,16 @@
 
     /* ── Age-group separator (team list) ── */
     .age-group-sep {
-      display: flex; align-items: center; gap: 10px;
-      margin: 24px 4px 12px;
+      display: flex; align-items: center; gap: 12px;
+      margin: 36px 4px 16px;
+      padding-top: 20px;
+      border-top: 2px solid rgba(196,160,0,0.18);
     }
-    .age-group-sep.first { margin-top: 4px; }
-    .age-group-sep-line { flex: 1; height: 1px; background: var(--gold); opacity: 0.35; }
+    .age-group-sep.first { margin-top: 8px; padding-top: 0; border-top: none; }
+    .age-group-sep-line { flex: 1; height: 2px; background: var(--gold); opacity: 0.45; }
     .age-group-sep-label {
-      font-size: 13px; font-weight: 700;
-      text-transform: uppercase; letter-spacing: 0.12em;
+      font-size: 15px; font-weight: 800;
+      text-transform: uppercase; letter-spacing: 0.14em;
       color: var(--gold); white-space: nowrap;
     }
 
