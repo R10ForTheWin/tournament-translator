@@ -33,7 +33,8 @@ app = Flask(__name__)
 
 EXCEL_DIR    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Tournaments Excels")
 RESULTS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "results")
-COMMENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "comments")
+COMMENTS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "comments")
+FEEDBACK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "feedback.json")
 ADMIN_PW    = os.environ.get("ADMIN_PASSWORD", "trojan")  # override via Railway env var
 
 # ── Live URL sources ────────────────────────────────────────────────────────
@@ -65,7 +66,18 @@ _URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
 URL_CACHE_TTL      = 300  # re-fetch at most every 5 minutes
 
 _LIVE_SCORES: dict = {}   # {(tournament_id, game_id): {our_score, opp_score, quarter, updated_at}}
-_FEEDBACK:    list = []   # [{text, ts}]
+def _load_feedback() -> list:
+    try:
+        with open(FEEDBACK_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+def _save_feedback(entries: list) -> None:
+    with open(FEEDBACK_FILE, "w") as f:
+        json.dump(entries, f)
+
+_FEEDBACK: list = _load_feedback()
 
 _MONTH_MAP = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
               "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
@@ -3543,6 +3555,7 @@ def api_feedback_post():
         abort(400)
     entry = {"text": text, "ts": int(time.time())}
     _FEEDBACK.append(entry)
+    _save_feedback(_FEEDBACK)
     print(f"[feedback] {entry}", flush=True)
     return jsonify({"ok": True})
 
