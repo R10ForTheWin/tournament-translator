@@ -3326,6 +3326,29 @@ def api_games(tournament_id, team):
             _slot_to_num[_key] = _counter
         _game_num_map[g["game_id"]] = _slot_to_num[_key]
 
+    # Re-number so game_num labels are strictly sequential and chronological.
+    # BFS assigns depth-based numbers; fallback appends at depth+N. Either can
+    # produce a higher-numbered group that starts earlier than a lower-numbered
+    # one (e.g. placement alternatives at 11 AM getting game_num=4 while the
+    # bracket follow-ons at 12 PM keep game_num=3). Fix: find each group's
+    # earliest game time, sort groups by that time, then re-label 1, 2, 3, ...
+    _gn_first: dict[int, tuple] = {}
+    for _g in my_games:
+        _gn = _game_num_map.get(_g["game_id"])
+        if _gn is None:
+            continue
+        _d, _t = _g.get("date"), _g.get("time")
+        if _d is None or _t is None:
+            continue
+        _key2 = (_d, _t)
+        if _gn not in _gn_first or _key2 < _gn_first[_gn]:
+            _gn_first[_gn] = _key2
+    if _gn_first:
+        _sorted_gn = sorted(_gn_first.keys(), key=lambda n: (_gn_first[n], n))
+        _gn_remap  = {old: (new + 1) for new, old in enumerate(_sorted_gn)}
+        _game_num_map = {gid: _gn_remap.get(gn, gn)
+                         for gid, gn in _game_num_map.items()}
+
     show_records = tournament_id not in WPL_TOURNAMENTS
     sheet_records: dict = {}
     if show_records:

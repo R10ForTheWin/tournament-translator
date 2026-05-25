@@ -389,13 +389,15 @@ def test_cca_opponent_slots() -> int:
 
 CCA_GAME_NUM_CHECKS = [
     # (tournament_id, team, sheet, game_id, expected_game_num, reason)
-    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-23", 1, "first game = Game 1"),
-    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-24", 2, "win-path Game 2 = depth 2"),
-    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-46", 2, "lose-path Game 2 = same depth as win"),
-    # Games 49/57 (deeper bracket via Winner 46 / L46 patterns) now occupy column 3,
-    # pushing placement games 38/40 to column 4.
-    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-38", 4, "placement Game 4 (deeper bracket at col 3)"),
-    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-40", 4, "placement Game 4 (deeper bracket at col 3)"),
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-23", 1, "pool game = Game 1 (Fri 5PM)"),
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-24", 2, "win-path Game 2 (Fri 7:30PM)"),
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-46", 2, "lose-path Game 2 shares column with win (Sat 9AM)"),
+    # Placement alternatives happen Sat 11AM — earlier than bracket games at Sat 12PM.
+    # Re-numbering by actual time puts placements at Game 3, brackets at Game 4.
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-38", 3, "placement Game 3 (Sat 11AM, before bracket)"),
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-40", 3, "placement Game 3 (Sat 1PM, same column as 38)"),
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-57", 4, "bracket lose-path Game 4 (Sat 12PM)"),
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-49", 4, "bracket win-path Game 4 (Sat 1PM)"),
 ]
 
 def test_cca_game_nums() -> int:
