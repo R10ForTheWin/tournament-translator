@@ -17,8 +17,54 @@ Usage:
     python3 scripts/tournament_monitor.py --api-url https://custom-url.railway.app
     python3 scripts/tournament_monitor.py --skip-llm   # deterministic only
 """
-import sys, json, os, urllib.request, urllib.error, urllib.parse, argparse
+import sys, json, os, re, urllib.request, urllib.error, urllib.parse, argparse
 from datetime import date
+from collections import defaultdict
+
+
+def _time_min(t):
+    """Parse '9:00 AM' → minutes since midnight. Returns -1 on failure."""
+    if not t:
+        return -1
+    m = re.match(r'(\d+):(\d+)\s*(AM|PM)', t.strip(), re.IGNORECASE)
+    if not m:
+        return -1
+    h, mn, ampm = int(m.group(1)), int(m.group(2)), m.group(3).upper()
+    if ampm == 'PM' and h != 12:
+        h += 12
+    if ampm == 'AM' and h == 12:
+        h = 0
+    return h * 60 + mn
+
+
+def _day_order(d):
+    """Return a sort key for a date string like 'Thursday, May 29'."""
+    days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+    if not d:
+        return 99
+    first = d.split(',')[0].strip().lower()
+    return days.index(first) if first in days else 99
+
+
+def check_game_num_order(upcoming_games):
+    """Return error string if any game_num N column starts earlier than game_num N-1."""
+    by_num = defaultdict(list)
+    for g in upcoming_games:
+        by_num[g.get("game_num") or 0].append(g)
+    prev_day, prev_min = -1, -1
+    for n in sorted(by_num.keys()):
+        dated = [g for g in by_num[n] if g.get("date") and g.get("time")]
+        if not dated:
+            continue
+        dated.sort(key=lambda g: (_day_order(g["date"]), _time_min(g["time"])))
+        earliest = dated[0]
+        day = _day_order(earliest["date"])
+        tmin = _time_min(earliest["time"])
+        if day < prev_day or (day == prev_day and tmin < prev_min):
+            return (f"Game #{n} starts {earliest['date']} {earliest['time']} "
+                    f"but Game #{n-1} starts later — game_num labels out of order")
+        prev_day, prev_min = day, tmin
+    return None
 
 RAILWAY_URL = "https://web-production-5a744.up.railway.app"
 
@@ -217,6 +263,9 @@ def main():
                 det_flags.append(f"{n_up} upcoming games shown (expected ≤{MAX_GAMES})")
             elif n_up < MIN_GAMES and conf != "green":
                 det_flags.append(f"Only {n_up} upcoming game(s)")
+            order_err = check_game_num_order(result["upcoming_games"])
+            if order_err:
+                det_flags.append(order_err)
 
             # ── LLM judge ───────────────────────────────────────────────────
             llm_result = None

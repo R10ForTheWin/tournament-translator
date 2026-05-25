@@ -436,7 +436,7 @@ Games (Game #N = column number in staircase display; [win]/[lose] = which path):
 
 Flag these specific problems:
 1. A win-path game and lose-path game from the same parent have DIFFERENT Game #N numbers — both must share the same number (they are alternate paths to the same round)
-2. Games appear out of chronological order (Saturday before Friday, or later time before earlier same day) — but win/lose siblings on different days at the same Game # are fine
+2. Game #N LABELS are out of order with actual game times: every game labeled Game #4 must happen at the same time or LATER than every game labeled Game #3, and so on. If a game labeled Game #4 has an earlier time than any game labeled Game #3, that is a label ordering bug. (Exception: win/lose siblings at the same Game # can be on different days — that is fine.)
 3. Opponent label is the same team as the team being shown (self-reference)
 4. More than 9 upcoming games (suggests bracket over-expansion)
 5. Fewer than 2 upcoming games (suggests expansion failed)
