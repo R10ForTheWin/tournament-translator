@@ -76,7 +76,7 @@ TROJAN_TEAMS = [
 
 TOURNAMENTS = [
     {"id": "jo-quals",        "name": "JO Qualifications",  "start": date(2026, 5, 29), "end": date(2026, 5, 31), "days": 3},
-    {"id": "futures-super",   "name": "Futures Superfinal", "start": date(2026, 6, 26), "end": date(2026, 6, 28)},
+    {"id": "futures-super",   "name": "Futures Superfinal", "start": date(2026, 6, 26), "end": date(2026, 6, 28), "days": 2},
     {"id": "junior-olympics", "name": "Junior Olympics",    "start": date(2026, 7, 23), "end": date(2026, 7, 26), "days": 3},
 ]
 
@@ -268,6 +268,16 @@ def main():
             order_err = check_game_num_order(result["upcoming_games"])
             if order_err:
                 det_flags.append(order_err)
+
+            # Pre-tournament only: upcoming games must span all N days
+            expected_days = t.get("days")
+            if expected_days and date.today() < t["start"]:
+                distinct_days = len({g["date"] for g in result["upcoming_games"] if g.get("date")})
+                if distinct_days < expected_days:
+                    det_flags.append(
+                        f"Only {distinct_days} day(s) covered in upcoming games "
+                        f"(expected {expected_days} for a {expected_days}-day tournament)"
+                    )
 
             # ── LLM judge ───────────────────────────────────────────────────
             llm_result = None
