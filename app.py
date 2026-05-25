@@ -3120,6 +3120,13 @@ def api_games(tournament_id, team):
 
     my_games.sort(key=lambda g: (g["date"] or date.min, g["time"] or datetime.min.time()))
 
+    # NJO/CCA: suppress finish-slot placeholder games (pool_rank set) until
+    # pool play is complete and the organiser fills in actual team names.
+    # Once slots are updated (e.g. "1stD-TROJAN GOLD B"), those bracket games
+    # appear as direct matches — no finish-slot expansion needed.
+    if tournament_id in {"jo-quals", "junior-olympics"}:
+        my_games = [g for g in my_games if not g.get("pool_rank")]
+
     # Pre-compute which games are the win/lose bracket path of another game in the list
     my_game_ids = {g["game_id"] for g in my_games}
     bracket_path = {}  # game_id -> "win" | "lose"
