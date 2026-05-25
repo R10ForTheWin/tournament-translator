@@ -1136,6 +1136,7 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                 if add_pool_rank:
                     g_copy["pool_rank"] = add_pool_rank
                 if add_grp:
+                    g_copy["pool_rank_group"] = add_grp
                     composite_added.add(add_grp)
                 extras.append(g_copy)
                 seen_ids.add(g["game_id"])
@@ -3120,12 +3121,25 @@ def api_games(tournament_id, team):
 
     my_games.sort(key=lambda g: (g["date"] or date.min, g["time"] or datetime.min.time()))
 
-    # NJO/CCA: suppress finish-slot placeholder games (pool_rank set) until
-    # pool play is complete and the organiser fills in actual team names.
-    # Once slots are updated (e.g. "1stD-TROJAN GOLD B"), those bracket games
-    # appear as direct matches — no finish-slot expansion needed.
+    # NJO/CCA: deduplicate finish-slot bracket games — the 18U bracket references
+    # the same pool-finish slot (e.g. "2ndD-") in multiple games; keep only the
+    # first (earliest-scheduled) one per (pool_group, rank) pair so parents see
+    # one clean W/L path card per bracket outcome, not multiple identical-rank cards.
     if tournament_id in {"jo-quals", "junior-olympics"}:
-        my_games = [g for g in my_games if not g.get("pool_rank")]
+        seen_pr: set = set()
+        deduped = []
+        for g in my_games:
+            pr = g.get("pool_rank")
+            if pr is None:
+                deduped.append(g)
+                continue
+            # pool_rank_group is stored by _expand_bracket_games — it's the pool letter
+            # (e.g. "D") whose finish slot caused this game to be added.
+            key = (g.get("pool_rank_group"), pr)
+            if key not in seen_pr:
+                seen_pr.add(key)
+                deduped.append(g)
+        my_games = deduped
 
     # Pre-compute which games are the win/lose bracket path of another game in the list
     my_game_ids = {g["game_id"] for g in my_games}
