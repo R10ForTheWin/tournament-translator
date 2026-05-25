@@ -1187,8 +1187,16 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             if add_placeholder is not None:
                 if _game_num(g["game_id"]) is None:
                     continue  # skip non-game rows (e.g. embedded standings entries)
-                if len(extras) >= 15:
-                    continue  # hard cap — prevent bracket explosion in large multi-day tournaments
+                # Per-day cap: max 4 bracket games per calendar day so Saturday can't
+                # crowd out Sunday. Exempt depth-1 games (direct W/L successors) so
+                # the immediate win/lose path always shows regardless of game_id order.
+                # Absolute cap of 20 as a safety net.
+                _gdate = g.get("date", "")
+                if _gdate and add_ph_depth >= 2:
+                    if sum(1 for e in extras if e.get("date") == _gdate) >= 4:
+                        continue
+                if len(extras) >= 20:
+                    continue
                 g_copy = dict(g)
                 g_copy["placeholder"] = add_placeholder
                 if add_pool_rank:
