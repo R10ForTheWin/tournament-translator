@@ -1008,19 +1008,38 @@ async function loadTeams(tournament) {
     return;
   }
 
-  // Flat list: team name primary, division as subtitle
+  // Group by age_gender for visual separation between age groups
   el.innerHTML = '';
-  const lbl = document.createElement('p');
-  lbl.className = 'section-label';
-  lbl.textContent = 'Select Your Team';
-  el.appendChild(lbl);
-
-  const list = document.createElement('div');
-  list.className = 'card-list';
+  const groups = [];
+  const groupMap = new Map();
   teams.forEach(t => {
+    const key = t.age_gender || '';
+    if (!groupMap.has(key)) { groupMap.set(key, []); groups.push({ key, items: groupMap.get(key) }); }
+    groupMap.get(key).push(t);
+  });
+  const multiGroup = groups.length > 1;
+
+  if (!multiGroup) {
+    const lbl = document.createElement('p');
+    lbl.className = 'section-label';
+    lbl.textContent = 'Select Your Team';
+    el.appendChild(lbl);
+  }
+
+  groups.forEach(group => {
+    if (multiGroup && group.key) {
+      const glbl = document.createElement('p');
+      glbl.className = 'section-label';
+      glbl.textContent = group.key;
+      el.appendChild(glbl);
+    }
+    const list = document.createElement('div');
+    list.className = 'card-list';
+    group.items.forEach(t => {
     const teamName = t.name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-    const mainLabel = t.age_gender ? `${t.age_gender}, ${teamName}` : teamName;
-    const subLabel  = t.wpl_div != null ? `Division ${t.wpl_div}` : (t.tier ? `${t.tier} Division` : (t.friendly || ''));
+    const mainLabel = (!multiGroup && t.age_gender) ? `${t.age_gender}, ${teamName}` : teamName;
+    const subLabel  = t.wpl_div != null ? `Division ${t.wpl_div}` : (t.tier ? `${t.tier} Division` :
+                      (multiGroup ? '' : (t.friendly || '')));
     const card = document.createElement('div');
     card.className = 'list-card';
     card.innerHTML = `
@@ -1076,9 +1095,10 @@ async function loadTeams(tournament) {
       state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
       loadGames(tournament.id, t.name, t.sheet, 'bracket');
     };
-    list.appendChild(card);
+      list.appendChild(card);
+    });
+    el.appendChild(list);
   });
-  el.appendChild(list);
 }
 
 
