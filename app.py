@@ -15,6 +15,8 @@ _parse_cache: dict[str, tuple[float, list]] = {}
 
 def load_and_parse(filepath) -> list[dict]:
     """Cached wrapper: re-parses only when the file changes on disk."""
+    if filepath == _JO_QUALS_SENTINEL:
+        return _fetch_jo_quals_games()
     key = str(filepath)
     try:
         mtime = os.path.getmtime(key)
@@ -40,6 +42,12 @@ ADMIN_PW    = os.environ.get("ADMIN_PASSWORD", "trojan")  # override via Railway
 FUTURES_SHEETS_ID  = "1AkX3vwOU9CIc3cymacG2F-uXz-_Gi_A8yR40dEbDpMQ"
 FUTURES_SHEETS_URL = f"https://docs.google.com/spreadsheets/d/{FUTURES_SHEETS_ID}/export?format=xlsx"
 WPL_TOURNAMENTS    = {"futures-2", "futures-3", "futures-4", "futures-5", "futures-super"}
+
+JO_QUALS_SHEETS_ID   = "1IAZNJosmCYMjgDw_YZ792hEP3EAxFX9cJnJqzBgoIJU"
+JO_QUALS_GID_18U     = "1123307693"
+JO_QUALS_GID_16U     = "2019076064"
+JO_QUALS_TOURNAMENTS = {"jo-quals"}
+_JO_QUALS_SENTINEL   = "__jo_quals__"
 
 TOURNAMENT_URLS = {
     "kap7-intl":      "",  # update before Jan 2027 tournament
@@ -84,8 +92,8 @@ KNOWN_TOURNAMENTS = [
      "date_start": date(2026, 5, 2),  "date_end": date(2026, 5, 3)},
     {"id": "futures-5",       "name": "Futures Weekend 5",      "dates": "May 16–17, 2026",
      "date_start": date(2026, 5, 16), "date_end": date(2026, 5, 17)},
-    {"id": "jo-quals",        "name": "JO Qualifications",      "dates": "May 29–31, 2026",
-     "date_start": date(2026, 5, 29), "date_end": date(2026, 5, 31)},
+    {"id": "jo-quals",        "name": "JO Qualifications",      "dates": "May 26–31, 2026",
+     "date_start": date(2026, 5, 26), "date_end": date(2026, 5, 31)},
     {"id": "futures-super",   "name": "Futures Superfinal",     "dates": "Jun 26–28, 2026",
      "date_start": date(2026, 6, 26), "date_end": date(2026, 6, 28)},
     {"id": "junior-olympics", "name": "Junior Olympics",        "dates": "Jul 23–26, 2026",
@@ -153,6 +161,8 @@ def _fetch_url(url: str, *, onedrive=False) -> bytes | None:
 def find_excel(tournament_id: str):
     """Return an Excel file path, BytesIO from a live URL, or None.
     User-pasted URL (stored in user_urls.json) takes priority over all presets."""
+    if tournament_id in JO_QUALS_TOURNAMENTS:
+        return _JO_QUALS_SENTINEL
     user_url = _load_user_urls().get(tournament_id)
     if user_url:
         data = _fetch_url(user_url)
@@ -184,6 +194,32 @@ def _cache_age(tournament_id: str) -> int | None:
         return None
     cached = _URL_CACHE.get(url)
     return int(time.time() - cached[0]) if cached else None
+
+
+def _fetch_jo_quals_games() -> list[dict]:
+    """Fetch live game data for JO Qualifications from the CCA Google Sheets."""
+    from parsers.format_cca import parse_csv
+    base = (f"https://docs.google.com/spreadsheets/d/{JO_QUALS_SHEETS_ID}"
+            f"/gviz/tq?tqx=out:csv&gid=")
+    tabs = [
+        (JO_QUALS_GID_18U, "18U Boys", "18U"),
+        (JO_QUALS_GID_16U, "16U Boys", "16U"),
+    ]
+    all_games: list[dict] = []
+    for gid, division, prefix in tabs:
+        data = _fetch_url(base + gid)
+        if not data:
+            app.logger.warning("JO Quals: failed to fetch %s (gid=%s)", division, gid)
+            continue
+        try:
+            csv_text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            csv_text = data.decode("latin-1")
+        games = parse_csv(csv_text, division, prefix)
+        for g in games:
+            g["format"] = "CCA"
+        all_games.extend(games)
+    return all_games
 
 
 def _tournament_meta(tournament_id: str):
@@ -323,7 +359,7 @@ def _team_sort_key(team: dict):
 # ── Game helpers ───────────────────────────────────────────────────────────────
 
 _PREFIX_RE = re.compile(
-    r"^(?:\d+(?:st|nd|rd|th)[A-Z]-|[A-Z]\d+\s*\([^)]+\)\s*-\s*|[WL]#[^-\s]+-?|[A-Z]\d+\s*-\s*|\d+\s*-\s*)(.*)",
+    r"^(?:\d+(?:st|nd|rd|th)[A-Z]+-|[A-Z]+\d+\s*\([^)]+\)\s*-\s*|[WL]#[^-\s]+-?|[A-Z]+\d+\s*-\s*|\d+\s*-\s*)(.*)",
     re.IGNORECASE,
 )
 
