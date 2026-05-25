@@ -3399,11 +3399,15 @@ def api_games(tournament_id, team):
                 base["live_score"] = live
                 base["is_current"] = True
             scenarios = {}
-            # Suppress a scenario if that game is already shown as its own card
-            if winner_next and winner_next["game_id"] not in my_game_ids:
-                scenarios["win"]  = _next_summary(winner_next, team, dg, ref_date=_weekend_ref_date, my_game_ids=my_game_ids)
-            if loser_next and loser_next["game_id"] not in my_game_ids:
-                scenarios["lose"] = _next_summary(loser_next,  team, dg, ref_date=_weekend_ref_date, my_game_ids=my_game_ids)
+            # Suppress scenarios on placement-alternative games (pool-finish slots like
+            # "1stG-", "2ndH-") — their follow-on games are deeper placement rounds that
+            # parents don't need to preview, and the verbose opponent labels create clutter.
+            if not is_placement_alt:
+                # Suppress a scenario if that game is already shown as its own card
+                if winner_next and winner_next["game_id"] not in my_game_ids:
+                    scenarios["win"]  = _next_summary(winner_next, team, dg, ref_date=_weekend_ref_date, my_game_ids=my_game_ids)
+                if loser_next and loser_next["game_id"] not in my_game_ids:
+                    scenarios["lose"] = _next_summary(loser_next,  team, dg, ref_date=_weekend_ref_date, my_game_ids=my_game_ids)
             base["scenarios"] = scenarios if scenarios else None
             base["last_meeting"] = _last_meeting(team, opponent_label, _all_games,
                                                   before_date=g.get("date"),

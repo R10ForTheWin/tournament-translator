@@ -145,6 +145,19 @@
     }
     .section-label.accent { color: var(--gold); }
 
+    /* ── Age-group separator (team list) ── */
+    .age-group-sep {
+      display: flex; align-items: center; gap: 10px;
+      margin: 24px 4px 12px;
+    }
+    .age-group-sep.first { margin-top: 4px; }
+    .age-group-sep-line { flex: 1; height: 1px; background: var(--gold); opacity: 0.35; }
+    .age-group-sep-label {
+      font-size: 13px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.12em;
+      color: var(--gold); white-space: nowrap;
+    }
+
     /* ── Card lists ── */
     .card-list {
       display: flex; flex-direction: column;
@@ -1026,12 +1039,12 @@ async function loadTeams(tournament) {
     el.appendChild(lbl);
   }
 
-  groups.forEach(group => {
+  groups.forEach((group, idx) => {
     if (multiGroup && group.key) {
-      const glbl = document.createElement('p');
-      glbl.className = 'section-label';
-      glbl.textContent = group.key;
-      el.appendChild(glbl);
+      const sep = document.createElement('div');
+      sep.className = 'age-group-sep' + (idx === 0 ? ' first' : '');
+      sep.innerHTML = `<div class="age-group-sep-line"></div><div class="age-group-sep-label">${group.key}</div><div class="age-group-sep-line"></div>`;
+      el.appendChild(sep);
     }
     const list = document.createElement('div');
     list.className = 'card-list';
