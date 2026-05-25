@@ -392,8 +392,10 @@ CCA_GAME_NUM_CHECKS = [
     ("jo-quals", "trojan gold (b)", "16U Boys", "16U-23", 1, "first game = Game 1"),
     ("jo-quals", "trojan gold (b)", "16U Boys", "16U-24", 2, "win-path Game 2 = depth 2"),
     ("jo-quals", "trojan gold (b)", "16U Boys", "16U-46", 2, "lose-path Game 2 = same depth as win"),
-    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-38", 3, "placement Game 3"),
-    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-40", 3, "placement Game 3"),
+    # Games 49/57 (deeper bracket via Winner 46 / L46 patterns) now occupy column 3,
+    # pushing placement games 38/40 to column 4.
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-38", 4, "placement Game 4 (deeper bracket at col 3)"),
+    ("jo-quals", "trojan gold (b)", "16U Boys", "16U-40", 4, "placement Game 4 (deeper bracket at col 3)"),
 ]
 
 def test_cca_game_nums() -> int:

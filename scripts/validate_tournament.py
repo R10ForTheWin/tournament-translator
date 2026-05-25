@@ -288,6 +288,40 @@ def step_api_smoke_test(tournament_id: str, teams: list) -> bool:
             if not ok:
                 failures += 1
 
+            # Win/lose sibling game_num check: W and L paths from same parent must share game_num
+            sibling_violations = []
+            by_gnum: dict = defaultdict(list)
+            for g in upcoming:
+                gn = g.get("game_num")
+                if gn is not None:
+                    by_gnum[gn].append(g)
+            # Build a map: game_id -> set of paths seen at each game_num
+            for gn, col_games in by_gnum.items():
+                paths = [g.get("path") for g in col_games]
+                gids  = [g.get("game_id") for g in col_games]
+                if "win" in paths and "lose" in paths:
+                    pass  # expected — siblings share the column
+                elif len(col_games) > 1:
+                    # Multiple games at same game_num but no win/lose pair — unusual but OK
+                    pass
+            # Inverse check: win and lose paths from the SAME game must share game_num
+            win_games  = {g["game_id"]: g.get("game_num") for g in upcoming if g.get("path") == "win"}
+            lose_games = {g["game_id"]: g.get("game_num") for g in upcoming if g.get("path") == "lose"}
+            # We don't have parent game_id in the API response, so check indirectly:
+            # if the same game_num has both a win and a lose path, that's correct.
+            # If a win path game_num != lose path game_num at the same tree depth, that's wrong.
+            # Simpler invariant: for any two games that are siblings (same game_num column),
+            # they should have opposite paths (win/lose). Flag if two wins or two loses at same col.
+            for gn, col_games in by_gnum.items():
+                path_list = [g.get("path") for g in col_games if g.get("path") in ("win","lose")]
+                if path_list.count("win") > 1 or path_list.count("lose") > 1:
+                    gids = [g.get("game_id") for g in col_games]
+                    sibling_violations.append(f"Game#{gn}: multiple {path_list} paths at same column: {gids}")
+            ok = _check(f"{label}: win/lose siblings share game_num column",
+                        not sibling_violations, "; ".join(sibling_violations[:2]))
+            if not ok:
+                failures += 1
+
             # Self-reference check
             self_refs = []
             for g in upcoming + played:
@@ -305,26 +339,43 @@ def step_api_smoke_test(tournament_id: str, teams: list) -> bool:
 
 
 # ── Step 4: LLM judge ─────────────────────────────────────────────────────────
+def _llm_call(prompt: str) -> str:
+    """Call Claude Haiku via API key (if set) or claude CLI (always available)."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if api_key:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            msg = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=300,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return msg.content[0].text.strip()
+        except Exception as e:
+            raise RuntimeError(f"anthropic SDK call failed: {e}") from e
+
+    # Fallback: use the `claude` CLI (Claude Code's own auth, no key needed)
+    result = subprocess.run(
+        ["claude", "-p", "--model", "claude-haiku-4-5-20251001"],
+        input=prompt,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"claude CLI failed: {result.stderr[:200]}")
+    return result.stdout.strip()
+
+
 def step_llm_judge(tournament_id: str, teams: list) -> bool:
     print("\n" + "=" * 60)
     print("Step 4: LLM bracket judge (Claude Haiku)")
     print("=" * 60)
 
-    try:
-        import anthropic
-    except ImportError:
-        _note("anthropic package not installed — skipping LLM judge")
-        return True
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        _note("ANTHROPIC_API_KEY not set — skipping LLM judge")
-        return True
-
     import urllib.parse
     from app import app as flask_app
 
-    client = anthropic.Anthropic(api_key=api_key)
     failures = 0
 
     with flask_app.test_client() as http_client:
@@ -344,11 +395,13 @@ def step_llm_judge(tournament_id: str, teams: list) -> bool:
             lines = []
             for g in upcoming:
                 gnum  = g.get("game_num", "?")
+                path  = g.get("path") or ""
                 gid   = g.get("game_id", "?")
                 dt    = f"{g.get('date','')} {g.get('time','')}".strip()
                 opp   = g.get("opponent", "?")
                 ph    = "placeholder" if g.get("placeholder") else "confirmed"
-                lines.append(f"  Game #{gnum} [{gid}] {dt}: vs {opp}  [{ph}]")
+                path_tag = f" [{path}]" if path else ""
+                lines.append(f"  Game #{gnum}{path_tag} [{gid}] {dt}: vs {opp}  [{ph}]")
 
             prompt = f"""You are reviewing a water polo tournament bracket that will be shown to parents on a mobile app. Check for any issues a parent would find confusing or wrong.
 
@@ -356,15 +409,15 @@ Tournament: {tournament_id}
 Team: {team_query} ({expected_div})
 Total upcoming games shown: {len(upcoming)}
 
-Games (in display order, Game #1 = first game of tournament):
+Games (Game #N = column number in staircase display; [win]/[lose] = which path):
 {chr(10).join(lines)}
 
 Flag these specific problems:
-1. Games appear out of chronological order (e.g. Saturday before Friday, or later time before earlier same day)
-2. Opponent is the same as the team itself (self-reference, e.g. "vs Loser of game #12" when this IS game 12)
-3. More than 9 upcoming games (suggests bracket over-expansion)
-4. Fewer than 2 upcoming games (suggests expansion failed)
-5. Multiple games at the exact same date+time (likely a parsing error)
+1. A win-path game and lose-path game from the same parent have DIFFERENT Game #N numbers — both must share the same number (they are alternate paths to the same round)
+2. Games appear out of chronological order (Saturday before Friday, or later time before earlier same day) — but win/lose siblings on different days at the same Game # are fine
+3. Opponent label is the same team as the team being shown (self-reference)
+4. More than 9 upcoming games (suggests bracket over-expansion)
+5. Fewer than 2 upcoming games (suggests expansion failed)
 6. Any game missing a date or showing "None"
 
 Reply ONLY in this format:
@@ -377,12 +430,7 @@ ISSUES:
 - one issue per line"""
 
             try:
-                msg = client.messages.create(
-                    model="claude-haiku-4-5-20251001",
-                    max_tokens=250,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                text = msg.content[0].text.strip()
+                text = _llm_call(prompt)
             except Exception as e:
                 _note(f"{team_query!r}: LLM call failed — {e}")
                 continue

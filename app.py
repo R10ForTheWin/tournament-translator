@@ -766,6 +766,11 @@ def describe_slot(slot: str, division_games: list = None, ref_date=None) -> str:
         # If strip_prefix left us with a W#/L# reference (e.g. "E1(4thB)L#7"), resolve it.
         if re.match(r'^[WL]#', name, re.IGNORECASE):
             return describe_slot(name, division_games, ref_date)
+        # CCA extended: strip left bracket-group prefix, then recurse if still contains
+        # a resolvable reference like "4TH B - L55" or "3RD G (WINNER 46)"
+        if (re.search(r'\bL(\d+)\s*$', name, re.IGNORECASE)
+                or re.search(r'\bWinner\s+\d+', name, re.IGNORECASE)):
+            return describe_slot(name, division_games, ref_date)
         return name
 
     if division_games:
@@ -829,6 +834,34 @@ def describe_slot(slot: str, division_games: list = None, ref_date=None) -> str:
     m = re.match(r"^[A-Z]\d+\(([^)]+)\)-?\s*$", slot, re.IGNORECASE)
     if m:
         return m.group(1)
+    # CCA extended: "Winner N" or "(Winner N)" anywhere in slot
+    wm = re.search(r'\bWinner\s+(\d+)', slot, re.IGNORECASE)
+    if wm:
+        if division_games:
+            ref_game = _game_by_num(str(int(wm.group(1))), division_games)
+            if ref_game:
+                t1 = describe_slot(ref_game["white_team"], division_games)
+                t2 = describe_slot(ref_game["dark_team"], division_games)
+                if ref_game.get("played") and ref_game.get("white_score") is not None:
+                    white_won = ref_game["white_score"] > ref_game["dark_score"]
+                    return _title(t1 if white_won else t2)
+                elif t1 and t2:
+                    return f"Winner of {_title(t1)} or {_title(t2)}"
+        return f"Winner of game #{wm.group(1)}"
+    # CCA extended: "LN" at end of slot — e.g. "BB1-4TH G - L46"
+    lm = re.search(r'\bL(\d+)\s*$', slot, re.IGNORECASE)
+    if lm:
+        if division_games:
+            ref_game = _game_by_num(str(int(lm.group(1))), division_games)
+            if ref_game:
+                t1 = describe_slot(ref_game["white_team"], division_games)
+                t2 = describe_slot(ref_game["dark_team"], division_games)
+                if ref_game.get("played") and ref_game.get("white_score") is not None:
+                    white_won = ref_game["white_score"] > ref_game["dark_score"]
+                    return _title(t2 if white_won else t1)
+                elif t1 and t2:
+                    return f"Loser of {_title(t1)} or {_title(t2)}"
+        return f"Loser of game #{lm.group(1)}"
     return slot
 
 def _game_num(game_id: str):
@@ -1097,19 +1130,30 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     add_ph_depth = 2  # composite games don't expand further
                     break
 
-                # W#/L# bracket
+                # W#/L# bracket (standard W#N / L#N, plus CCA extended formats)
                 wm = _WL_SLOT_RE.match(s)
-                if wm:
-                    ref = re.search(r'(\d+)$', wm.group(1))
-                    if not ref:
-                        continue
-                    ref_num = str(int(ref.group(1)))
+                # CCA extended: "LN" at end of slot (no #) — e.g. "BB1-4TH G - L46"
+                lm_ext = re.search(r'\bL(\d+)\s*$', s, re.IGNORECASE) if not wm else None
+                # CCA extended: "Winner N" anywhere — e.g. "3RD G (WINNER 46)"
+                wm_ext = re.search(r'\bWinner\s+(\d+)', s, re.IGNORECASE) if not wm else None
+                if wm or lm_ext or wm_ext:
+                    if wm:
+                        ref = re.search(r'(\d+)$', wm.group(1))
+                        if not ref:
+                            continue
+                        ref_num = str(int(ref.group(1)))
+                        is_win_slot = s[0].upper() == 'W'
+                    elif lm_ext:
+                        ref_num = str(int(lm_ext.group(1)))
+                        is_win_slot = False  # "L46" = loser
+                    else:
+                        ref_num = str(int(wm_ext.group(1)))
+                        is_win_slot = True   # "Winner 46" = winner
                     if ref_num not in reachable:
                         continue
                     src_game, src_ph, src_depth = reachable[ref_num]
                     if src_depth >= 2:
                         continue  # stop expanding beyond 2 levels of uncertainty
-                    is_win_slot = s[0].upper() == 'W'
                     won = _team_won(team, src_game)
 
                     # Drop paths made impossible by a known result
@@ -1675,6 +1719,7 @@ def find_next_games(game, division_games):
         if g["game_id"] == game["game_id"]:
             continue
         for slot in (g["white_team"], g["dark_team"]):
+            # Standard W#N / L#N format
             pm = re.match(r"^([WL])#([^-\s]+)", slot)
             if pm:
                 ref = re.search(r"(\d+)$", pm.group(2))
@@ -1682,6 +1727,16 @@ def find_next_games(game, division_games):
                 if ref_num == num:
                     if pm.group(1).upper() == "W": winner_next = g
                     else:                           loser_next  = g
+                continue
+            # CCA extended: "LN" (no #) at end of slot — e.g. "BB1-4TH G - L46"
+            lm = re.search(r'\bL(\d+)\s*$', slot, re.IGNORECASE)
+            if lm and str(int(lm.group(1))) == num:
+                loser_next = g
+                continue
+            # CCA extended: "Winner N" / "(Winner N)" — e.g. "3RD G (WINNER 46)"
+            wm = re.search(r'\bWinner\s+(\d+)', slot, re.IGNORECASE)
+            if wm and str(int(wm.group(1))) == num:
+                winner_next = g
     return winner_next, loser_next
 
 
@@ -2213,9 +2268,24 @@ def _team_opp_slot(g: dict, team: str, dg: list, my_game_ids: set = None) -> str
     # W#/L# reference: team is in the slot that points at one of their known games
     if my_game_ids:
         for slot, other in ((white, dark), (dark, white)):
+            # Standard W#N / L#N
             wm = re.match(r'^[WL]#(\d+)', slot, re.IGNORECASE)
             if wm:
                 ref_num = str(int(wm.group(1)))
+                ref_game = _game_by_num(ref_num, dg)
+                if ref_game and ref_game["game_id"] in my_game_ids:
+                    return other
+            # CCA extended: "LN" at end of slot — e.g. "BB1-4TH G - L46"
+            lm = re.search(r'\bL(\d+)\s*$', slot, re.IGNORECASE)
+            if lm:
+                ref_num = str(int(lm.group(1)))
+                ref_game = _game_by_num(ref_num, dg)
+                if ref_game and ref_game["game_id"] in my_game_ids:
+                    return other
+            # CCA extended: "Winner N" — e.g. "3RD G (WINNER 46)"
+            wm2 = re.search(r'\bWinner\s+(\d+)', slot, re.IGNORECASE)
+            if wm2:
+                ref_num = str(int(wm2.group(1)))
                 ref_game = _game_by_num(ref_num, dg)
                 if ref_game and ref_game["game_id"] in my_game_ids:
                     return other
@@ -3179,23 +3249,15 @@ def api_games(tournament_id, team):
 
     my_games.sort(key=lambda g: (g["date"] or date.min, g["time"] or datetime.min.time()))
 
-    # NJO/CCA: deduplicate finish-slot bracket games — the 18U bracket references
-    # the same pool-finish slot (e.g. "2ndD-") in multiple games; keep only the
-    # first (earliest-scheduled) one per (pool_group, rank) pair so parents see
-    # one clean W/L path card per bracket outcome, not multiple identical-rank cards.
+    # NJO/CCA: deduplicate by game_id only — round-robin sections (GG/HH/II in 18U,
+    # BB/AA in 16U) legitimately produce multiple games sharing the same pool_rank
+    # metadata; keeping only one per (pool_rank_group, pool_rank) pair would hide them.
     if tournament_id in {"jo-quals", "junior-olympics"}:
-        seen_pr: set = set()
+        seen_gids: set = set()
         deduped = []
         for g in my_games:
-            pr = g.get("pool_rank")
-            if pr is None:
-                deduped.append(g)
-                continue
-            # pool_rank_group is stored by _expand_bracket_games — it's the pool letter
-            # (e.g. "D") whose finish slot caused this game to be added.
-            key = (g.get("pool_rank_group"), pr)
-            if key not in seen_pr:
-                seen_pr.add(key)
+            if g["game_id"] not in seen_gids:
+                seen_gids.add(g["game_id"])
                 deduped.append(g)
         my_games = deduped
 
