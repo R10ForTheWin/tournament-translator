@@ -2007,11 +2007,13 @@ function drawBracketLines(inner, rounds, roundNums) {
       // Day-change pill: always show once per column transition (even with multiple source cards).
       // Same-day break pill: only when there is exactly one source card.
       let pillDur = null;
-      if (!toCard.dataset.alternative && !isPlaceholderDest) {
+      if (!toCard.dataset.alternative) {
         if (isDayChange && !dayPillAdded) {
+          // Day-change pill always shows — even when destination is a placeholder
           pillDur = breakDuration(fromCard.dataset.gameTime, toCard.dataset.gameTime,
                                   fromCard.dataset.gameDate, toCard.dataset.gameDate);
-        } else if (!isDayChange && fromCards.length === 1) {
+        } else if (!isDayChange && fromCards.length === 1 && !isPlaceholderDest) {
+          // Same-day break pill only for confirmed games
           pillDur = breakDuration(fromCard.dataset.gameTime, toCard.dataset.gameTime,
                                   fromCard.dataset.gameDate, toCard.dataset.gameDate);
         }
