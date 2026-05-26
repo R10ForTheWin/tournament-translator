@@ -1739,7 +1739,7 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
 
   const vw = window.innerWidth;
   const CARD_W = vw >= 1100 ? 480 : vw >= 860 ? 420 : 340;
-  const GAP    = 80;
+  const GAP    = 160;
 
   // Group by column (new field), falling back to game_num
   const columns = {};
@@ -1934,7 +1934,7 @@ function drawBracketLines(inner, rounds, roundNums) {
     const fromRect = fromCard.getBoundingClientRect();
     const sx = fromRect.right - innerRect.left;
     const sy = fromRect.top - innerRect.top + fromRect.height / 2;
-    const gx = sx + 40; // midpoint of the 80px gap between columns
+    const gx = sx + 80; // midpoint of the 160px gap between columns
     const R = 7;
 
     toCards.forEach((toCard) => {
@@ -1977,9 +1977,8 @@ function drawBracketLines(inner, rounds, roundNums) {
         }
       }
       if (pillLabel) {
-        // Position pill on the horizontal run into each target card (right half of gap)
-        // so pills are spread at each card's own y level instead of stacked at the stem.
-        pendingPills.push({ mx: (gx + tx) / 2, my: ty, label: pillLabel });
+        // Center pill on the horizontal entry run (gx+R → tx) at target card's y level
+        pendingPills.push({ mx: (gx + R + tx) / 2, my: ty, label: pillLabel });
       }
     });
   }
