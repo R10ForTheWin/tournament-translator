@@ -1995,26 +1995,26 @@ function drawBracketLines(inner, rounds, roundNums) {
 
   // Draw pills on top of all lines
   for (const { mx, my, label } of pendingPills) {
-    const pillW = label.length * 6.5 + 18;
-    const pillH = 18;
+    const pillW = label.length * 8 + 22;
+    const pillH = 24;
     const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
     rect.setAttribute('x', mx - pillW / 2);
     rect.setAttribute('y', my - pillH / 2);
     rect.setAttribute('width', pillW);
     rect.setAttribute('height', pillH);
-    rect.setAttribute('rx', 7);
-    rect.setAttribute('fill', 'rgba(15,15,20,0.85)');
-    rect.setAttribute('stroke', 'rgba(255,255,255,0.12)');
+    rect.setAttribute('rx', 9);
+    rect.setAttribute('fill', 'rgba(20,20,28,0.92)');
+    rect.setAttribute('stroke', 'rgba(255,255,255,0.25)');
     rect.setAttribute('stroke-width', '1');
     svg.appendChild(rect);
     const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     txt.setAttribute('x', mx);
-    txt.setAttribute('y', my + 4);
+    txt.setAttribute('y', my + 5);
     txt.setAttribute('text-anchor', 'middle');
-    txt.setAttribute('font-size', '10');
-    txt.setAttribute('font-weight', '500');
+    txt.setAttribute('font-size', '12');
+    txt.setAttribute('font-weight', '600');
     txt.setAttribute('font-family', '-apple-system, sans-serif');
-    txt.setAttribute('fill', 'rgba(255,255,255,0.38)');
+    txt.setAttribute('fill', 'rgba(255,255,255,0.82)');
     svg.appendChild(txt);
     txt.textContent = label;
   }
