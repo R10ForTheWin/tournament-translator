@@ -3057,15 +3057,14 @@ def _fire_llm_check(team, nodes, warnings):
         ).start()
 
 
-def _compute_staircase_layout(nodes: list) -> dict:
-    """BFS over raw bracket nodes to assign game_num, path, is_alternative.
+def _compute_tree_layout(nodes: list, team: str) -> dict:
+    """Assign column (BFS depth), path_condition, and eliminated flag to each node.
 
-    Works on raw tree nodes (which have proper date/time objects) so sorting
-    is accurate. Returns {game_id: {game_num, path, is_alternative}}.
+    column:         pure BFS depth from root (1-indexed) — no secondary/neutral adjustments
+    path_condition: "win" | "lose" | None (neutral/always shown) from parent edge
+    eliminated:     True if a played result means the team went the other way
 
-    This is the backend equivalent of the frontend wplBracketToStaircase BFS —
-    moving it here means the frontend receives pre-ordered data and does no
-    bracket interpretation itself (Phase 4 canonical object requirement).
+    Returns {game_id: {column, path_condition, eliminated}}.
     """
     if not nodes:
         return {}
@@ -3075,68 +3074,71 @@ def _compute_staircase_layout(nodes: list) -> dict:
     if not root:
         return {}
 
-    # Neutral IDs: appear in BOTH win_next_ids AND lose_next_ids of same parent.
-    neutral_ids: set = set()
-    alternative_ids: set = set()
-    for n in nodes:
-        win_set = set(n.get("win_next_ids") or [])
-        neutral_group = [nid for nid in (n.get("lose_next_ids") or []) if nid in win_set]
-        neutral_ids.update(neutral_group)
-        if len(neutral_group) > 1:
-            alternative_ids.update(neutral_group)
-
-    # Secondary IDs: non-neutral siblings where the later-timed game goes one column deeper.
-    secondary_ids: set = set()
-    for n in nodes:
-        for ids in [n.get("win_next_ids") or [], n.get("lose_next_ids") or []]:
-            eligible = [nid for nid in ids if nid not in neutral_ids]
-            if len(eligible) < 2:
-                continue
-            eligible_nodes = sorted(
-                [node_map[nid] for nid in eligible if nid in node_map],
-                key=lambda g: (g.get("date") or date.min,
-                               g.get("time") or datetime.min.time()),
-            )
-            for g in eligible_nodes[1:]:
-                secondary_ids.add(g["game_id"])
-
-    layout: dict = {}
+    # BFS: column = depth from root (1-indexed)
+    from collections import deque as _dq
+    column_map: dict[str, int] = {}
+    q = _dq([(root["game_id"], 1)])
     visited: set = set()
-    queue = [(root["game_id"], 1, None)]  # (game_id, depth, branch)
-
-    while queue:
-        gid, depth, branch = queue.pop(0)
+    while q:
+        gid, col = q.popleft()
         if gid in visited:
             continue
         visited.add(gid)
-        node = node_map.get(gid)
-        if not node:
+        column_map[gid] = col
+        n = node_map.get(gid)
+        if not n:
             continue
+        for nid in (n.get("win_next_ids") or []) + (n.get("lose_next_ids") or []):
+            if nid not in visited:
+                q.append((nid, col + 1))
 
-        # Skip wrong-path placeholders (non-neutral with a played parent).
-        parent = node_map.get(node.get("src_game_id")) if node.get("src_game_id") else None
-        if node.get("placeholder") and parent and parent.get("played") and gid not in neutral_ids:
+    # path_condition from parent edge
+    path_cond: dict = {}
+    for n in nodes:
+        win_ids  = set(n.get("win_next_ids")  or [])
+        lose_ids = set(n.get("lose_next_ids") or [])
+        for nid in win_ids | lose_ids:
+            if nid in win_ids and nid in lose_ids:
+                path_cond[nid] = None   # neutral — always shown
+            elif nid in win_ids:
+                path_cond[nid] = "win"
+            else:
+                path_cond[nid] = "lose"
+
+    # eliminated: propagate from played results
+    eliminated: set = set()
+
+    def _mark_elim(gid: str) -> None:
+        if gid in eliminated:
+            return
+        eliminated.add(gid)
+        nd = node_map.get(gid)
+        if nd:
+            for nid in (nd.get("win_next_ids") or []) + (nd.get("lose_next_ids") or []):
+                _mark_elim(nid)
+
+    for n in nodes:
+        if not n.get("played"):
             continue
+        won = _team_won(team, n)
+        win_ids  = set(n.get("win_next_ids")  or [])
+        lose_ids = set(n.get("lose_next_ids") or [])
+        neutral  = win_ids & lose_ids
+        if won is True:
+            for nid in lose_ids - neutral:
+                _mark_elim(nid)
+        elif won is False:
+            for nid in win_ids - neutral:
+                _mark_elim(nid)
 
-        actual_depth = depth + 1 if gid in secondary_ids else depth
-        is_neutral   = gid in neutral_ids
-        layout[gid]  = {
-            "game_num":       actual_depth,
-            "path":           None if is_neutral else branch,
-            "is_alternative": gid in alternative_ids,
+    return {
+        gid: {
+            "column":         col,
+            "path_condition": path_cond.get(gid),
+            "eliminated":     gid in eliminated,
         }
-
-        win_branch  = None if is_neutral else (branch if branch is not None else "win")
-        lose_branch = None if is_neutral else (branch if branch is not None else "lose")
-
-        for nid in (node.get("win_next_ids") or []):
-            if nid not in visited:
-                queue.append((nid, actual_depth + 1, win_branch))
-        for nid in (node.get("lose_next_ids") or []):
-            if nid not in visited:
-                queue.append((nid, actual_depth + 1, lose_branch))
-
-    return layout
+        for gid, col in column_map.items()
+    }
 
 
 def _build_canonical_bracket(team: str, our_team_name: str, wpl_bracket: list,
@@ -3624,12 +3626,17 @@ def api_games(tournament_id, team):
             return d
         wpl_bracket = [_serialize_tree_node(n, div_games_for_tree) for n in tree]
 
-        # Annotate serialized nodes with staircase layout (game_num, path, is_alternative).
-        # Computed on raw nodes (proper date/time objects); applied to serialized copies.
-        layout = _compute_staircase_layout(tree)
+        # Annotate serialized nodes with tree layout (column, path_condition, eliminated).
+        layout = _compute_tree_layout(tree, team)
         for sn in wpl_bracket:
-            sn.update(layout.get(sn["game_id"],
-                                 {"game_num": 1, "path": None, "is_alternative": False}))
+            info = layout.get(sn["game_id"], {})
+            sn["column"]         = info.get("column", 1)
+            sn["path_condition"] = info.get("path_condition")
+            sn["eliminated"]     = info.get("eliminated", False)
+            # Aliases kept for validate_tournament.py backwards compatibility
+            sn["game_num"]       = sn["column"]
+            sn["path"]           = sn["path_condition"]
+            sn["is_alternative"] = False
 
     # ── Bracket confidence + display mode ────────────────────────────────────
     # WPL tournaments always attempt a bracket. Non-WPL/NJO: no bracket expected.

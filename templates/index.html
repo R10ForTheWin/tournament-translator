@@ -328,6 +328,7 @@
     .bracket-game-num-header { font-size: 16px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); padding: 0 0 4px; text-align: center; }
     .bracket-day-header { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.18em; color: rgba(255,255,255,0.55); text-align: center; padding: 0 0 10px; }
     .sunday-bracket-note { margin: 16px max(16px, env(safe-area-inset-left)) 0; padding: 10px 14px; background: rgba(255,255,255,0.05); border-left: 3px solid rgba(255,255,255,0.18); border-radius: 0 6px 6px 0; font-size: 12px; color: rgba(255,255,255,0.5); line-height: 1.5; }
+    .bracket-eliminated { opacity: 0.28; filter: grayscale(0.7); pointer-events: none; }
 
     /* ── WPL crossover game tree ── */
     .wpl-tree-wrap { padding: 0 0 32px; }
@@ -1730,46 +1731,21 @@ function canonicalToStaircase(cb) {
 }
 
 function buildBracketView(allGames, tournamentId, team, ourName) {
-  // Deduplicate by game_id — prevents double-rendering when a game appears in multiple sources
   const _seenIds = new Set();
   allGames = allGames.filter(g => g.game_id && !_seenIds.has(g.game_id) && _seenIds.add(g.game_id));
 
-  // Structural sanity check: for WPL tournaments, game_nums should be sequential (1, 2, 3…).
-  // High or non-sequential numbers indicate the wpl_bracket tree was null and the fallback
-  // played+upcoming list is being used — which includes both win-path and lose-path games.
-  if (tournamentId && tournamentId.startsWith('futures')) {
-    const nums = allGames.map(g => g.game_num || 1).filter(Boolean);
-    const maxNum = nums.length ? Math.max(...nums) : 0;
-    if (maxNum > 7) {
-      console.warn(
-        `[bracket-struct] ${team} | ${tournamentId}: game_num reaches ${maxNum} — ` +
-        `wpl_bracket tree likely returned empty; frontend fell back to raw chronological ` +
-        `game_nums (both win-path and lose-path). Fix: check [bracket-struct] logs in Railway.`
-      );
-    }
-  }
-
   const vw = window.innerWidth;
   const CARD_W = vw >= 1100 ? 480 : vw >= 860 ? 420 : 340;
-  const GAP    = 80; // horizontal gap between columns (connector line space)
+  const GAP    = 80;
 
-  const rounds = {};
+  // Group by column (new field), falling back to game_num
+  const columns = {};
   allGames.forEach(g => {
-    const n = g.game_num || 1;
-    if (!rounds[n]) rounds[n] = [];
-    rounds[n].push(g);
+    const col = g.column || g.game_num || 1;
+    if (!columns[col]) columns[col] = [];
+    columns[col].push(g);
   });
-
-  // Sort columns chronologically by first game's date+time
-  const roundNums = Object.keys(rounds).map(Number).sort((a, b) => {
-    const ga = rounds[a].find(g => g.date && g.time) || rounds[a][0];
-    const gb = rounds[b].find(g => g.date && g.time) || rounds[b][0];
-    const dn = _dayNum(ga?.date) - _dayNum(gb?.date);
-    if (dn !== 0) return dn;
-    const tm = (parseTimeMin(ga?.time) || 0) - (parseTimeMin(gb?.time) || 0);
-    if (tm !== 0) return tm;
-    return a - b;
-  });
+  const colNums = Object.keys(columns).map(Number).sort((a, b) => a - b);
 
   const wrap = document.createElement('div');
   wrap.className = 'bracket-stair-wrap';
@@ -1778,94 +1754,78 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
   inner.className = 'bracket-stair-inner';
   inner.style.gap = GAP + 'px';
 
-  roundNums.forEach((r, idx) => {
+  colNums.forEach((col, idx) => {
     const step = document.createElement('div');
     step.className = 'bracket-step' + (idx === 0 ? ' first-step' : '');
     step.style.width = CARD_W + 'px';
-    const stepGames = rounds[r];
 
-    // Game number label above all cards in this column (once)
-    const gameNum = stepGames[0]?.game_num;
-    if (gameNum) {
-      const numHdr = document.createElement('div');
-      numHdr.className = 'bracket-game-num-header';
-      numHdr.textContent = `Game ${gameNum}`;
-      step.appendChild(numHdr);
-      // Day label under the game number — use earliest date in column
-      const earliestGame = stepGames.slice().sort((a, b) => _dayNum(a.date) - _dayNum(b.date))[0];
-      const colDate = earliestGame?.date;
-      if (colDate) {
-        const dayName = colDate.split(',')[0].trim(); // "Saturday" or "Sunday"
-        const dayHdr = document.createElement('div');
-        dayHdr.className = 'bracket-day-header';
-        dayHdr.textContent = dayName.toUpperCase();
-        step.appendChild(dayHdr);
-      }
+    const colGames = columns[col];
+
+    // Game number header
+    const numHdr = document.createElement('div');
+    numHdr.className = 'bracket-game-num-header';
+    numHdr.textContent = `Game ${col}`;
+    step.appendChild(numHdr);
+
+    // Day header: use the win-path (or first non-eliminated, non-lose) game's date
+    // so a Saturday lose-path doesn't make a Friday column say "SATURDAY".
+    const pc = g => g.path_condition ?? g.path;
+    const refGame = colGames.find(g => !g.eliminated && pc(g) === 'win')
+                 || colGames.find(g => !g.eliminated && !pc(g))
+                 || colGames.find(g => !g.eliminated)
+                 || colGames[0];
+    const colDayName = refGame?.date ? refGame.date.split(',')[0].trim() : null;
+    if (colDayName) {
+      const dayHdr = document.createElement('div');
+      dayHdr.className = 'bracket-day-header';
+      dayHdr.textContent = colDayName.toUpperCase();
+      step.appendChild(dayHdr);
     }
 
-    // No-path first, then win, then lose; within path sort by time
-    const ordered = [...stepGames].sort((a, b) => {
+    // Sort: no-path/neutral first, then win, then lose
+    const ordered = [...colGames].sort((a, b) => {
       const o = { undefined: 0, null: 0, win: 1, lose: 2 };
-      const pathDiff = (o[a.path] ?? 0) - (o[b.path] ?? 0);
-      if (pathDiff !== 0) return pathDiff;
-      return (_dayNum(a.date) - _dayNum(b.date)) || ((parseTimeMin(a.time) || 0) - (parseTimeMin(b.time) || 0));
+      return ((o[pc(a)] ?? 0) - (o[pc(b)] ?? 0))
+          || (_dayNum(a.date) - _dayNum(b.date))
+          || ((parseTimeMin(a.time) || 0) - (parseTimeMin(b.time) || 0));
     });
 
-    const hasScenarios    = ordered.some(g => g.path === 'win' || g.path === 'lose');
-    const hasAlternatives = ordered.some(g => g.is_alternative);
-    const colSpansDays    = new Set(ordered.map(g => g.date).filter(Boolean)).size > 1;
-    const allPlaceholder  = ordered.length > 1 && ordered.every(g => g.placeholder !== false);
+    const hasScenarios = ordered.some(g => pc(g) === 'win' || pc(g) === 'lose');
 
-    // When all options are placeholders (pool result still unknown), say so clearly
-    // so parents know this is expected, not an app error.
-    if (hasAlternatives && allPlaceholder) {
-      const note = document.createElement('div');
-      note.style.cssText = 'font-size:11px;color:var(--muted);text-align:center;padding:0 4px 10px;letter-spacing:0.03em;line-height:1.45;';
-      note.textContent = 'Pool results pending · one of these games will be confirmed automatically';
-      step.appendChild(note);
-    }
+    let lastPathGroup = undefined;
 
-    let lastPath = undefined; // tracks current path group for column-level banners
+    ordered.forEach(g => {
+      const pathCond = pc(g);
+      const isElim   = !!g.eliminated;
 
-    ordered.forEach((g, i) => {
-      // Path banner — rendered once per win/lose group at column level, not per card
-      if (hasScenarios && g.path !== lastPath && (g.path === 'win' || g.path === 'lose')) {
-        const confirmed = g.placeholder === false;
+      // Path banner — once per win/lose group
+      if (hasScenarios && pathCond !== lastPathGroup && (pathCond === 'win' || pathCond === 'lose')) {
+        const confirmed = g.placeholder === false && !isElim;
         const opp = g.opponent || '';
-        const pathLabel = g.path === 'win'
+        const pathLabel = pathCond === 'win'
           ? ((confirmed || /winner of game/i.test(opp)) ? 'Winners Bracket' : 'If We Win')
           : ((confirmed || /loser of game/i.test(opp))  ? 'Consolation Bracket' : 'If We Lose');
         const banner = document.createElement('div');
-        banner.className = `path-banner ${g.path}-path`;
+        banner.className = `path-banner ${pathCond}-path${isElim ? ' bracket-eliminated' : ''}`;
         banner.textContent = pathLabel;
         step.appendChild(banner);
       }
-      lastPath = g.path;
+      lastPathGroup = pathCond;
 
-      // Break tiles: only for confirmed sequential games (not win/lose branches, not alternatives)
-      if (i > 0 && !hasScenarios && !hasAlternatives) {
-        const dur = breakDuration(ordered[i - 1].time, g.time, ordered[i - 1].date, g.date);
-        if (dur) {
-          const bt = document.createElement('div');
-          bt.className = 'break-tile';
-          bt.innerHTML = `<div class="break-inner"><div class="break-duration">${dur}</div></div>`;
-          step.appendChild(bt);
-        }
-      }
+      // Show date on card when its day differs from the column header day
+      const cardDay = (g.date || '').split(',')[0].trim();
+      const showDate = !!(colDayName && cardDay && cardDay.toLowerCase() !== colDayName.toLowerCase());
+      const cardG = showDate ? Object.assign({}, g, { _showDate: true }) : g;
 
-      // When column has scenarios, strip path before passing to card builders so they
-      // don't add their own banner — the column-level banner above handles it.
-      const cardG = hasScenarios
-        ? Object.assign({}, g, {path: null, scenarios: null, _showDate: colSpansDays})
-        : (colSpansDays ? Object.assign({}, g, {_showDate: true}) : g);
       const card = cardG.result
         ? buildResultCard(cardG, ourName, tournamentId)
         : buildUpcomingCard(cardG, tournamentId, team, ourName);
-      // Restore branch-card indent class for scenario cards (path was stripped above)
-      if (hasScenarios && g.path) card.classList.add('branch-card');
+
+      if (hasScenarios && pathCond) card.classList.add('branch-card');
+      if (isElim) card.classList.add('bracket-eliminated');
+
       card.dataset.gameTime = g.time || '';
       card.dataset.gameDate = g.date || '';
-      if (g.is_alternative) card.dataset.alternative = '1';
       step.appendChild(card);
     });
 
@@ -1885,7 +1845,7 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
   }
 
   requestAnimationFrame(() => {
-    drawBracketLines(inner, rounds, roundNums);
+    drawBracketLines(inner, columns, colNums);
   });
 
   // Custom pinch-to-zoom anchored at finger midpoint
