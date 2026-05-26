@@ -1812,6 +1812,7 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
 
     const hasScenarios    = ordered.some(g => g.path === 'win' || g.path === 'lose');
     const hasAlternatives = ordered.some(g => g.is_alternative);
+    const colSpansDays    = new Set(ordered.map(g => g.date).filter(Boolean)).size > 1;
     const allPlaceholder  = ordered.length > 1 && ordered.every(g => g.placeholder !== false);
 
     // When all options are placeholders (pool result still unknown), say so clearly
@@ -1853,7 +1854,9 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
 
       // When column has scenarios, strip path before passing to card builders so they
       // don't add their own banner — the column-level banner above handles it.
-      const cardG = hasScenarios ? Object.assign({}, g, {path: null, scenarios: null}) : g;
+      const cardG = hasScenarios
+        ? Object.assign({}, g, {path: null, scenarios: null, _showDate: colSpansDays})
+        : (colSpansDays ? Object.assign({}, g, {_showDate: true}) : g);
       const card = cardG.result
         ? buildResultCard(cardG, ourName, tournamentId)
         : buildUpcomingCard(cardG, tournamentId, team, ourName);
@@ -2412,7 +2415,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
     ${bannerHtml}
     <div class="game-card-header">
       <div class="game-card-meta">
-        <div class="game-card-datetime">${g.time || g.date}</div>
+        <div class="game-card-datetime">${g.time || g.date}${g._showDate && g.date ? ' · ' + g.date.split(',')[0] : ''}</div>
         ${locationHtml(g.location)}
       </div>
     </div>
