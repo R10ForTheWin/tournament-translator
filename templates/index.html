@@ -1812,10 +1812,11 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
       }
       lastPathGroup = pathCond;
 
-      // Show date on card when its day differs from the column header day
+      // Strip scenarios — staircase is the "what's next"; card text is redundant noise.
+      // Show date when card's day differs from the column header.
       const cardDay = (g.date || '').split(',')[0].trim();
       const showDate = !!(colDayName && cardDay && cardDay.toLowerCase() !== colDayName.toLowerCase());
-      const cardG = showDate ? Object.assign({}, g, { _showDate: true }) : g;
+      const cardG = Object.assign({}, g, { scenarios: null, _showDate: showDate || undefined });
 
       const card = cardG.result
         ? buildResultCard(cardG, ourName, tournamentId)
