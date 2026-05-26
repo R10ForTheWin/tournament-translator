@@ -1780,7 +1780,13 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
           || ((parseTimeMin(a.time) || 0) - (parseTimeMin(b.time) || 0));
     });
 
-    const hasScenarios = ordered.some(g => pc(g) === 'win' || pc(g) === 'lose');
+    const _isPoolPath = p => p && p.startsWith('pool_');
+    const hasScenarios = ordered.some(g => {
+      const p = pc(g);
+      return p === 'win' || p === 'lose' || _isPoolPath(p);
+    });
+
+    const _ordSuffix = n => { const s=['th','st','nd','rd'], v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); };
 
     let lastPathGroup = undefined;
 
@@ -1788,16 +1794,25 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
       const pathCond = pc(g);
       const isElim   = !!g.eliminated;
 
-      // Path banner on every win/lose card — each tile is self-labeling
+      // Path banner on every scenario card — each tile is self-labeling
       let bannerEl = null;
-      if (hasScenarios && (pathCond === 'win' || pathCond === 'lose')) {
+      if (hasScenarios && (pathCond === 'win' || pathCond === 'lose' || _isPoolPath(pathCond))) {
         const confirmed = g.placeholder === false && !isElim;
         const opp = g.opponent || '';
-        const pathLabel = pathCond === 'win'
-          ? ((confirmed || /winner of game/i.test(opp)) ? 'Winners Bracket' : 'If We Win')
-          : ((confirmed || /loser of game/i.test(opp))  ? 'Consolation Bracket' : 'If We Lose');
+        let pathLabel, bannerClass;
+        if (pathCond === 'win') {
+          pathLabel  = (confirmed || /winner of game/i.test(opp)) ? 'Winners Bracket' : 'If We Win';
+          bannerClass = 'win-path';
+        } else if (pathCond === 'lose') {
+          pathLabel  = (confirmed || /loser of game/i.test(opp)) ? 'Consolation Bracket' : 'If We Lose';
+          bannerClass = 'lose-path';
+        } else {
+          const rank = +pathCond.split('_')[1];
+          pathLabel  = `If ${_ordSuffix(rank)} in Pool`;
+          bannerClass = 'pool-path';
+        }
         bannerEl = document.createElement('div');
-        bannerEl.className = `path-banner ${pathCond}-path${isElim ? ' bracket-eliminated' : ''}`;
+        bannerEl.className = `path-banner ${bannerClass}${isElim ? ' bracket-eliminated' : ''}`;
         bannerEl.textContent = pathLabel;
       }
       lastPathGroup = pathCond;
