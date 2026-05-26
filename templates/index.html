@@ -1959,16 +1959,18 @@ function drawBracketLines(inner, rounds, roundNums) {
       path.setAttribute('stroke-width', '2.5');
       svg.appendChild(path);
 
-      // Time-gap pill on each connector line
+      // Time-gap pill on each connector line — always shows duration, even across days
       const d1 = fromCard.dataset.gameDate, d2 = toCard.dataset.gameDate;
       const t1 = fromCard.dataset.gameTime, t2 = toCard.dataset.gameTime;
       let pillLabel = null;
-      if (d1 && d2 && d1 !== d2) {
-        pillLabel = (d2.split(',')[0] || 'Next Day').trim();
-      } else if (t1 && t2) {
+      if (t1 && t2) {
         const m1 = parseTimeMin(t1), m2 = parseTimeMin(t2);
         if (m1 !== null && m2 !== null) {
-          const gap = m2 - m1 - 60; // assume 1h game duration
+          const _days = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+          const idx1 = _days.indexOf((d1 || '').split(',')[0].toLowerCase().trim());
+          const idx2 = _days.indexOf((d2 || '').split(',')[0].toLowerCase().trim());
+          const dayDiff = (idx1 >= 0 && idx2 >= 0) ? idx2 - idx1 : (d1 && d2 && d1 !== d2 ? 1 : 0);
+          const gap = m2 + dayDiff * 1440 - m1 - 60; // 60 min game duration
           if (gap > 0) {
             const h = Math.floor(gap / 60), m = gap % 60;
             pillLabel = h > 0 && m > 0 ? `${h}h ${m}m` : h > 0 ? `${h}h` : `${m}m`;
