@@ -1794,27 +1794,6 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
       const pathCond = pc(g);
       const isElim   = !!g.eliminated;
 
-      // Path banner on every scenario card — each tile is self-labeling
-      let bannerEl = null;
-      if (hasScenarios && (pathCond === 'win' || pathCond === 'lose' || _isPoolPath(pathCond))) {
-        const confirmed = g.placeholder === false && !isElim;
-        const opp = g.opponent || '';
-        let pathLabel, bannerClass;
-        if (pathCond === 'win') {
-          pathLabel  = (confirmed || /winner of game/i.test(opp)) ? 'Winners Bracket' : 'If We Win';
-          bannerClass = 'win-path';
-        } else if (pathCond === 'lose') {
-          pathLabel  = (confirmed || /loser of game/i.test(opp)) ? 'Consolation Bracket' : 'If We Lose';
-          bannerClass = 'lose-path';
-        } else {
-          const rank = +pathCond.split('_')[1];
-          pathLabel  = `If ${_ordSuffix(rank)} in Pool`;
-          bannerClass = 'pool-path';
-        }
-        bannerEl = document.createElement('div');
-        bannerEl.className = `path-banner ${bannerClass}${isElim ? ' bracket-eliminated' : ''}`;
-        bannerEl.textContent = pathLabel;
-      }
       lastPathGroup = pathCond;
 
       const cardG = Object.assign({}, g, { path: null, scenarios: null, _showDate: undefined });
@@ -1823,12 +1802,11 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
         ? buildResultCard(cardG, ourName, tournamentId)
         : buildUpcomingCard(cardG, tournamentId, team, ourName);
 
-      if (hasScenarios && pathCond) card.classList.add('branch-card');
       if (isElim) card.classList.add('bracket-eliminated');
-      if (bannerEl) card.prepend(bannerEl);
 
       card.dataset.gameTime = g.time || '';
       card.dataset.gameDate = g.date || '';
+      card.dataset.path     = pathCond || '';
       step.appendChild(card);
     });
 
@@ -1973,10 +1951,20 @@ function drawBracketLines(inner, rounds, roundNums) {
       path.setAttribute('stroke-width', '2.5');
       svg.appendChild(path);
 
-      // Time-gap pill on each connector line — always shows duration, even across days
+      // Pill on each connector: path condition + time gap
       const d1 = fromCard.dataset.gameDate, d2 = toCard.dataset.gameDate;
       const t1 = fromCard.dataset.gameTime, t2 = toCard.dataset.gameTime;
-      let pillLabel = null;
+      const toPath = toCard.dataset.path || '';
+
+      // Path condition label — no "pool" terminology
+      const _ordC = n => { const s=['th','st','nd','rd'],v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); };
+      let condPart = null;
+      if (toPath === 'win')       condPart = 'Win';
+      else if (toPath === 'lose') condPart = 'Lose';
+      else if (toPath.startsWith('pool_')) condPart = _ordC(+toPath.split('_')[1]);
+
+      // Time gap
+      let timePart = null;
       if (t1 && t2) {
         const m1 = parseTimeMin(t1), m2 = parseTimeMin(t2);
         if (m1 !== null && m2 !== null) {
@@ -1984,15 +1972,16 @@ function drawBracketLines(inner, rounds, roundNums) {
           const idx1 = _days.indexOf((d1 || '').split(',')[0].toLowerCase().trim());
           const idx2 = _days.indexOf((d2 || '').split(',')[0].toLowerCase().trim());
           const dayDiff = (idx1 >= 0 && idx2 >= 0) ? idx2 - idx1 : (d1 && d2 && d1 !== d2 ? 1 : 0);
-          const gap = m2 + dayDiff * 1440 - m1 - 60; // 60 min game duration
+          const gap = m2 + dayDiff * 1440 - m1 - 60;
           if (gap > 0) {
             const h = Math.floor(gap / 60), m = gap % 60;
-            pillLabel = h > 0 && m > 0 ? `${h}h ${m}m` : h > 0 ? `${h}h` : `${m}m`;
+            timePart = h > 0 && m > 0 ? `${h}h ${m}m` : h > 0 ? `${h}h` : `${m}m`;
           }
         }
       }
+
+      const pillLabel = [condPart, timePart].filter(Boolean).join(' · ') || null;
       if (pillLabel) {
-        // Center pill on the horizontal entry run (gx+R → tx) at target card's y level
         pendingPills.push({ mx: (gx + R + tx) / 2, my: ty, label: pillLabel });
       }
     });
