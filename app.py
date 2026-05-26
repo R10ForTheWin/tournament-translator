@@ -3359,6 +3359,41 @@ def api_games(tournament_id, team):
         _game_num_map = {gid: _gn_remap.get(gn, gn)
                          for gid, gn in _game_num_map.items()}
 
+    # Merge adjacent win-only / lose-only placeholder columns into one.
+    # Happens when placement games fall out of BFS into the time-keyed fallback,
+    # giving their win and lose successors different game_nums even though they're
+    # siblings (both reachable from the same upstream game, just on different paths).
+    # Use bracket_path (already computed above) to get the win/lose assignment
+    # for each game, since path isn't set on the raw game objects yet.
+    def _raw_path(g):
+        if g.get("pool_rank"):
+            return f"pool_{g['pool_rank']}"
+        return bracket_path.get(g["game_id"])
+
+    _by_gn: dict[int, list] = {}
+    for g in my_games:
+        _gn = _game_num_map.get(g["game_id"])
+        if _gn:
+            _by_gn.setdefault(_gn, []).append(g)
+    for _n in sorted(_by_gn.keys()):
+        if _n + 1 not in _by_gn:
+            continue
+        _col_a, _col_b = _by_gn[_n], _by_gn[_n + 1]
+        _paths_a = {_raw_path(g) for g in _col_a}
+        _paths_b = {_raw_path(g) for g in _col_b}
+        _all_ph_a = all(g.get("placeholder") for g in _col_a)
+        _all_ph_b = all(g.get("placeholder") for g in _col_b)
+        if (_all_ph_a and _all_ph_b
+                and _paths_a <= {"win", "lose"} and _paths_b <= {"win", "lose"}
+                and _paths_a | _paths_b == {"win", "lose"}):
+            for g in _col_b:
+                _game_num_map[g["game_id"]] = _n
+
+    # Close any gaps left by the sibling-merge (e.g. 1,2,3,4,6,7 → 1,2,3,4,5,6)
+    _used_gns = sorted(set(_game_num_map.values()))
+    _gap_remap = {old: (new + 1) for new, old in enumerate(_used_gns)}
+    _game_num_map = {gid: _gap_remap[gn] for gid, gn in _game_num_map.items()}
+
     show_records = tournament_id not in WPL_TOURNAMENTS
     sheet_records: dict = {}
     if show_records:
