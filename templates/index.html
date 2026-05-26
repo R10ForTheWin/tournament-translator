@@ -305,6 +305,9 @@
 
     /* Branch cards indented to show they flow from the game above */
     .game-card.branch-card { margin-left: 16px; }
+    .game-card-id { font-size: 11px; color: rgba(255,255,255,0.22); font-weight: 400; margin-left: 10px; flex-shrink: 0; letter-spacing: 0.02em; }
+    .bracket-step .game-card { margin-bottom: 20px; }
+    .bracket-step .path-banner + .game-card { margin-top: 0; }
 
     /* ── Placeholder (possible future game) ── */
     .game-card.placeholder { border-left-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.02); }
@@ -1767,20 +1770,7 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
     numHdr.textContent = `Game ${col}`;
     step.appendChild(numHdr);
 
-    // Day header: use the win-path (or first non-eliminated, non-lose) game's date
-    // so a Saturday lose-path doesn't make a Friday column say "SATURDAY".
     const pc = g => g.path_condition ?? g.path;
-    const refGame = colGames.find(g => !g.eliminated && pc(g) === 'win')
-                 || colGames.find(g => !g.eliminated && !pc(g))
-                 || colGames.find(g => !g.eliminated)
-                 || colGames[0];
-    const colDayName = refGame?.date ? refGame.date.split(',')[0].trim() : null;
-    if (colDayName) {
-      const dayHdr = document.createElement('div');
-      dayHdr.className = 'bracket-day-header';
-      dayHdr.textContent = colDayName.toUpperCase();
-      step.appendChild(dayHdr);
-    }
 
     // Sort: no-path/neutral first, then win, then lose
     const ordered = [...colGames].sort((a, b) => {
@@ -1930,6 +1920,7 @@ function drawBracketLines(inner, rounds, roundNums) {
 
   const steps = inner.querySelectorAll('.bracket-step');
   const stepArr = Array.from(steps);
+  const pendingPills = [];
 
   for (let i = 0; i < stepArr.length - 1; i++) {
     const fromStep = stepArr[i];
@@ -1968,7 +1959,52 @@ function drawBracketLines(inner, rounds, roundNums) {
       path.setAttribute('stroke-width', '2.5');
       svg.appendChild(path);
 
+      // Time-gap pill on each connector line
+      const d1 = fromCard.dataset.gameDate, d2 = toCard.dataset.gameDate;
+      const t1 = fromCard.dataset.gameTime, t2 = toCard.dataset.gameTime;
+      let pillLabel = null;
+      if (d1 && d2 && d1 !== d2) {
+        pillLabel = (d2.split(',')[0] || 'Next Day').trim();
+      } else if (t1 && t2) {
+        const m1 = parseTimeMin(t1), m2 = parseTimeMin(t2);
+        if (m1 !== null && m2 !== null) {
+          const gap = m2 - m1 - 60; // assume 1h game duration
+          if (gap > 0) {
+            const h = Math.floor(gap / 60), m = gap % 60;
+            pillLabel = h > 0 && m > 0 ? `${h}h ${m}m` : h > 0 ? `${h}h` : `${m}m`;
+          }
+        }
+      }
+      if (pillLabel) {
+        pendingPills.push({ mx: gx, my: sy + (ty - sy) * 0.6, label: pillLabel });
+      }
     });
+  }
+
+  // Draw pills on top of all lines
+  for (const { mx, my, label } of pendingPills) {
+    const pillW = label.length * 6.5 + 18;
+    const pillH = 18;
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', mx - pillW / 2);
+    rect.setAttribute('y', my - pillH / 2);
+    rect.setAttribute('width', pillW);
+    rect.setAttribute('height', pillH);
+    rect.setAttribute('rx', 7);
+    rect.setAttribute('fill', 'rgba(15,15,20,0.85)');
+    rect.setAttribute('stroke', 'rgba(255,255,255,0.12)');
+    rect.setAttribute('stroke-width', '1');
+    svg.appendChild(rect);
+    const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    txt.setAttribute('x', mx);
+    txt.setAttribute('y', my + 4);
+    txt.setAttribute('text-anchor', 'middle');
+    txt.setAttribute('font-size', '10');
+    txt.setAttribute('font-weight', '500');
+    txt.setAttribute('font-family', '-apple-system, sans-serif');
+    txt.setAttribute('fill', 'rgba(255,255,255,0.38)');
+    svg.appendChild(txt);
+    txt.textContent = label;
   }
 }
 
@@ -2188,9 +2224,10 @@ function buildResultCard(g, ourName, tournamentId) {
     <div class="path-banner result-${cls}">${label}</div>
     <div class="game-card-header">
       <div class="game-card-meta">
-        <div class="game-card-datetime">${g.time || g.date}</div>
+        <div class="game-card-datetime">${[g.date?.split(',')[0], g.time].filter(Boolean).join(' · ')}</div>
         ${locationHtml(g.location)}
       </div>
+      ${g.game_id ? `<div class="game-card-id">${g.game_id.split('-').pop()}</div>` : ''}
     </div>
     <div class="game-card-body">
       <div class="team-matchup">
@@ -2319,9 +2356,10 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
     ${bannerHtml}
     <div class="game-card-header">
       <div class="game-card-meta">
-        <div class="game-card-datetime">${g.time || g.date}${g._showDate && g.date ? ' · ' + g.date.split(',')[0] : ''}</div>
+        <div class="game-card-datetime">${[g.date?.split(',')[0], g.time].filter(Boolean).join(' · ')}</div>
         ${locationHtml(g.location)}
       </div>
+      ${g.game_id ? `<div class="game-card-id">${g.game_id.split('-').pop()}</div>` : ''}
     </div>
     <div class="game-card-body">
       ${teamSection}
