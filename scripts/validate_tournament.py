@@ -337,6 +337,27 @@ def step_api_smoke_test(tournament_id: str, teams: list) -> bool:
                         f"({[g['game_id'] for g in col_a]} / {[g['game_id'] for g in col_b]})"
                     )
 
+            # Missing-sibling check: every placeholder win-path game must have a
+            # placeholder lose-path game in the same column (and vice versa).
+            # The adjacent-column check above only fires when both exist but are split.
+            # This catches the case where one sibling is absent entirely (e.g. excluded
+            # by the per-day cap before it ever reached the API response).
+            # Scoped to non-Sunday columns: late Sunday bracket legs can legitimately
+            # have only a win path (lose = elimination, no further game).
+            for gn, col_games in by_gnum.items():
+                col_days = {(g.get("date") or "").split(",")[0].strip() for g in col_games}
+                if "Sunday" in col_days:
+                    continue
+                ph_paths = {g.get("path") for g in col_games if g.get("placeholder")}
+                if "win" in ph_paths and "lose" not in ph_paths:
+                    sibling_violations.append(
+                        f"Game#{gn}: has win-path placeholder but no lose-path placeholder"
+                    )
+                elif "lose" in ph_paths and "win" not in ph_paths:
+                    sibling_violations.append(
+                        f"Game#{gn}: has lose-path placeholder but no win-path placeholder"
+                    )
+
             ok = _check(f"{label}: win/lose siblings share game_num column",
                         not sibling_violations, "; ".join(sibling_violations[:2]))
             if not ok:
