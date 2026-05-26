@@ -1977,7 +1977,9 @@ function drawBracketLines(inner, rounds, roundNums) {
         }
       }
       if (pillLabel) {
-        pendingPills.push({ mx: gx, my: sy + (ty - sy) * 0.6, label: pillLabel });
+        // Position pill on the horizontal run into each target card (right half of gap)
+        // so pills are spread at each card's own y level instead of stacked at the stem.
+        pendingPills.push({ mx: (gx + tx) / 2, my: ty, label: pillLabel });
       }
     });
   }
