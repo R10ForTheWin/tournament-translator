@@ -1788,9 +1788,9 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
       const pathCond = pc(g);
       const isElim   = !!g.eliminated;
 
-      // Path banner — prepended inside the card so it's always contained by the tile
+      // Path banner on every win/lose card — each tile is self-labeling
       let bannerEl = null;
-      if (hasScenarios && pathCond !== lastPathGroup && (pathCond === 'win' || pathCond === 'lose')) {
+      if (hasScenarios && (pathCond === 'win' || pathCond === 'lose')) {
         const confirmed = g.placeholder === false && !isElim;
         const opp = g.opponent || '';
         const pathLabel = pathCond === 'win'
