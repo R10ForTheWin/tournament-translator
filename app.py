@@ -3400,6 +3400,39 @@ def api_games(tournament_id, team):
     _gap_remap = {old: (new + 1) for new, old in enumerate(_used_gns)}
     _game_num_map = {gid: _gap_remap[gn] for gid, gn in _game_num_map.items()}
 
+    # Merge multiple pure-single-day columns that share the same calendar day.
+    # e.g. two Saturday game_nums (pool placements + W/L branches) collapse into
+    # one "Game 3" column, and all Sunday games collapse into one column.
+    # A column is "pure single-day" only if ALL its games are on the same date.
+    # Mixed columns (e.g. Fri win + Sat lose in game_num=2) are left alone.
+    _by_gn2: dict[int, list] = {}
+    for _g2 in my_games:
+        _gn2 = _game_num_map.get(_g2["game_id"])
+        if _gn2:
+            _by_gn2.setdefault(_gn2, []).append(_g2)
+    _gn_unique_days: dict[int, set] = {
+        _n2: {_g2.get("date") for _g2 in _gs2 if _g2.get("date")}
+        for _n2, _gs2 in _by_gn2.items()
+    }
+    _day_pure_gns: dict = {}
+    for _n2, _days2 in _gn_unique_days.items():
+        if len(_days2) == 1:
+            _d2 = next(iter(_days2))
+            _day_pure_gns.setdefault(_d2, []).append(_n2)
+    for _d2, _gns2 in _day_pure_gns.items():
+        if len(_gns2) <= 1:
+            continue
+        _target_gn = min(_gns2)
+        for _n2 in _gns2:
+            if _n2 == _target_gn:
+                continue
+            for _g2 in _by_gn2.get(_n2, []):
+                _game_num_map[_g2["game_id"]] = _target_gn
+    # Re-close gaps after day-merge
+    _used_gns2 = sorted(set(_game_num_map.values()))
+    _gap_remap2 = {old: (new + 1) for new, old in enumerate(_used_gns2)}
+    _game_num_map = {gid: _gap_remap2[gn] for gid, gn in _game_num_map.items()}
+
     show_records = tournament_id not in WPL_TOURNAMENTS
     sheet_records: dict = {}
     if show_records:
