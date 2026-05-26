@@ -1187,18 +1187,22 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             if add_placeholder is not None:
                 if _game_num(g["game_id"]) is None:
                     continue  # skip non-game rows (e.g. embedded standings entries)
-                # Per-day cap: max 4 bracket games per calendar day so Saturday can't
-                # crowd out Sunday. Exempt depth-1 games (direct W/L successors) so
-                # the immediate win/lose path always shows regardless of game_id order.
+                # Per-day cap: max 4 depth-2+ games per calendar day so Saturday can't
+                # crowd out Sunday. Only depth-2+ games count toward the cap so that
+                # depth-1 direct W/L successors (which are exempt) don't consume a slot
+                # and block win/lose siblings later in the same BFS pass.
                 # Absolute cap of 20 as a safety net.
                 _gdate = g.get("date", "")
                 if _gdate and add_ph_depth >= 2:
-                    if sum(1 for e in extras if e.get("date") == _gdate) >= 4:
+                    _capped_day = sum(1 for e in extras
+                                      if e.get("date") == _gdate and e.get("_ph_depth", 0) >= 2)
+                    if _capped_day >= 4:
                         continue
                 if len(extras) >= 20:
                     continue
                 g_copy = dict(g)
                 g_copy["placeholder"] = add_placeholder
+                g_copy["_ph_depth"] = add_ph_depth
                 if add_pool_rank:
                     g_copy["pool_rank"] = add_pool_rank
                 if add_grp:
