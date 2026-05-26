@@ -327,6 +327,7 @@
     .bracket-step { width: 340px; flex-shrink: 0; }
     .bracket-game-num-header { font-size: 16px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); padding: 0 0 4px; text-align: center; }
     .bracket-day-header { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.18em; color: rgba(255,255,255,0.55); text-align: center; padding: 0 0 10px; }
+    .sunday-bracket-note { margin: 16px max(16px, env(safe-area-inset-left)) 0; padding: 10px 14px; background: rgba(255,255,255,0.05); border-left: 3px solid rgba(255,255,255,0.18); border-radius: 0 6px 6px 0; font-size: 12px; color: rgba(255,255,255,0.5); line-height: 1.5; }
 
     /* ── WPL crossover game tree ── */
     .wpl-tree-wrap { padding: 0 0 32px; }
@@ -1872,6 +1873,16 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
   });
 
   wrap.appendChild(inner);
+
+  // Sunday note — show when every Sunday upcoming game is still a placeholder,
+  // so parents know the schedule will fill in automatically (not an app error).
+  const sundayUpcoming = allGames.filter(g => !g.result && g.date && g.date.startsWith('Sunday'));
+  if (sundayUpcoming.length > 0 && sundayUpcoming.every(g => g.placeholder !== false)) {
+    const sunNote = document.createElement('div');
+    sunNote.className = 'sunday-bracket-note';
+    sunNote.textContent = 'Sunday bracket games are based on expected tournament format. Times, locations, and opponents will update automatically when the tournament publishes the Sunday schedule.';
+    wrap.appendChild(sunNote);
+  }
 
   requestAnimationFrame(() => {
     drawBracketLines(inner, rounds, roundNums);
