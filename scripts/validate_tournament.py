@@ -317,6 +317,26 @@ def step_api_smoke_test(tournament_id: str, teams: list) -> bool:
                 if path_list.count("win") > 1 or path_list.count("lose") > 1:
                     gids = [g.get("game_id") for g in col_games]
                     sibling_violations.append(f"Game#{gn}: multiple {path_list} paths at same column: {gids}")
+            # Adjacent-column split: if game_num N is all win-path placeholders and
+            # game_num N+1 is all lose-path placeholders (or vice versa), that means
+            # siblings ended up in separate columns — the time-keyed fallback bug.
+            sorted_gns = sorted(by_gnum.keys())
+            for i in range(len(sorted_gns) - 1):
+                gn_a, gn_b = sorted_gns[i], sorted_gns[i + 1]
+                col_a, col_b = by_gnum[gn_a], by_gnum[gn_b]
+                paths_a = {g.get("path") for g in col_a if g.get("placeholder")}
+                paths_b = {g.get("path") for g in col_b if g.get("placeholder")}
+                all_ph_a = all(g.get("placeholder") for g in col_a)
+                all_ph_b = all(g.get("placeholder") for g in col_b)
+                if (all_ph_a and all_ph_b
+                        and paths_a <= {"win", "lose"} and paths_b <= {"win", "lose"}
+                        and paths_a | paths_b == {"win", "lose"}
+                        and paths_a != paths_b):
+                    sibling_violations.append(
+                        f"Game#{gn_a}/{gn_b}: win/lose siblings split across adjacent columns "
+                        f"({[g['game_id'] for g in col_a]} / {[g['game_id'] for g in col_b]})"
+                    )
+
             ok = _check(f"{label}: win/lose siblings share game_num column",
                         not sibling_violations, "; ".join(sibling_violations[:2]))
             if not ok:
