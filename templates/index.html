@@ -1812,11 +1812,9 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
       }
       lastPathGroup = pathCond;
 
-      // Strip scenarios — staircase is the "what's next"; card text is redundant noise.
-      // Show date when card's day differs from the column header.
-      const cardDay = (g.date || '').split(',')[0].trim();
-      const showDate = !!(colDayName && cardDay && cardDay.toLowerCase() !== colDayName.toLowerCase());
-      const cardG = Object.assign({}, g, { scenarios: null, _showDate: showDate || undefined });
+      // Strip path/scenarios from cardG — column-level banners handle both;
+      // card-level duplicates cause double "IF WE WIN / IF WE LOSE" display.
+      const cardG = Object.assign({}, g, { path: null, scenarios: null, _showDate: undefined });
 
       const card = cardG.result
         ? buildResultCard(cardG, ourName, tournamentId)
