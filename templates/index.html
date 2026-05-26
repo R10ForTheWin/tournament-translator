@@ -2077,11 +2077,12 @@ function parseTimeMin(t) {
 }
 
 function breakDuration(t1, t2, d1, d2) {
-  if (!t1 || !t2) return null;
+  // Day-change label doesn't require times — check dates first
   if (d1 && d2 && d1 !== d2) {
     const dayName = (d2.split(',')[0] || '').toUpperCase();
     return dayName || 'NEXT DAY';
   }
+  if (!t1 || !t2) return null;
   const m1 = parseTimeMin(t1), m2 = parseTimeMin(t2);
   if (m1 === null || m2 === null) return null;
   const GAME_DURATION = 60;
