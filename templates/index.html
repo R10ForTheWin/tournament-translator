@@ -1739,7 +1739,7 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
 
   const vw = window.innerWidth;
   const CARD_W = vw >= 1100 ? 480 : vw >= 860 ? 420 : 340;
-  const GAP    = 160;
+  const GAP    = 320;
 
   // Group by column (new field), falling back to game_num
   const columns = {};
@@ -1927,7 +1927,7 @@ function drawBracketLines(inner, rounds, roundNums) {
     const fromRect = fromCard.getBoundingClientRect();
     const sx = fromRect.right - innerRect.left;
     const sy = fromRect.top - innerRect.top + fromRect.height / 2;
-    const gx = sx + 80; // midpoint of the 160px gap between columns
+    const gx = sx + 160; // midpoint of the 320px gap between columns
     const R = 7;
 
     toCards.forEach((toCard) => {
