@@ -3400,11 +3400,10 @@ def api_games(tournament_id, team):
     _gap_remap = {old: (new + 1) for new, old in enumerate(_used_gns)}
     _game_num_map = {gid: _gap_remap[gn] for gid, gn in _game_num_map.items()}
 
-    # Merge multiple pure-single-day columns that share the same calendar day.
-    # e.g. two Saturday game_nums (pool placements + W/L branches) collapse into
-    # one "Game 3" column, and all Sunday games collapse into one column.
-    # A column is "pure single-day" only if ALL its games are on the same date.
-    # Mixed columns (e.g. Fri win + Sat lose in game_num=2) are left alone.
+    # Merge same-day pure-single-day columns into one column per day, but ONLY
+    # if their time ranges don't overlap. Overlapping time ranges mean the columns
+    # represent different sequential bracket rounds on the same day (e.g. quarterfinals
+    # at 10AM-2PM and semis at 2PM-6PM) and must stay separate.
     _by_gn2: dict[int, list] = {}
     for _g2 in my_games:
         _gn2 = _game_num_map.get(_g2["game_id"])
@@ -3421,6 +3420,22 @@ def api_games(tournament_id, team):
             _day_pure_gns.setdefault(_d2, []).append(_n2)
     for _d2, _gns2 in _day_pure_gns.items():
         if len(_gns2) <= 1:
+            continue
+        # Check for time-range overlap between adjacent columns (sorted by game_num).
+        # If B's earliest time <= A's latest time, they overlap → sequential rounds → skip.
+        _gns_sorted = sorted(_gns2)
+        _has_overlap = False
+        for _i2 in range(len(_gns_sorted) - 1):
+            _n_a, _n_b = _gns_sorted[_i2], _gns_sorted[_i2 + 1]
+            _times_a = [_g2["time"] for _g2 in _by_gn2.get(_n_a, []) if _g2.get("time") is not None]
+            _times_b = [_g2["time"] for _g2 in _by_gn2.get(_n_b, []) if _g2.get("time") is not None]
+            if not _times_a or not _times_b:
+                _has_overlap = True  # unknown times → safe default: don't merge
+                break
+            if min(_times_b) <= max(_times_a):
+                _has_overlap = True
+                break
+        if _has_overlap:
             continue
         _target_gn = min(_gns2)
         for _n2 in _gns2:
@@ -3578,6 +3593,7 @@ def api_games(tournament_id, team):
 
     # WPL crossover game tree
     wpl_bracket = None
+    tree = None
     _njo_tournaments = {"jo-quals", "junior-olympics"}
     if tournament_id in WPL_TOURNAMENTS and my_games:
         tree_sheet = my_games[0]['sheet']
