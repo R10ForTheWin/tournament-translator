@@ -14,11 +14,22 @@ from parsers.detect import load_and_parse as _load_and_parse
 _NJO_TOURNAMENTS = {"jo-quals", "junior-olympics"}
 
 _parse_cache: dict[str, tuple[float, list]] = {}
+_jo_quals_game_sig: int = -1  # tracks last-seen game count to detect data changes
 
 def load_and_parse(filepath) -> list[dict]:
     """Cached wrapper: re-parses only when the file changes on disk."""
+    global _jo_quals_game_sig
     if filepath == _JO_QUALS_SENTINEL:
-        return _fetch_jo_quals_games()
+        games = _fetch_jo_quals_games()
+        sig = len(games)
+        if sig != _jo_quals_game_sig:
+            _jo_quals_game_sig = sig
+            # Fire smoke test in background whenever the game count changes.
+            # Safe: smoke test uses the URL cache, won't trigger another fetch cycle.
+            threading.Thread(
+                target=_run_trojan_smoke_test, args=("jo-quals",), daemon=True
+            ).start()
+        return games
     key = str(filepath)
     try:
         mtime = os.path.getmtime(key)

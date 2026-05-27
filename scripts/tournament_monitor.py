@@ -81,6 +81,12 @@ TOURNAMENTS = [
     {"id": "junior-olympics", "name": "Junior Olympics",    "start": date(2026, 7, 23), "end": date(2026, 7, 26), "days": 3},
 ]
 
+# NJO/CCA tournaments always return bracket_confidence='red' by design —
+# the CCA slot format is not WPL-compatible. Flagging RED as an error for
+# these tournaments would spam alerts every hour during the event.
+# Evaluate health by game count and ordering only, not bracket_confidence.
+NJO_TOURNAMENTS = {"jo-quals", "junior-olympics"}
+
 # Bracket game count thresholds — flag outside this range pre-tournament
 MIN_GAMES = 2
 MAX_GAMES = 9       # 2-day tournaments (WPL Futures, Kap7, Newport)
@@ -351,10 +357,19 @@ def main():
                 report_lines.append(f"       → {w}")
 
             # ── Classify severity ───────────────────────────────────────────
-            is_red    = conf == "red" or n_up > max_games
-            is_yellow = (conf == "yellow" and det_flags) or (
-                llm_result and llm_result["status"] == "FLAG"
-            )
+            # NJO/CCA tournaments permanently return bracket_confidence='red'
+            # because the CCA slot format is not WPL-compatible. Don't treat
+            # that as an alert condition — evaluate by game count only.
+            if tid in NJO_TOURNAMENTS:
+                is_red    = n_up == 0 or n_up > max_games
+                is_yellow = bool(det_flags) or (
+                    llm_result and llm_result["status"] == "FLAG"
+                )
+            else:
+                is_red    = conf == "red" or n_up > max_games
+                is_yellow = (conf == "yellow" and det_flags) or (
+                    llm_result and llm_result["status"] == "FLAG"
+                )
 
             summary = f"{team_name}{sheet_tag} [{name}]"
             all_issues = det_flags[:]
