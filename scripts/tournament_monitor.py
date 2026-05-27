@@ -68,6 +68,7 @@ def check_game_num_order(upcoming_games):
 
 RAILWAY_URL = "https://web-production-5a744.up.railway.app"
 
+# Fallback names used when the API team-discovery endpoint is unavailable.
 TROJAN_TEAMS = [
     "trojan cardinal",
     "trojan gold",
@@ -91,9 +92,47 @@ def active_tournaments():
     return [t for t in TOURNAMENTS if t["start"] <= today <= t["end"]]
 
 
-def check_team(base_url, tournament_id, team):
+def get_trojan_team_sheet_pairs(base_url: str, tournament_id: str) -> list:
+    """Return [(team_name, sheet_or_None), ...] by querying /api/trojan-teams/<tid>.
+
+    Each returned entry maps to a search name that matches one specific (team, sheet)
+    combination in the data, so multi-age-group tournaments (JO Quals: 18U + 16U) get
+    full coverage instead of always resolving to the primary sheet.
+
+    Falls back to TROJAN_TEAMS with no sheet scoping if the endpoint is unreachable.
+    """
+    url = f"{base_url}/api/trojan-teams/{tournament_id}"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            teams_data = json.load(resp)
+    except Exception:
+        return [(t, None) for t in TROJAN_TEAMS]
+
+    if not teams_data:
+        return [(t, None) for t in TROJAN_TEAMS]
+
+    result = []
+    seen = set()
+    for t in teams_data:
+        raw = t.get("name", "").upper()
+        sheet = t.get("sheet")
+        # Match raw slot name against our canonical search names
+        for base_name in TROJAN_TEAMS:
+            if base_name.upper() in raw:
+                key = (base_name, sheet)
+                if key not in seen:
+                    seen.add(key)
+                    result.append((base_name, sheet))
+                break
+
+    return result if result else [(t, None) for t in TROJAN_TEAMS]
+
+
+def check_team(base_url, tournament_id, team, sheet=None):
     team_encoded = urllib.parse.quote(team)
     url = f"{base_url}/api/games/{tournament_id}/{team_encoded}"
+    if sheet:
+        url += "?" + urllib.parse.urlencode({"sheet": sheet})
     try:
         with urllib.request.urlopen(url, timeout=15) as resp:
             data = json.load(resp)
@@ -240,15 +279,21 @@ def main():
         name = t["name"]
         report_lines.append(f"\n=== {name} ({date.today()}) ===")
 
-        for team in TROJAN_TEAMS:
-            result = check_team(base_url, tid, team)
+        # Discover actual Trojan teams from the API (handles multi-age-group tournaments
+        # like JO Quals where "trojan cardinal" appears in both 18U and 16U sheets).
+        team_sheet_pairs = get_trojan_team_sheet_pairs(base_url, tid)
+        report_lines.append(f"  Teams to check: {len(team_sheet_pairs)}")
+
+        for team, sheet in team_sheet_pairs:
+            result = check_team(base_url, tid, team, sheet=sheet)
+            sheet_tag = f" [{sheet}]" if sheet else ""
             if result is None:
                 continue
             if "error" in result:
-                msg = f"{team} [{tid}]: API error — {result['error']}"
+                msg = f"{team}{sheet_tag} [{tid}]: API error — {result['error']}"
                 red_issues.append(msg)
                 notify_lines.append(msg)
-                report_lines.append(f"  ✗ {team}: {result['error']}")
+                report_lines.append(f"  ✗ {team}{sheet_tag}: {result['error']}")
                 continue
 
             team_name = result["team"]
@@ -299,7 +344,7 @@ def main():
 
             icon = {"green": "✓", "yellow": "⚠", "red": "✗"}.get(conf, "?")
             report_lines.append(
-                f"  {icon} {team_name}: conf={conf} mode={mode} "
+                f"  {icon} {team_name}{sheet_tag}: conf={conf} mode={mode} "
                 f"nodes={nodes} played={result['played']} upcoming={n_up}{llm_tag}"
             )
             for w in det_flags:
@@ -311,7 +356,7 @@ def main():
                 llm_result and llm_result["status"] == "FLAG"
             )
 
-            summary = f"{team_name} [{name}]"
+            summary = f"{team_name}{sheet_tag} [{name}]"
             all_issues = det_flags[:]
             if llm_result and llm_result["status"] == "FLAG":
                 all_issues.append(f"LLM: {llm_result['reason']}")

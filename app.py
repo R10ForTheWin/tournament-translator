@@ -11,6 +11,8 @@ from flask import Flask, render_template, jsonify, request, abort
 
 from parsers.detect import load_and_parse as _load_and_parse
 
+_NJO_TOURNAMENTS = {"jo-quals", "junior-olympics"}
+
 _parse_cache: dict[str, tuple[float, list]] = {}
 
 def load_and_parse(filepath) -> list[dict]:
@@ -385,8 +387,48 @@ def is_trojan(team_slot: str) -> bool:
 def team_matches(slot: str, name: str) -> bool:
     return name.upper() in strip_prefix(slot).upper()
 
+# 'a' intentionally excluded: single-letter A/B/C are pool group names, not articles.
+_LOWER_WORDS = frozenset({'in', 'of', 'or', 'and', 'the', 'an', 'at', 'by', 'for', 'to', 'vs'})
+
+def _capitalize_word(w: str) -> str:
+    """Capitalize the first letter in a word, skipping leading punctuation ('(trojan' → '(Trojan')."""
+    for i, ch in enumerate(w):
+        if ch.isalpha():
+            return w[:i] + ch.upper() + w[i + 1:]
+    return w
+
 def _title(s: str) -> str:
-    return s.title() if s else s
+    """Title-case that doesn't capitalize after digits ('1st' not '1St'),
+    keeps common prepositions lowercase mid-string, and handles leading punctuation."""
+    if not s:
+        return s
+    words = s.split()
+    out = []
+    for i, w in enumerate(words):
+        if w and w[0].isdigit():                           # "1st" → "1st"
+            out.append(w.lower())
+        elif i > 0 and w.strip('().,').lower() in _LOWER_WORDS:
+            out.append(w.lower())
+        else:
+            out.append(_capitalize_word(w))
+    return ' '.join(out)
+
+
+def _send_ntfy(title: str, body: str) -> None:
+    """Push notification via ntfy.sh. Requires NTFY_TOPIC env var. Silent on failure."""
+    topic = os.environ.get("NTFY_TOPIC")
+    if not topic:
+        return
+    try:
+        import urllib.request as _ureq
+        req = _ureq.Request(
+            f"https://ntfy.sh/{topic}",
+            data=body.encode("utf-8"),
+            headers={"Title": title, "Priority": "high", "Tags": "warning"},
+        )
+        _ureq.urlopen(req, timeout=5)
+    except Exception:
+        pass
 
 def _pool_teams_for_group(group: str, division_games: list) -> list[str]:
     """All team names seeded in a pool group, ordered by seed number."""
@@ -3594,13 +3636,12 @@ def api_games(tournament_id, team):
     # WPL crossover game tree
     wpl_bracket = None
     tree = None
-    _njo_tournaments = {"jo-quals", "junior-olympics"}
     if tournament_id in WPL_TOURNAMENTS and my_games:
         tree_sheet = my_games[0]['sheet']
         div_games_for_tree = [g for g in _all_games if g['sheet'] == tree_sheet]
         latest_team_date = max((g["date"] for g in my_games if g.get("date")), default=None)
         tree = _build_wpl_game_tree(team, div_games_for_tree, anchor_date=latest_team_date)
-    elif tournament_id in _njo_tournaments and my_games:
+    elif tournament_id in _NJO_TOURNAMENTS and my_games:
         tree_sheet = my_games[0]['sheet']
         div_games_for_tree = [g for g in _all_games if g['sheet'] == tree_sheet]
         latest_team_date = max((g["date"] for g in my_games if g.get("date")), default=None)
@@ -3889,6 +3930,10 @@ def api_set_url(tournament_id):
     except Exception:
         return jsonify({"ok": False, "error": "URL was fetched but doesn't appear to be a valid Excel schedule."}), 400
     _save_user_url(tournament_id, url)
+    # Allow pre-game sweep to re-run for the updated file.
+    _swept_tournament_ids.discard(tournament_id)
+    # Fire immediate smoke test so any parse or team-count errors surface within seconds.
+    threading.Thread(target=_run_trojan_smoke_test, args=(tournament_id,), daemon=True).start()
     return jsonify({"ok": True})
 
 
@@ -4162,7 +4207,10 @@ def _run_pre_game_sweep(tournament_id: str) -> dict:
                 continue
 
             extras = _expand_bracket_games(team, direct, sheet_games)
-            tree   = _build_wpl_game_tree(team, sheet_games, anchor_date=anchor)
+            if tournament_id in _NJO_TOURNAMENTS:
+                tree = _build_njo_game_tree(team, sheet_games, anchor_date=anchor)
+            else:
+                tree = _build_wpl_game_tree(team, sheet_games, anchor_date=anchor)
 
             # Count all unique Sunday game IDs visible to this team
             sun_ids: set[str] = set()
@@ -4177,7 +4225,8 @@ def _run_pre_game_sweep(tournament_id: str) -> dict:
             total = len(direct) + len(extras)
             if total < 2:
                 issues.append(f"only {total} total game(s)")
-            if not sun_ids:
+            # Sunday check only applies to WPL tournaments (NJO/CCA may be 2-day)
+            if tournament_id in WPL_TOURNAMENTS and not sun_ids:
                 issues.append(
                     f"no Sunday games visible "
                     f"(direct={len(direct)} extras={len(extras)} tree={len(tree)})"
@@ -4209,10 +4258,89 @@ def _run_pre_game_sweep(tournament_id: str) -> dict:
     if all_issues:
         print(f"[pre-game-check] {tournament_id}: "
               f"{len(all_issues)} team(s) with issues, {n_ok} clean")
+        body = "\n".join(
+            f"{x['sheet']}/{x['team']}: {'; '.join(x['issues'][:2])}"
+            for x in all_issues[:5]
+        )
+        _send_ntfy(f"Pre-game check — {tournament_id} issues", body)
     else:
         print(f"[pre-game-check] {tournament_id}: all {n_ok} teams OK ✓")
 
     return {"tournament": tournament_id, "ok": n_ok, "issues": all_issues}
+
+
+def _run_trojan_smoke_test(tournament_id: str) -> dict:
+    """Immediate smoke test that fires the moment a new URL is loaded.
+
+    Checks every Trojan team across every sheet in the parsed data: game count,
+    basic expansion, parse errors. Sends an ntfy push regardless of pass/fail
+    so you know immediately whether the new file is usable.
+    Unlike _run_pre_game_sweep (which runs 12-25h before game day for all teams),
+    this is Trojan-only and fires on demand.
+    """
+    print(f"[smoke-test] {tournament_id}: starting", flush=True)
+    excel = find_excel(tournament_id)
+    if not excel:
+        msg = "No excel file found after URL save"
+        print(f"[smoke-test] {tournament_id}: {msg}", flush=True)
+        _send_ntfy(f"Smoke test FAILED — {tournament_id}", msg)
+        return {"error": msg}
+    try:
+        all_games = load_and_parse(excel)
+    except Exception as e:
+        msg = f"Parse error: {e}"
+        print(f"[smoke-test] {tournament_id}: {msg}", flush=True)
+        _send_ntfy(f"Smoke test FAILED — {tournament_id}", msg)
+        return {"error": msg}
+
+    # Discover all Trojan teams across all sheets
+    seen: dict[tuple, tuple] = {}
+    for g in all_games:
+        for slot in (g["white_team"], g["dark_team"]):
+            if is_trojan(slot):
+                name = strip_prefix(slot).strip().title()
+                key = (name.upper(), g["sheet"])
+                seen.setdefault(key, (name, g["sheet"]))
+
+    if not seen:
+        msg = f"No Trojan teams found in {len(all_games)} games"
+        print(f"[smoke-test] {tournament_id}: {msg}", flush=True)
+        _send_ntfy(f"Smoke test WARNING — {tournament_id}", msg)
+        return {"error": msg}
+
+    issues: list[str] = []
+    ok_teams: list[str] = []
+
+    for (_, sheet), (name, sheet) in sorted(seen.items()):
+        sheet_games = [g for g in all_games if g["sheet"] == sheet]
+        direct = [g for g in sheet_games
+                  if team_matches(g["white_team"], name) or team_matches(g["dark_team"], name)]
+        if not direct:
+            issues.append(f"{sheet}/{name}: 0 direct games")
+            continue
+        extras = _expand_bracket_games(name, direct, sheet_games)
+        total = len(direct) + len(extras)
+        if total < 2:
+            issues.append(f"{sheet}/{name}: only {total} game(s) — expansion may have failed")
+        elif total > 20:
+            issues.append(f"{sheet}/{name}: {total} games — possible over-expansion")
+        else:
+            ok_teams.append(f"{sheet}/{name}: {total} games")
+            print(f"[smoke-test] ✓ {sheet}/{name}: {total} games", flush=True)
+
+    if issues:
+        for iss in issues:
+            print(f"[smoke-test] ✗ {iss}", flush=True)
+        _send_ntfy(
+            f"Smoke test — {tournament_id} has issues",
+            "\n".join(issues[:5]),
+        )
+    else:
+        summary = f"{len(ok_teams)} Trojan teams OK"
+        print(f"[smoke-test] {tournament_id}: {summary} ✓", flush=True)
+        _send_ntfy(f"Smoke test — {tournament_id} ✓", "\n".join(ok_teams[:8]))
+
+    return {"ok": len(ok_teams), "issues": issues}
 
 
 def _pre_game_monitor():
