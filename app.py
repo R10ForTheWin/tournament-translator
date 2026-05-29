@@ -45,9 +45,10 @@ def load_and_parse(filepath) -> list[dict]:
 app = Flask(__name__)
 
 EXCEL_DIR    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Tournaments Excels")
-RESULTS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "results")
-COMMENTS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "comments")
-FEEDBACK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "feedback.json")
+_DATA_DIR    = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
+RESULTS_DIR  = os.path.join(_DATA_DIR, "results")
+COMMENTS_DIR = os.path.join(_DATA_DIR, "comments")
+FEEDBACK_FILE = os.path.join(_DATA_DIR, "feedback.json")
 ADMIN_PW    = os.environ.get("ADMIN_PASSWORD", "trojan")  # override via Railway env var
 
 # ── Live URL sources ────────────────────────────────────────────────────────
@@ -73,7 +74,7 @@ TOURNAMENT_URLS = {
 }
 
 PRESET_URL_TOURNAMENTS = WPL_TOURNAMENTS | {k for k, v in TOURNAMENT_URLS.items() if v}
-USER_URLS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "user_urls.json")
+USER_URLS_FILE = os.path.join(_DATA_DIR, "user_urls.json")
 
 _URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
 URL_CACHE_TTL      = 300  # re-fetch at most every 5 minutes
