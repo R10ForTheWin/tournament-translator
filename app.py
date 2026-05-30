@@ -694,11 +694,52 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
     unplayed_pool_phase = [g for g in division_games
                            if g["game_id"] in pool_phase_ids and not g.get("played")]
 
+    # Build team strength from played pool-phase games.
+    # Bradley-Terry: P(A beats B) = s_A / (s_A + s_B)
+    # Laplace-smoothed strength: (wins+1)/(games+2)  →  0-0 team = 0.5, 1-0 = 0.667, 0-1 = 0.333
+    _wins_ct:   dict = {t: 0 for t in all_pool_teams}
+    _played_ct: dict = {t: 0 for t in all_pool_teams}
+    for _g in division_games:
+        if not _g.get("played") or _g.get("white_score") is None:
+            continue
+        _wm = _POOL_SLOT_RE.match(_g["white_team"].strip())
+        _dm = _POOL_SLOT_RE.match(_g["dark_team"].strip())
+        if not _wm or not _dm:
+            continue
+        _wk = next((t for t in all_pool_teams if team_matches(t, _wm.group(3).strip())), None)
+        _dk = next((t for t in all_pool_teams if team_matches(t, _dm.group(3).strip())), None)
+        if not _wk or not _dk:
+            continue
+        _played_ct[_wk] += 1
+        _played_ct[_dk] += 1
+        if _g["white_score"] > _g["dark_score"]:
+            _wins_ct[_wk] += 1
+        else:
+            _wins_ct[_dk] += 1
+
+    def _strength(key: str) -> float:
+        return (_wins_ct.get(key, 0) + 1) / (_played_ct.get(key, 0) + 2)
+
+    def _win_prob(key_a: str, key_b: str) -> float:
+        sa, sb = _strength(key_a), _strength(key_b)
+        return sa / (sa + sb)
+
+    def _team_key(name: str):
+        return next((t for t in all_pool_teams if team_matches(t, name)), None)
+
     placement_counts: dict = {}
     all_placement_counts: dict = {t: {} for t in all_pool_teams}
 
     for _ in range(n_trials):
-        pool_outcomes = {g["game_id"]: random.random() < 0.5 for g in unplayed_pool_phase}
+        pool_outcomes = {}
+        for _pg in unplayed_pool_phase:
+            _wm = _POOL_SLOT_RE.match(_pg["white_team"].strip())
+            _dm = _POOL_SLOT_RE.match(_pg["dark_team"].strip())
+            _wk = _team_key(_wm.group(3).strip()) if _wm else None
+            _dk = _team_key(_dm.group(3).strip()) if _dm else None
+            pool_outcomes[_pg["game_id"]] = (
+                random.random() < (_win_prob(_wk, _dk) if _wk and _dk else 0.5)
+            )
 
         group_standings: dict = {}
         for grp in all_groups:
@@ -718,7 +759,8 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
             if g.get("played") and g.get("white_score") is not None:
                 white_won = g["white_score"] > g["dark_score"]
             else:
-                white_won = random.random() < 0.5
+                _wk, _dk = _team_key(wt), _team_key(dt)
+                white_won = random.random() < (_win_prob(_wk, _dk) if _wk and _dk else 0.5)
 
             winner, loser = (wt, dt) if white_won else (dt, wt)
             game_results[g["game_id"]] = (winner, loser)
