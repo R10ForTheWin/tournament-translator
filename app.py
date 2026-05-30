@@ -880,6 +880,18 @@ def api_place_predictor(tournament_id, team):
 
     sheet = request.args.get("sheet")
     games = _filter_by_dates(load_and_parse(excel), tournament_id)
+
+    if not sheet:
+        # Auto-detect: find whichever sheet this team appears in as a pool slot
+        for _g in games:
+            for _slot in (_g["white_team"], _g["dark_team"]):
+                _m = _POOL_SLOT_RE.match(_slot.strip())
+                if _m and team_matches(_m.group(3).strip(), team):
+                    sheet = _g.get("sheet")
+                    break
+            if sheet:
+                break
+
     division_games = [g for g in games if sheet is None or g["sheet"] == sheet]
 
     group = _find_team_pool_group(team, division_games)
