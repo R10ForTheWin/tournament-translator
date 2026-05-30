@@ -716,6 +716,25 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
         weeks = max(0.0, (date.today() - gdate).days / 7.0)
         return math.exp(-weeks * math.log(2) / _HALF_LIFE_WK)
 
+    # Infer pre-tournament seed from pool slot assignment (standard snake draft).
+    # Pool A gets odd rounds (A1=seed1, A2=seed16 for 8 pools, A3=seed17, …),
+    # pool B gets the next, etc.  seed_perf replaces the uniform 0.5 prior so
+    # that before any games are played the model respects the tournament seeding.
+    _n_pools = len(all_groups)
+    _pool_seed_rank: dict = {}
+    for _grp in all_groups:
+        _pi = ord(_grp.upper()) - ord('A')
+        for _sp, _t in enumerate(_pool_teams_for_group(_grp, division_games), 1):
+            _ri = _sp - 1
+            if _ri % 2 == 0:
+                _pool_seed_rank[_t] = _ri * _n_pools + _pi + 1
+            else:
+                _pool_seed_rank[_t] = _ri * _n_pools + (_n_pools - 1 - _pi) + 1
+
+    _n_seeded = max(_pool_seed_rank.values()) if _pool_seed_rank else 1
+    _seed_perf: dict = {t: (_n_seeded + 1 - r) / _n_seeded
+                        for t, r in _pool_seed_rank.items()}
+
     # Collect game records: (white_key, dark_key, white_frac_win, recency_weight)
     _bt_records: list = []
     _seen_gids:  set  = set()
@@ -747,13 +766,16 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
     # MM update: s_i = W_i / D_i
     #   W_i = Σ (recency * frac_win)        — weighted fractional wins
     #   D_i = Σ recency / (s_i + s_opp)    — expected wins under current model
-    # Regularisation prior adds a half-win vs ghost opponent at strength 1.
+    # Regularisation prior: one pseudo-game vs ghost (strength 1) where the
+    # win credit = seed_perf (seed-1 team ≈ 1.0, seed-N team ≈ 1/N).
+    # Before any real games this recovers the seeding order; as games are
+    # played the real results gradually dominate.
     _s: dict = {t: 1.0 for t in all_pool_teams}
 
     for _ in range(_BT_ITERS):
         _s_new: dict = {}
         for _t in all_pool_teams:
-            _W = _PRIOR_WT * 0.5
+            _W = _PRIOR_WT * _seed_perf.get(_t, 0.5)
             _D = _PRIOR_WT / (_s[_t] + 1.0)
             for _opp, _p, _rw in _team_games[_t]:
                 _W += _rw * _p
