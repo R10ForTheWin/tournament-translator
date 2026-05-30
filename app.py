@@ -2,7 +2,7 @@
 Tournament Translator — Flask app
 """
 from __future__ import annotations
-import os, re, json, glob, io, time, base64, random, threading
+import os, re, json, glob, io, time, base64, random, threading, math
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from functools import lru_cache
@@ -694,38 +694,57 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
     unplayed_pool_phase = [g for g in division_games
                            if g["game_id"] in pool_phase_ids and not g.get("played")]
 
-    # Build team strength from played pool-phase games.
-    # Bradley-Terry: P(A beats B) = s_A / (s_A + s_B)
-    # Laplace-smoothed strength: (wins+1)/(games+2)  →  0-0 team = 0.5, 1-0 = 0.667, 0-1 = 0.333
-    _wins_ct:   dict = {t: 0 for t in all_pool_teams}
-    _played_ct: dict = {t: 0 for t in all_pool_teams}
-    for _g in division_games:
+    # Build team strength from played games (current tournament + cross-tournament history).
+    # Goal differential: winner earns 0.5+0.5*log_margin, loser earns 0.5-0.5*log_margin.
+    # Recency: exponential decay with 3-week half-life — older games count less.
+    # Bradley-Terry: P(A beats B) = s_A / (s_A + s_B), Laplace prior of 0.5.
+    _MARGIN_CAP   = 8
+    _HALF_LIFE_WK = 3.0
+
+    def _team_key(name: str):
+        return next((t for t in all_pool_teams if team_matches(t, name)), None)
+
+    def _slot_name(slot: str) -> str:
+        m = _POOL_SLOT_RE.match(slot.strip())
+        return m.group(3).strip() if m else slot.strip()
+
+    def _recency_wt(gdate) -> float:
+        if not gdate:
+            return 0.5
+        weeks = max(0.0, (date.today() - gdate).days / 7.0)
+        return math.exp(-weeks * math.log(2) / _HALF_LIFE_WK)
+
+    _score_sum:  dict = {t: 0.0 for t in all_pool_teams}
+    _weight_sum: dict = {t: 0.0 for t in all_pool_teams}
+    _seen_gids:  set  = set()
+
+    for _g in list(_all_historical_games()) + list(division_games):
+        _gid = _g.get("game_id")
+        if _gid in _seen_gids:
+            continue
+        _seen_gids.add(_gid)
         if not _g.get("played") or _g.get("white_score") is None:
             continue
-        _wm = _POOL_SLOT_RE.match(_g["white_team"].strip())
-        _dm = _POOL_SLOT_RE.match(_g["dark_team"].strip())
-        if not _wm or not _dm:
-            continue
-        _wk = next((t for t in all_pool_teams if team_matches(t, _wm.group(3).strip())), None)
-        _dk = next((t for t in all_pool_teams if team_matches(t, _dm.group(3).strip())), None)
+        _wk = _team_key(_slot_name(_g["white_team"]))
+        _dk = _team_key(_slot_name(_g["dark_team"]))
         if not _wk or not _dk:
             continue
-        _played_ct[_wk] += 1
-        _played_ct[_dk] += 1
-        if _g["white_score"] > _g["dark_score"]:
-            _wins_ct[_wk] += 1
-        else:
-            _wins_ct[_dk] += 1
+        _ws, _ds   = _g["white_score"], _g["dark_score"]
+        _margin    = min(abs(_ws - _ds), _MARGIN_CAP)
+        _mf        = math.log(1 + _margin) / math.log(1 + _MARGIN_CAP)
+        _rw        = _recency_wt(_g.get("date"))
+        _w_perf    = (0.5 + 0.5 * _mf) if _ws > _ds else (0.5 - 0.5 * _mf)
+        _score_sum[_wk]  += _w_perf * _rw
+        _weight_sum[_wk] += _rw
+        _score_sum[_dk]  += (1.0 - _w_perf) * _rw
+        _weight_sum[_dk] += _rw
 
     def _strength(key: str) -> float:
-        return (_wins_ct.get(key, 0) + 1) / (_played_ct.get(key, 0) + 2)
+        return (_score_sum.get(key, 0.0) + 0.5) / (_weight_sum.get(key, 0.0) + 1.0)
 
     def _win_prob(key_a: str, key_b: str) -> float:
         sa, sb = _strength(key_a), _strength(key_b)
         return sa / (sa + sb)
-
-    def _team_key(name: str):
-        return next((t for t in all_pool_teams if team_matches(t, name)), None)
 
     placement_counts: dict = {}
     all_placement_counts: dict = {t: {} for t in all_pool_teams}
