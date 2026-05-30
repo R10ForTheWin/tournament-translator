@@ -694,12 +694,14 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
     unplayed_pool_phase = [g for g in division_games
                            if g["game_id"] in pool_phase_ids and not g.get("played")]
 
-    # Build team strength from played games (current tournament + cross-tournament history).
-    # Goal differential: winner earns 0.5+0.5*log_margin, loser earns 0.5-0.5*log_margin.
-    # Recency: exponential decay with 3-week half-life — older games count less.
-    # Bradley-Terry: P(A beats B) = s_A / (s_A + s_B), Laplace prior of 0.5.
+    # Opponent-adjusted strength via iterative Bradley-Terry MLE (MM algorithm).
+    # Each game contributes a fractional "win" based on goal margin and recency.
+    # Winning by more against a strong opponent converges to a higher strength score.
+    # P(A beats B) = s_A / (s_A + s_B).
     _MARGIN_CAP   = 8
     _HALF_LIFE_WK = 3.0
+    _PRIOR_WT     = 1.0   # regularization: half-win pseudo-game vs ghost team at strength 1
+    _BT_ITERS     = 50
 
     def _team_key(name: str):
         return next((t for t in all_pool_teams if team_matches(t, name)), None)
@@ -714,8 +716,8 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
         weeks = max(0.0, (date.today() - gdate).days / 7.0)
         return math.exp(-weeks * math.log(2) / _HALF_LIFE_WK)
 
-    _score_sum:  dict = {t: 0.0 for t in all_pool_teams}
-    _weight_sum: dict = {t: 0.0 for t in all_pool_teams}
+    # Collect game records: (white_key, dark_key, white_frac_win, recency_weight)
+    _bt_records: list = []
     _seen_gids:  set  = set()
 
     for _g in list(_all_historical_games()) + list(division_games):
@@ -729,21 +731,40 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
         _dk = _team_key(_slot_name(_g["dark_team"]))
         if not _wk or not _dk:
             continue
-        _ws, _ds   = _g["white_score"], _g["dark_score"]
-        _margin    = min(abs(_ws - _ds), _MARGIN_CAP)
-        _mf        = math.log(1 + _margin) / math.log(1 + _MARGIN_CAP)
-        _rw        = _recency_wt(_g.get("date"))
-        _w_perf    = (0.5 + 0.5 * _mf) if _ws > _ds else (0.5 - 0.5 * _mf)
-        _score_sum[_wk]  += _w_perf * _rw
-        _weight_sum[_wk] += _rw
-        _score_sum[_dk]  += (1.0 - _w_perf) * _rw
-        _weight_sum[_dk] += _rw
+        _ws, _ds = _g["white_score"], _g["dark_score"]
+        _margin  = min(abs(_ws - _ds), _MARGIN_CAP)
+        _mf      = math.log(1 + _margin) / math.log(1 + _MARGIN_CAP)
+        _rw      = _recency_wt(_g.get("date"))
+        _w_perf  = (0.5 + 0.5 * _mf) if _ws > _ds else (0.5 - 0.5 * _mf)
+        _bt_records.append((_wk, _dk, _w_perf, _rw))
 
-    def _strength(key: str) -> float:
-        return (_score_sum.get(key, 0.0) + 0.5) / (_weight_sum.get(key, 0.0) + 1.0)
+    # Index by team so each MM iteration is O(games) not O(teams * games)
+    _team_games: dict = {t: [] for t in all_pool_teams}
+    for _ki, _kj, _p, _rw in _bt_records:
+        _team_games[_ki].append((_kj, _p,       _rw))
+        _team_games[_kj].append((_ki, 1.0 - _p, _rw))
+
+    # MM update: s_i = W_i / D_i
+    #   W_i = Σ (recency * frac_win)        — weighted fractional wins
+    #   D_i = Σ recency / (s_i + s_opp)    — expected wins under current model
+    # Regularisation prior adds a half-win vs ghost opponent at strength 1.
+    _s: dict = {t: 1.0 for t in all_pool_teams}
+
+    for _ in range(_BT_ITERS):
+        _s_new: dict = {}
+        for _t in all_pool_teams:
+            _W = _PRIOR_WT * 0.5
+            _D = _PRIOR_WT / (_s[_t] + 1.0)
+            for _opp, _p, _rw in _team_games[_t]:
+                _W += _rw * _p
+                _D += _rw / (_s[_t] + _s[_opp])
+            _s_new[_t] = _W / _D if _D > 0 else _s[_t]
+        # Normalise to mean=1 each iteration for numerical stability
+        _mean = sum(_s_new.values()) / len(_s_new) if _s_new else 1.0
+        _s = {t: v / _mean for t, v in _s_new.items()}
 
     def _win_prob(key_a: str, key_b: str) -> float:
-        sa, sb = _strength(key_a), _strength(key_b)
+        sa, sb = _s.get(key_a, 1.0), _s.get(key_b, 1.0)
         return sa / (sa + sb)
 
     placement_counts: dict = {}
