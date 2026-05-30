@@ -2133,8 +2133,9 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
       : `Pool ${p.group} · ${p.wins}W–${p.losses}L`;
     standingEl.textContent = poolSubtitle;
 
-    const maxPct = Math.max(...data.finish_probs.map(r => r.pct), 1);
-    const inlineBars = data.finish_probs.map(r => {
+    const topProbs = [...data.finish_probs].sort((a, b) => b.pct - a.pct).slice(0, 3);
+    const maxPct = Math.max(...topProbs.map(r => r.pct), 1);
+    const inlineBars = topProbs.map(r => {
       const isBest = r.pct === maxPct;
       const barW = Math.round((r.pct / maxPct) * 100);
       return `<div class="predictor-row${isBest ? ' current' : ''}">
