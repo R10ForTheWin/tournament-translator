@@ -113,7 +113,7 @@ def _check(label: str, condition: bool, detail: str = "") -> bool:
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
-def test_fixture(fname: str, fmt: str, min_g: int, max_g: int) -> int:
+def _run_fixture(fname: str, fmt: str, min_g: int, max_g: int) -> int:
     path = os.path.join(FIXTURES_DIR, fname)
     failures = 0
     print(f"\n{fname}")
@@ -161,7 +161,7 @@ def test_fixture(fname: str, fmt: str, min_g: int, max_g: int) -> int:
     return failures
 
 
-def test_team_expansion(fname: str, sheet: str, team: str,
+def _run_team_expansion(fname: str, sheet: str, team: str,
                          min_d: int, max_d: int, max_extras: int) -> int:
     path = os.path.join(FIXTURES_DIR, fname)
     failures = 0
@@ -200,7 +200,7 @@ def test_team_expansion(fname: str, sheet: str, team: str,
     return failures
 
 
-def test_championship_team(sheet: str, team: str, anchor: date,
+def _run_championship_team(sheet: str, team: str, anchor: date,
                             min_direct: int, max_direct: int,
                             min_extras: int, min_tree: int, min_sun: int) -> int:
     """Check a team's championship-weekend bracket and expansion.
@@ -614,13 +614,13 @@ def main():
     print("Parser fixture tests")
     print("=" * 60)
     for args in FIXTURES:
-        total_failures += test_fixture(*args)
+        total_failures += _run_fixture(*args)
 
     print("\n" + "=" * 60)
     print("Team expansion tests (all-weekends contamination guard)")
     print("=" * 60)
     for args in TEAM_CHECKS:
-        total_failures += test_team_expansion(*args)
+        total_failures += _run_team_expansion(*args)
 
     print("\n" + "=" * 60)
     print("Championship weekend tests")
@@ -632,7 +632,7 @@ def main():
             continue
         anchor = meta["date_start"]
         for (sheet, team, min_d, max_d, min_e, min_t, min_s) in checks:
-            total_failures += test_championship_team(
+            total_failures += _run_championship_team(
                 sheet, team, anchor, min_d, max_d, min_e, min_t, min_s
             )
 
