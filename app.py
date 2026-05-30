@@ -267,6 +267,23 @@ def all_excels():
     """All .xlsx files in the Excel directory."""
     return [f for f in os.listdir(EXCEL_DIR) if f.endswith(".xlsx")]
 
+_ALL_HISTORICAL_GAMES_CACHE: list | None = None
+
+def _all_historical_games() -> list:
+    """All played games across every local Excel file, cached in memory."""
+    global _ALL_HISTORICAL_GAMES_CACHE
+    if _ALL_HISTORICAL_GAMES_CACHE is not None:
+        return _ALL_HISTORICAL_GAMES_CACHE
+    combined = []
+    for fname in all_excels():
+        fpath = os.path.join(EXCEL_DIR, fname)
+        try:
+            combined.extend(load_and_parse(fpath))
+        except Exception:
+            pass
+    _ALL_HISTORICAL_GAMES_CACHE = combined
+    return combined
+
 
 # ── Head-to-head normalization ──────────────────────────────────────────────────
 
@@ -3526,9 +3543,15 @@ def api_games(tournament_id, team):
         _days_h = {_g.get("date") for _g in _grp_h if _g.get("date")}
         if len(_days_h) != 1:
             continue
-        _real_times = sorted({_g.get("time") for _g in _grp_h
-                               if not _g.get("placeholder") and _g.get("time") is not None})
+        _real_h = [_g for _g in _grp_h
+                   if not _g.get("placeholder") and _g.get("time") is not None]
+        _real_times = sorted({_g.get("time") for _g in _real_h})
         if len(_real_times) <= 1:
+            continue
+        # Win/lose path siblings land in the same column at different times —
+        # they are alternatives, not sequential rounds. Don't split them.
+        _real_paths_h = {_raw_path(_g) for _g in _real_h}
+        if "win" in _real_paths_h and "lose" in _real_paths_h:
             continue
         for _th in _real_times[1:]:
             _new_gn = _heal_next
@@ -3626,7 +3649,7 @@ def api_games(tournament_id, team):
                 if loser_next and loser_next["game_id"] not in my_game_ids:
                     scenarios["lose"] = _next_summary(loser_next,  team, dg, ref_date=_weekend_ref_date, my_game_ids=my_game_ids)
             base["scenarios"] = scenarios if scenarios else None
-            base["last_meeting"] = _last_meeting(team, opponent_label, _all_games,
+            base["last_meeting"] = _last_meeting(team, opponent_label, _all_historical_games(),
                                                   before_date=g.get("date"),
                                                   sheet=g.get("sheet"))
             upcoming_out.append(base)
@@ -3763,7 +3786,7 @@ def api_games(tournament_id, team):
                 d["result"]    = _result_str(node, team)
             if not node.get("played"):
                 d["last_meeting"] = _last_meeting(
-                    team, opp_name, dg, before_date=node.get("date"))
+                    team, opp_name, _all_historical_games(), before_date=node.get("date"))
             if live:
                 d["live_score"] = live
             return d
