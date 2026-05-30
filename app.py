@@ -787,12 +787,42 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
             group_standings[grp] = [s["team"] for s in st]
 
         game_results: dict = {}  # game_id -> (winner_name, loser_name)
+
+        # Seed game_results with pool phase outcomes so W#N bracket slots can
+        # look up the winner/loser of a pool game (CCA format references pool
+        # games by number; they never appear in the bracket loop itself).
+        for _pg in division_games:
+            if _pg["game_id"] not in pool_phase_ids:
+                continue
+            _wm = _POOL_SLOT_RE.match(_pg["white_team"].strip())
+            _dm = _POOL_SLOT_RE.match(_pg["dark_team"].strip())
+            if not _wm or not _dm:
+                continue
+            _wt_n, _dt_n = _wm.group(3).strip(), _dm.group(3).strip()
+            if _pg.get("played") and _pg.get("white_score") is not None:
+                _pw = _pg["white_score"] > _pg["dark_score"]
+            elif _pg["game_id"] in pool_outcomes:
+                _pw = pool_outcomes[_pg["game_id"]]
+            else:
+                continue
+            game_results[_pg["game_id"]] = (_wt_n, _dt_n) if _pw else (_dt_n, _wt_n)
+
         # [bracket_wins, last_game_date_ordinal, last_game_minute]
         team_rec: dict = {t: [0, 0, 0] for t in all_pool_teams}
 
         for g in bracket_games:
             wt = _resolve_slot_for_sim(g["white_team"], group_standings, game_results)
             dt = _resolve_slot_for_sim(g["dark_team"], group_standings, game_results)
+            # CCA slots embed the resolved team name after a dash
+            # ("W#12 - TROJAN CARDINAL (A)", "1ST C - TEAM") — strip_prefix extracts it.
+            if not wt:
+                _sn = strip_prefix(g["white_team"].strip())
+                if _sn and not _SLOT_LIKE_RE.match(_sn):
+                    wt = _team_key(_sn)
+            if not dt:
+                _sn = strip_prefix(g["dark_team"].strip())
+                if _sn and not _SLOT_LIKE_RE.match(_sn):
+                    dt = _team_key(_sn)
             if not wt or not dt:
                 continue
 
