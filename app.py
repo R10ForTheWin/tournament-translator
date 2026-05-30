@@ -3458,6 +3458,9 @@ def api_games(tournament_id, team):
     # if their time ranges don't overlap. Overlapping time ranges mean the columns
     # represent different sequential bracket rounds on the same day (e.g. quarterfinals
     # at 10AM-2PM and semis at 2PM-6PM) and must stay separate.
+    # Skip for CCA format: CCA tournaments have sequential bracket games on the same
+    # day that must stay as separate GAME columns (e.g. 3:30 PM pool play ≠ 6:50 PM bracket).
+    _fmt_for_merge = my_games[0].get("format") if my_games else None
     _by_gn2: dict[int, list] = {}
     for _g2 in my_games:
         _gn2 = _game_num_map.get(_g2["game_id"])
@@ -3474,6 +3477,8 @@ def api_games(tournament_id, team):
             _day_pure_gns.setdefault(_d2, []).append(_n2)
     for _d2, _gns2 in _day_pure_gns.items():
         if len(_gns2) <= 1:
+            continue
+        if _fmt_for_merge == "CCA":
             continue
         # Check for time-range overlap between adjacent columns (sorted by game_num).
         # If B's earliest time <= A's latest time, they overlap → sequential rounds → skip.
