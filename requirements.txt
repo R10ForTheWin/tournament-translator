@@ -3,3 +3,4 @@ openpyxl
 gunicorn
 requests
 anthropic
+pytest
