@@ -936,11 +936,31 @@ def api_place_predictor(tournament_id, team):
     def _modal_placement(probs):
         return max(probs.items(), key=lambda x: x[1])[0] if probs else 999
 
-    # Build win/loss record for every team across all pool groups
+    # Build win/loss record for every team across ALL played games (pool + bracket).
     _all_records: dict = {}
-    for _grp in {m.group(1).upper() for g in division_games for slot in (g["white_team"], g["dark_team"]) if (m := _POOL_SLOT_RE.match(slot.strip()))}:
-        for _s in _standings_for_group(_grp, division_games):
-            _all_records[_s["team"]] = (_s.get("wins", 0), _s.get("losses", 0))
+    for _g in division_games:
+        if not _g.get("played") or _g.get("white_score") is None:
+            continue
+        _wm = _POOL_SLOT_RE.match(_g["white_team"].strip())
+        _dm = _POOL_SLOT_RE.match(_g["dark_team"].strip())
+        _wname = _wm.group(3).strip() if _wm else strip_prefix(_g["white_team"].strip())
+        _dname = _dm.group(3).strip() if _dm else strip_prefix(_g["dark_team"].strip())
+        if not _wname or not _dname:
+            continue
+        if _SLOT_LIKE_RE.match(_wname) or _SLOT_LIKE_RE.match(_dname):
+            continue
+        _wk = next((t for t in all_team_probs if team_matches(t, _wname)), None)
+        _dk = next((t for t in all_team_probs if team_matches(t, _dname)), None)
+        if not _wk or not _dk:
+            continue
+        _all_records.setdefault(_wk, [0, 0])
+        _all_records.setdefault(_dk, [0, 0])
+        if _g["white_score"] > _g["dark_score"]:
+            _all_records[_wk][0] += 1
+            _all_records[_dk][1] += 1
+        else:
+            _all_records[_dk][0] += 1
+            _all_records[_wk][1] += 1
 
     predicted_standings = sorted(
         [{"team": t,
