@@ -936,11 +936,19 @@ def api_place_predictor(tournament_id, team):
     def _modal_placement(probs):
         return max(probs.items(), key=lambda x: x[1])[0] if probs else 999
 
+    # Build win/loss record for every team across all pool groups
+    _all_records: dict = {}
+    for _grp in {m.group(1).upper() for g in division_games for slot in (g["white_team"], g["dark_team"]) if (m := _POOL_SLOT_RE.match(slot.strip()))}:
+        for _s in _standings_for_group(_grp, division_games):
+            _all_records[_s["team"]] = (_s.get("wins", 0), _s.get("losses", 0))
+
     predicted_standings = sorted(
         [{"team": t,
           "predicted_rank": _modal_placement(all_team_probs.get(t, {})),
           "pct": round(max(all_team_probs.get(t, {}).values(), default=0) * 100),
-          "is_mine": team_matches(t, team)}
+          "is_mine": team_matches(t, team),
+          "wins":   _all_records.get(t, (0, 0))[0],
+          "losses": _all_records.get(t, (0, 0))[1]}
          for t in all_team_probs],
         key=lambda x: x["predicted_rank"],
     )

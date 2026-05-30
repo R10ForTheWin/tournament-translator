@@ -460,7 +460,8 @@
     .predictor-team-rank { width: 20px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
     .predictor-team-name { flex: 1; font-weight: 500; }
     .predictor-team-name.mine { font-weight: 800; color: var(--gold); }
-    .predictor-team-rec { font-size: 12px; color: var(--muted); }
+    .predictor-team-wl  { font-size: 12px; color: var(--muted); flex-shrink: 0; }
+    .predictor-team-rec { font-size: 12px; color: var(--muted); flex-shrink: 0; }
 
     /* ── Yes/No ── */
     .yn-box { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 14px; }
@@ -2142,6 +2143,7 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
       `<div class="predictor-team-row">
         <div class="predictor-team-rank">${t.predicted_rank}</div>
         <div class="predictor-team-name${t.is_mine ? ' mine' : ''}">${t.team}</div>
+        <div class="predictor-team-wl">${t.wins}-${t.losses}</div>
         <div class="predictor-team-rec">${t.pct}%</div>
       </div>`
     ).join('');
