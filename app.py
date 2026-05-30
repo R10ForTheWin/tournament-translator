@@ -385,7 +385,7 @@ def _team_sort_key(team: dict):
 # ── Game helpers ───────────────────────────────────────────────────────────────
 
 _PREFIX_RE = re.compile(
-    r"^(?:\d+(?:st|nd|rd|th)[A-Z]+-|[A-Z]+\d+\s*\([^)]+\)\s*-\s*|[WL]#[^-\s]+-?|[A-Z]+\d+\s*-\s*|\d+\s*-\s*)(.*)",
+    r"^(?:\d+(?:st|nd|rd|th)[A-Z]+-|[A-Z]+\d+\s*\([^)]+\)\s*-\s*|[WL]\s*#\s*\d+\s*-?\s*|[A-Z]+\d+\s*-\s*|\d+\s*-\s*)(.*)",
     re.IGNORECASE,
 )
 
@@ -1787,8 +1787,8 @@ def find_next_games(game, division_games):
         if g["game_id"] == game["game_id"]:
             continue
         for slot in (g["white_team"], g["dark_team"]):
-            # Standard W#N / L#N format
-            pm = re.match(r"^([WL])#([^-\s]+)", slot)
+            # Standard W#N / L#N format (with or without spaces: W#12, W #12, W # 12)
+            pm = re.match(r"^([WL])\s*#\s*([^-\s]+)", slot)
             if pm:
                 ref = re.search(r"(\d+)$", pm.group(2))
                 ref_num = str(int(ref.group(1))) if ref else pm.group(2)
@@ -3506,6 +3506,38 @@ def api_games(tournament_id, team):
     _used_gns2 = sorted(set(_game_num_map.values()))
     _gap_remap2 = {old: (new + 1) for new, old in enumerate(_used_gns2)}
     _game_num_map = {gid: _gap_remap2[gn] for gid, gn in _game_num_map.items()}
+
+    # Self-heal: if multiple non-placeholder games in the same game_num group fall on
+    # the same day at different times, they are sequential rounds that were incorrectly
+    # merged. Split them back out — earlier time keeps the original game_num, each later
+    # time slot gets the next available game_num.
+    _heal_by_gn: dict[int, list] = {}
+    for _gh in my_games:
+        _gn_h = _game_num_map.get(_gh["game_id"])
+        if _gn_h is not None:
+            _heal_by_gn.setdefault(_gn_h, []).append(_gh)
+    _heal_splits: list[tuple[str, int]] = []
+    _heal_next = max(_game_num_map.values(), default=0) + 1
+    for _gn_h, _grp_h in sorted(_heal_by_gn.items()):
+        _days_h = {_g.get("date") for _g in _grp_h if _g.get("date")}
+        if len(_days_h) != 1:
+            continue
+        _real_times = sorted({_g.get("time") for _g in _grp_h
+                               if not _g.get("placeholder") and _g.get("time") is not None})
+        if len(_real_times) <= 1:
+            continue
+        for _th in _real_times[1:]:
+            _new_gn = _heal_next
+            _heal_next += 1
+            for _gh in _grp_h:
+                if _gh.get("time") == _th:
+                    _heal_splits.append((_gh["game_id"], _new_gn))
+    for _gid_h, _new_gn_h in _heal_splits:
+        _game_num_map[_gid_h] = _new_gn_h
+    if _heal_splits:
+        _used_gns3 = sorted(set(_game_num_map.values()))
+        _gap_remap3 = {old: (new + 1) for new, old in enumerate(_used_gns3)}
+        _game_num_map = {gid: _gap_remap3[gn] for gid, gn in _game_num_map.items()}
 
     show_records = tournament_id not in WPL_TOURNAMENTS
     sheet_records: dict = {}
