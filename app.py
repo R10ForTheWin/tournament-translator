@@ -842,6 +842,9 @@ def describe_slot(slot: str, division_games: list = None, ref_date=None) -> str:
         if (re.search(r'\bL(\d+)\s*$', name, re.IGNORECASE)
                 or re.search(r'\bWinner\s+\d+', name, re.IGNORECASE)):
             return describe_slot(name, division_games, ref_date)
+        # Double-prefixed: "BB2-1ST C - ORWP" → after first strip: "1ST C - ORWP" (still slot-like)
+        if _SLOT_LIKE_RE.match(name):
+            return describe_slot(name, division_games, ref_date)
         return name
 
     if division_games:

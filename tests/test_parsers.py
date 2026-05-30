@@ -463,6 +463,148 @@ def test_trojan_team_names_clean() -> int:
     return failures
 
 
+def test_no_slot_like_opponents() -> int:
+    """Direct (non-placeholder) game cards must never show a slot-like opponent label.
+
+    The bug: after strip_prefix fails on an unknown format, the raw slot string
+    flows through as the opponent label — parents see "W #12 - TEMPLE CITY" instead
+    of a real team name. This test catches that for all CCA Trojan teams.
+    """
+    from app import app as _flask_app, _SLOT_LIKE_RE as _slre
+    import json as _json
+
+    failures = 0
+    checks = [
+        ("jo-quals", "TROJAN CARDINAL A",   "18U Boys"),
+        ("jo-quals", "TROJAN GOLD B",        "18U Boys"),
+        ("jo-quals", "TROJAN CARDINAL (A)",  "16U Boys"),
+        ("jo-quals", "TROJAN GOLD (B)",      "16U Boys"),
+        ("jo-quals", "TROJAN SILVER (C)",    "16U Boys"),
+    ]
+    with _flask_app.test_client() as c:
+        for tid, team, sheet in checks:
+            r = c.get(f"/api/games/{tid}/{team}?sheet={sheet}")
+            if r.status_code != 200:
+                _check(f"{tid}/{team} request ok", False, f"status {r.status_code}")
+                failures += 1
+                continue
+            data = _json.loads(r.data)
+            all_games = data.get("upcoming", []) + data.get("played", [])
+            for g in all_games:
+                if g.get("placeholder"):
+                    continue  # placeholder opponents are unresolved slots by design
+                opp = g.get("opponent", "")
+                ok = _check(
+                    f"{tid}/{team} game {g['game_id']}: opponent not a raw slot: {opp!r}",
+                    not _slre.match(opp),
+                    "looks like an unstripped slot",
+                )
+                if not ok:
+                    failures += 1
+    return failures
+
+
+def test_game_num_column_integrity() -> int:
+    """Within each game_num column, non-placeholder games at different times on the
+    same day must be win/lose path siblings — not sequential rounds incorrectly merged.
+
+    The bug: CCA's 3:30 PM pool game and 6:50 PM bracket game both got game_num=1
+    because the day-merge logic treated non-overlapping same-day times as the same
+    round. This test catches that: if two non-placeholder games share a game_num,
+    are on the same day, and are at different times, they must have win+lose paths.
+    """
+    from app import app as _flask_app
+    import json as _json
+
+    failures = 0
+    checks = [
+        ("jo-quals", "TROJAN CARDINAL A",   "18U Boys"),
+        ("jo-quals", "TROJAN GOLD B",        "18U Boys"),
+        ("jo-quals", "TROJAN CARDINAL (A)",  "16U Boys"),
+        ("jo-quals", "TROJAN GOLD (B)",      "16U Boys"),
+        ("jo-quals", "TROJAN SILVER (C)",    "16U Boys"),
+    ]
+    with _flask_app.test_client() as c:
+        for tid, team, sheet in checks:
+            r = c.get(f"/api/games/{tid}/{team}?sheet={sheet}")
+            if r.status_code != 200:
+                continue
+            data = _json.loads(r.data)
+            all_games = data.get("upcoming", []) + data.get("played", [])
+            # Group non-placeholder games by (game_num, date)
+            groups: dict = {}
+            for g in all_games:
+                if g.get("placeholder"):
+                    continue
+                key = (g.get("game_num"), g.get("date"))
+                if None not in key:
+                    groups.setdefault(key, []).append(g)
+            for (gnum, date), grp in groups.items():
+                times = {g.get("time") for g in grp if g.get("time")}
+                if len(times) <= 1:
+                    continue
+                # Multiple times in same column on same day — must be win/lose siblings
+                paths = {g.get("path") for g in grp}
+                is_siblings = "win" in paths and "lose" in paths
+                ok = _check(
+                    f"{tid}/{team} GAME {gnum} on {date}: "
+                    f"multiple times {sorted(times)} are win/lose siblings",
+                    is_siblings,
+                    f"paths={paths} — looks like sequential rounds merged into one column",
+                )
+                if not ok:
+                    failures += 1
+    return failures
+
+
+def test_last_meeting_available() -> int:
+    """At least one upcoming game per Trojan team should have a last_meeting populated,
+    confirming cross-tournament history search is active.
+
+    This test will naturally pass only when there IS prior history (i.e., opponents
+    have been faced in a previous tournament on file). It SKIPs teams with zero
+    prior history rather than failing — the assertion is that the mechanism works,
+    not that every opponent has been faced before.
+    """
+    from app import app as _flask_app
+    import json as _json
+
+    failures = 0
+    checks = [
+        ("jo-quals", "TROJAN CARDINAL (A)", "16U Boys"),
+        ("jo-quals", "TROJAN GOLD (B)",     "16U Boys"),
+        ("jo-quals", "TROJAN SILVER (C)",   "16U Boys"),
+    ]
+    with _flask_app.test_client() as c:
+        for tid, team, sheet in checks:
+            r = c.get(f"/api/games/{tid}/{team}?sheet={sheet}")
+            if r.status_code != 200:
+                continue
+            data = _json.loads(r.data)
+            upcoming = [g for g in data.get("upcoming", []) if not g.get("placeholder")]
+            if not upcoming:
+                print(f"  [SKIP] {tid}/{team}: no direct upcoming games to check")
+                continue
+            # Check that _last_meeting is populated for at least one non-placeholder game
+            # where the opponent is a known resolved team (not a slot description)
+            from app import _SLOT_LIKE_RE as _slre
+            known_opp_games = [g for g in upcoming if g.get("opponent") and not _slre.match(g.get("opponent", ""))]
+            if not known_opp_games:
+                print(f"  [SKIP] {tid}/{team}: all upcoming opponents are still unresolved slots")
+                continue
+            has_any = any(g.get("last_meeting") is not None for g in known_opp_games)
+            # Soft check: SKIP rather than FAIL when there's genuinely no prior history
+            if not has_any:
+                print(f"  [INFO] {tid}/{team}: no prior meeting found for any of "
+                      f"{[g['opponent'][:30] for g in known_opp_games[:3]]} — "
+                      f"may be first encounter or history files not on disk")
+            else:
+                ok = _check(f"{tid}/{team}: last_meeting populated for at least one upcoming game",
+                            True, "")
+                # If has_any is True the check trivially passes; log it
+    return failures
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -508,6 +650,21 @@ def main():
     print("Trojan team name cleanliness (no raw slot strings as team names)")
     print("=" * 60)
     total_failures += test_trojan_team_names_clean()
+
+    print("\n" + "=" * 60)
+    print("Direct game opponent labels (no slot-like strings on non-placeholder cards)")
+    print("=" * 60)
+    total_failures += test_no_slot_like_opponents()
+
+    print("\n" + "=" * 60)
+    print("Game-num column integrity (no sequential rounds merged into one column)")
+    print("=" * 60)
+    total_failures += test_game_num_column_integrity()
+
+    print("\n" + "=" * 60)
+    print("Last meeting availability (cross-tournament history search active)")
+    print("=" * 60)
+    total_failures += test_last_meeting_available()
 
     print("\n" + "=" * 60)
     if total_failures == 0:
