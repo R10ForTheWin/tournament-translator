@@ -1,0 +1,27 @@
+name: Smoke test
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Import check
+        run: python3 -c "import app; print('app import OK')"
+
+      - name: Parser unit tests
+        run: python3 -m pytest tests/test_parsers.py -x -q

@@ -1790,12 +1790,23 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
     const _ordSuffix = n => { const s=['th','st','nd','rd'], v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); };
 
     let lastPathGroup = undefined;
+    let lastCardDay   = null;
 
     ordered.forEach(g => {
       const pathCond = pc(g);
       const isElim   = !!g.eliminated;
 
       lastPathGroup = pathCond;
+
+      // Day-change divider within a column (e.g. win path = Friday, lose path = Saturday)
+      const cardDay = g.date ? g.date.split(',')[0].trim() : null;
+      if (lastCardDay && cardDay && lastCardDay !== cardDay) {
+        const dayDiv = document.createElement('div');
+        dayDiv.className = 'bracket-day-header';
+        dayDiv.textContent = cardDay;
+        step.appendChild(dayDiv);
+      }
+      lastCardDay = cardDay || lastCardDay;
 
       const cardG = Object.assign({}, g, { path: null, scenarios: null, _showDate: undefined });
 
