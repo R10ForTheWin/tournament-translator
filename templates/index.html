@@ -446,22 +446,27 @@
     .pred-sheet-standing { font-size: 12px; color: var(--muted); margin-top: 2px; }
     .pred-sheet-body { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
     .pred-sheet-msg { font-size: 14px; color: var(--muted); text-align: center; padding: 24px 0; }
-    .predictor-row { display: flex; align-items: center; gap: 10px; }
-    .predictor-rank { font-size: 14px; font-weight: 700; color: var(--white); width: 72px; flex-shrink: 0; }
-    .predictor-bar-wrap { flex: 1; height: 13px; background: rgba(255,255,255,0.07); border-radius: 2px; overflow: hidden; }
+    .predictor-row { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
+    .predictor-rank { font-size: 13px; font-weight: 700; color: var(--white); width: 60px; flex-shrink: 0; }
+    .predictor-bar-wrap { flex: 1; height: 11px; background: rgba(255,255,255,0.07); border-radius: 2px; overflow: hidden; }
     .predictor-bar { height: 100%; border-radius: 2px; background: rgba(255,255,255,0.4); transition: width 0.6s ease; }
-    .predictor-pct { font-size: 15px; font-weight: 800; color: var(--white); width: 42px; text-align: right; flex-shrink: 0; }
-    .predictor-row.current .predictor-rank { color: var(--gold); font-weight: 800; }
+    .predictor-pct { font-size: 13px; font-weight: 700; color: var(--white); width: 36px; text-align: right; flex-shrink: 0; }
+    .predictor-row.current .predictor-rank { color: var(--gold); }
     .predictor-row.current .predictor-bar { background: var(--gold); }
     .predictor-row.current .predictor-pct { color: var(--gold); }
     .predictor-note { font-size: 11px; color: var(--muted); padding-top: 8px; border-top: 1px solid var(--border); }
-    .predictor-all-teams { padding-top: 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+    .predictor-all-teams { display: flex; flex-direction: column; gap: 2px; }
     .predictor-team-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
     .predictor-team-rank { width: 20px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
     .predictor-team-name { flex: 1; font-weight: 500; }
-    .predictor-team-name.mine { font-weight: 800; color: var(--gold); }
     .predictor-team-wl  { font-size: 12px; color: var(--muted); flex-shrink: 0; }
-    .predictor-team-rec { font-size: 12px; color: var(--muted); flex-shrink: 0; }
+    .predictor-mine-row { display: flex; flex-direction: column; gap: 6px; margin: 4px 0;
+      background: rgba(218,165,32,0.08); border: 1px solid rgba(218,165,32,0.3);
+      border-radius: 8px; padding: 10px; }
+    .predictor-mine-header { display: flex; align-items: center; gap: 8px; }
+    .predictor-mine-header .predictor-team-rank { color: var(--gold); font-weight: 800; }
+    .predictor-mine-header .predictor-team-name { font-weight: 800; color: var(--gold); }
+    .predictor-mine-header .predictor-team-wl { color: rgba(218,165,32,0.7); }
 
     /* ── Yes/No ── */
     .yn-box { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 14px; }
@@ -2129,7 +2134,7 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
     standingEl.textContent = poolSubtitle;
 
     const maxPct = Math.max(...data.finish_probs.map(r => r.pct), 1);
-    const rows = data.finish_probs.map(r => {
+    const inlineBars = data.finish_probs.map(r => {
       const isBest = r.pct === maxPct;
       const barW = Math.round((r.pct / maxPct) * 100);
       return `<div class="predictor-row${isBest ? ' current' : ''}">
@@ -2139,18 +2144,27 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
       </div>`;
     }).join('');
 
-    const teamRows = (data.predicted_standings || []).map(t =>
-      `<div class="predictor-team-row">
+    const teamRows = (data.predicted_standings || []).map(t => {
+      if (t.is_mine) {
+        return `<div class="predictor-mine-row">
+          <div class="predictor-mine-header">
+            <div class="predictor-team-rank">${t.predicted_rank}</div>
+            <div class="predictor-team-name">${t.team}</div>
+            <div class="predictor-team-wl">${t.wins}-${t.losses}</div>
+          </div>
+          ${inlineBars}
+        </div>`;
+      }
+      return `<div class="predictor-team-row">
         <div class="predictor-team-rank">${t.predicted_rank}</div>
-        <div class="predictor-team-name${t.is_mine ? ' mine' : ''}">${t.team}</div>
+        <div class="predictor-team-name">${t.team}</div>
         <div class="predictor-team-wl">${t.wins}-${t.losses}</div>
-      </div>`
-    ).join('');
+      </div>`;
+    }).join('');
 
     bodyEl.innerHTML = `
-      ${rows}
       ${teamRows ? `<div class="predictor-all-teams">${teamRows}</div>` : ''}
-      <div class="predictor-note">Weekend placement prediction · equal win probability for remaining games · ${data.total_div_teams || ''} teams in division</div>`;
+      <div class="predictor-note">Weekend placement prediction · ${data.total_div_teams || ''} teams in division</div>`;
   } catch (e) {
     backdrop.querySelector('#pred-body').innerHTML = `<div class="pred-sheet-msg">Unable to load prediction.</div>`;
   }
