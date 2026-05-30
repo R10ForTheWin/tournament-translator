@@ -385,7 +385,7 @@ def _team_sort_key(team: dict):
 # ── Game helpers ───────────────────────────────────────────────────────────────
 
 _PREFIX_RE = re.compile(
-    r"^(?:\d+(?:st|nd|rd|th)[A-Z]+-|[A-Z]+\d+\s*\([^)]+\)\s*-\s*|[WL]\s*#\s*\d+\s*-?\s*|[A-Z]+\d+\s*-\s*|\d+\s*-\s*)(.*)",
+    r"^(?:\d+(?:st|nd|rd|th)\s*(?:in\s+)?[A-Z]+\s*-\s*|[A-Z]+\d+\s*\([^)]+\)\s*-\s*|[WL]\s*#\s*\d+\s*-?\s*|[A-Z]+\d+\s*-\s*|\d+\s*-\s*)(.*)",
     re.IGNORECASE,
 )
 
@@ -2516,7 +2516,7 @@ def _run_bracket_llm_check(team: str, nodes: list, warnings: list) -> None:
 
 
 _SLOT_LIKE_RE = re.compile(
-    r'^(?:\d+(?:st|nd|rd|th)(?:\s+in\s+)?[A-Z]-|[A-Z]\d+[-\(]|[WL]\s*#|WIN\s+GM|LOS\s+GM)',
+    r'^(?:\d+(?:st|nd|rd|th)\s*(?:in\s+)?[A-Z]|[A-Z]\d+[-\(]|[WL]\s*#|WIN\s+GM|LOS\s+GM)',
     re.IGNORECASE,
 )
 
