@@ -2446,6 +2446,10 @@ def api_trojan_teams(tournament_id):
     for g in games:
         for slot in (g["white_team"], g["dark_team"]):
             name = strip_prefix(slot)
+            # If strip_prefix couldn't remove the prefix (unknown slot format), the
+            # result still looks like a slot — skip it to avoid phantom team entries.
+            if _SLOT_LIKE_RE.match(name):
+                continue
             if "TROJAN" in name.upper():
                 key = (name, g["sheet"])
                 counts[key] = counts.get(key, 0) + 1
@@ -2512,7 +2516,7 @@ def _run_bracket_llm_check(team: str, nodes: list, warnings: list) -> None:
 
 
 _SLOT_LIKE_RE = re.compile(
-    r'^(?:\d+(?:st|nd|rd|th)(?:\s+in\s+)?[A-Z]-|[A-Z]\d+[-\(]|[WL]#|WIN\s+GM|LOS\s+GM)',
+    r'^(?:\d+(?:st|nd|rd|th)(?:\s+in\s+)?[A-Z]-|[A-Z]\d+[-\(]|[WL]\s*#|WIN\s+GM|LOS\s+GM)',
     re.IGNORECASE,
 )
 

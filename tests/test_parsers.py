@@ -430,6 +430,39 @@ def test_cca_game_nums() -> int:
     return failures
 
 
+def test_trojan_team_names_clean() -> int:
+    """No entry returned by api_trojan_teams should look like a raw slot string.
+
+    The bug: CCA format uses 'W #12 - TROJAN CARDINAL (A)' slot syntax. _PREFIX_RE
+    didn't handle the spaced variant, so strip_prefix left the raw slot intact and
+    it appeared as a phantom team in the UI. This test catches any future case where
+    a new slot format slips past strip_prefix.
+    """
+    from app import app as _flask_app, _SLOT_LIKE_RE as _slre
+    import json as _json
+
+    failures = 0
+    tournaments_to_check = ["jo-quals"]
+    with _flask_app.test_client() as c:
+        for tid in tournaments_to_check:
+            r = c.get(f"/api/trojan-teams/{tid}")
+            if r.status_code != 200:
+                _check(f"{tid} trojan-teams request succeeded", False, f"status {r.status_code}")
+                failures += 1
+                continue
+            teams = _json.loads(r.data)
+            for t in teams:
+                name = t.get("name", "")
+                ok = _check(
+                    f"{tid}: team name is clean (not a raw slot): {name!r}",
+                    not _slre.match(name),
+                    f"looks like an unstripped slot",
+                )
+                if not ok:
+                    failures += 1
+    return failures
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -470,6 +503,11 @@ def main():
     print("CCA game-num tests (win/lose paths share same game_num)")
     print("=" * 60)
     total_failures += test_cca_game_nums()
+
+    print("\n" + "=" * 60)
+    print("Trojan team name cleanliness (no raw slot strings as team names)")
+    print("=" * 60)
+    total_failures += test_trojan_team_names_clean()
 
     print("\n" + "=" * 60)
     if total_failures == 0:
