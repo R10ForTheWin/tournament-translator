@@ -3478,6 +3478,60 @@ def api_games(tournament_id, team):
     _gap_remap = {old: (new + 1) for new, old in enumerate(_used_gns)}
     _game_num_map = {gid: _gap_remap[gn] for gid, gn in _game_num_map.items()}
 
+    # Merge parallel bracket paths: when G4 has a win+lose pair, both paths produce a "G5"
+    # (one from winning the win-path game, one from winning the lose-path game).
+    # These land in consecutive game_num columns (N, N+1) instead of being stacked, because
+    # find_next_games can only return one winner_next per game, so one path falls out of BFS.
+    # Fix: if two consecutive single-game placeholder columns both reference games in the same
+    # parent game_num column via W#/L# slots, they're alternatives → merge into one column.
+    _pp_gid_by_num = {_game_num(g["game_id"]): g["game_id"]
+                      for g in my_games if _game_num(g["game_id"])}
+
+    def _pp_parent_gn(g):
+        for _sl in (g["white_team"], g["dark_team"]):
+            _pm = re.match(r"^([WL])\s*#\s*([^-\s]+)", _sl)
+            if _pm:
+                _ref = re.search(r"(\d+)$", _pm.group(2))
+                _rn = str(int(_ref.group(1))) if _ref else None
+                if _rn:
+                    _pred = _pp_gid_by_num.get(_rn)
+                    if _pred:
+                        return _game_num_map.get(_pred)
+        return None
+
+    _pp_changed = True
+    while _pp_changed:
+        _pp_changed = False
+        _pp_by_gn: dict[int, list] = {}
+        for _ppg in my_games:
+            _ppgn = _game_num_map.get(_ppg["game_id"])
+            if _ppgn:
+                _pp_by_gn.setdefault(_ppgn, []).append(_ppg)
+        for _ppn in sorted(_pp_by_gn.keys()):
+            if _ppn + 1 not in _pp_by_gn:
+                continue
+            _ppa, _ppb = _pp_by_gn[_ppn], _pp_by_gn[_ppn + 1]
+            if len(_ppa) != 1 or len(_ppb) != 1:
+                continue  # only merge single-game columns
+            if not all(g.get("placeholder") for g in _ppa + _ppb):
+                continue
+            _dates_ppa = {g.get("date") for g in _ppa if g.get("date")}
+            _dates_ppb = {g.get("date") for g in _ppb if g.get("date")}
+            if not _dates_ppa or not _dates_ppb or _dates_ppa != _dates_ppb:
+                continue  # must be same day to be alternatives
+            _par_ppa = {_pp_parent_gn(_ppa[0])}
+            _par_ppb = {_pp_parent_gn(_ppb[0])}
+            if (None not in _par_ppa and None not in _par_ppb
+                    and _par_ppa == _par_ppb):
+                _game_num_map[_ppb[0]["game_id"]] = _ppn
+                _pp_changed = True
+                break
+
+    # Close any gaps left by the parallel-path merge
+    _used_gns_pp = sorted(set(_game_num_map.values()))
+    _gap_remap_pp = {old: (new + 1) for new, old in enumerate(_used_gns_pp)}
+    _game_num_map = {gid: _gap_remap_pp[gn] for gid, gn in _game_num_map.items()}
+
     # Merge same-day pure-single-day columns into one column per day, but ONLY
     # if their time ranges don't overlap. Overlapping time ranges mean the columns
     # represent different sequential bracket rounds on the same day (e.g. quarterfinals

@@ -147,17 +147,18 @@
 
     /* ── Age-group separator (team list) ── */
     .age-group-sep {
-      display: flex; align-items: center; gap: 12px;
-      margin: 36px 4px 16px;
-      padding-top: 20px;
-      border-top: 2px solid rgba(157,34,53,0.25);
+      margin: 32px calc(-1 * max(16px, env(safe-area-inset-left))) 20px;
+      padding: 9px max(16px, env(safe-area-inset-left));
+      background: var(--cardinal);
+      border-bottom: 2px solid var(--gold);
+      display: flex; align-items: center; gap: 10px;
     }
-    .age-group-sep.first { margin-top: 8px; padding-top: 0; border-top: none; }
-    .age-group-sep-line { flex: 1; height: 2px; background: var(--cardinal); opacity: 0.5; }
+    .age-group-sep.first { margin-top: 8px; }
+    .age-group-sep-line { display: none; }
     .age-group-sep-label {
-      font-size: 15px; font-weight: 800;
-      text-transform: uppercase; letter-spacing: 0.14em;
-      color: var(--cardinal); white-space: nowrap;
+      font-size: 13px; font-weight: 900;
+      text-transform: uppercase; letter-spacing: 0.22em;
+      color: #fff; white-space: nowrap;
     }
 
     /* ── Card lists ── */
