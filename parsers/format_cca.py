@@ -13,6 +13,8 @@ Slot formats handled:
   "Winnner #17"               → "W#17"   (typo variant)
   "GGG1- Win #36- "           → "W#36"   (bracket group + win ref + trailing dash)
   "DDD1 - Lose #58 -"         → "L#58"   (bracket group + loss ref)
+  "AAA4 (Winner G33)"         → "W#33"   (bracket group + paren game ref, G=Game)
+  "BBB2 (Loser G31)"          → "L#31"   (bracket group + paren loss ref)
   "HH 1 - 2nd C"              → "2ndC-"  (bracket group + finish slot)
   "BBB1 - 2nd II"             → "2ndII-" (bracket group + multi-letter pool finish)
   "BB2 - 1st C"               → "1stC-"  (bracket group + finish ref)
@@ -81,15 +83,15 @@ def _normalize_inner(s: str):
     if not s:
         return None
 
-    # Win reference: "Winner #10", "Win #36", "Winnner #17" (triple-n typo)
+    # Win reference: "Winner #10", "Win #36", "Winnner #17" (typo), "Winner G33" (G=Game)
     # Optionally followed by " - TEAM" for already-resolved slots
-    m = re.match(r'^Win+e?r?\s*#?(\d+)(?:\s*[-–]\s*(.+))?$', s, re.IGNORECASE)
+    m = re.match(r'^Win+e?r?\s*[G#]?(\d+)(?:\s*[-–]\s*(.+))?$', s, re.IGNORECASE)
     if m:
         team = (m.group(2) or "").strip().upper()
         return f"W#{m.group(1)}-{team}" if team else f"W#{m.group(1)}"
 
-    # Loss reference: "Loser #10", "Lose #58"
-    m = re.match(r'^Los[se]*r?\s*#?(\d+)(?:\s*[-–]\s*(.+))?$', s, re.IGNORECASE)
+    # Loss reference: "Loser #10", "Lose #58", "Loser G31" (G=Game)
+    m = re.match(r'^Los[se]*r?\s*[G#]?(\d+)(?:\s*[-–]\s*(.+))?$', s, re.IGNORECASE)
     if m:
         team = (m.group(2) or "").strip().upper()
         return f"L#{m.group(1)}-{team}" if team else f"L#{m.group(1)}"
@@ -136,6 +138,12 @@ def _normalize_slot(raw: str) -> str:
         pos = (bg.group(1) + bg.group(2)).upper()
         team = inner_raw.upper()
         return f"{pos}-{team}" if team else pos
+
+    # CCA paren format: "AAA4 (Winner G33)" / "BBB2 (Loser G31)" — no dash separator
+    m = re.match(r'^[A-Z]+\d+\s*\((Win+e?r?|Los[se]*r?)\s+[G#]?(\d+)\s*\)', s, re.IGNORECASE)
+    if m:
+        wl = "W" if m.group(1).upper().startswith("W") else "L"
+        return f"{wl}#{m.group(2)}"
 
     # No multi-letter bracket prefix — try direct normalization
     return _normalize_inner(s) or s.upper()
