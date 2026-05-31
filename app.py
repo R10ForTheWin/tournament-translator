@@ -1014,7 +1014,8 @@ def describe_slot(slot: str, division_games: list = None, ref_date=None) -> str:
         # CCA extended: strip left bracket-group prefix, then recurse if still contains
         # a resolvable reference like "4TH B - L55" or "3RD G (WINNER 46)"
         if (re.search(r'\bL(\d+)\s*$', name, re.IGNORECASE)
-                or re.search(r'\bWinner\s+\d+', name, re.IGNORECASE)):
+                or re.search(r'\bWinner\s+G?\d+', name, re.IGNORECASE)
+                or re.search(r'\bLoser\s+G\d+', name, re.IGNORECASE)):
             return describe_slot(name, division_games, ref_date)
         # Double-prefixed: "BB2-1ST C - ORWP" → after first strip: "1ST C - ORWP" (still slot-like)
         if _SLOT_LIKE_RE.match(name):
@@ -1382,9 +1383,11 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                 wm = _WL_SLOT_RE.match(s)
                 # CCA extended: "LN" at end of slot (no #) — e.g. "BB1-4TH G - L46"
                 lm_ext = re.search(r'\bL(\d+)\s*$', s, re.IGNORECASE) if not wm else None
-                # CCA extended: "Winner N" anywhere — e.g. "3RD G (WINNER 46)"
-                wm_ext = re.search(r'\bWinner\s+(\d+)', s, re.IGNORECASE) if not wm else None
-                if wm or lm_ext or wm_ext:
+                # CCA extended: "Winner N" or "Winner GN" — e.g. "3RD G (WINNER 46)", "AAA4 (WINNER G33)"
+                wm_ext = re.search(r'\bWinner\s+G?(\d+)', s, re.IGNORECASE) if not wm else None
+                # CCA extended: "Loser GN" — e.g. "BBB2 (LOSER G31)"
+                lm_gext = re.search(r'\bLoser\s+G(\d+)', s, re.IGNORECASE) if not wm and not lm_ext else None
+                if wm or lm_ext or wm_ext or lm_gext:
                     if wm:
                         ref = re.search(r'(\d+)$', wm.group(1))
                         if not ref:
@@ -1394,9 +1397,12 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     elif lm_ext:
                         ref_num = str(int(lm_ext.group(1)))
                         is_win_slot = False  # "L46" = loser
+                    elif lm_gext:
+                        ref_num = str(int(lm_gext.group(1)))
+                        is_win_slot = False  # "Loser G31" = loser
                     else:
                         ref_num = str(int(wm_ext.group(1)))
-                        is_win_slot = True   # "Winner 46" = winner
+                        is_win_slot = True   # "Winner 46" / "Winner G33" = winner
                     if ref_num not in reachable:
                         continue
                     src_game, src_ph, src_depth = reachable[ref_num]
@@ -1995,10 +2001,15 @@ def find_next_games(game, division_games):
             if lm and str(int(lm.group(1))) == num:
                 loser_next = g
                 continue
-            # CCA extended: "Winner N" / "(Winner N)" — e.g. "3RD G (WINNER 46)"
-            wm = re.search(r'\bWinner\s+(\d+)', slot, re.IGNORECASE)
+            # CCA extended: "Winner N" / "Winner GN" — e.g. "3RD G (WINNER 46)", "AAA4 (WINNER G33)"
+            wm = re.search(r'\bWinner\s+G?(\d+)', slot, re.IGNORECASE)
             if wm and str(int(wm.group(1))) == num:
                 winner_next = g
+                continue
+            # CCA extended: "Loser GN" — e.g. "BBB2 (LOSER G31)"
+            lm_g = re.search(r'\bLoser\s+G(\d+)', slot, re.IGNORECASE)
+            if lm_g and str(int(lm_g.group(1))) == num:
+                loser_next = g
     return winner_next, loser_next
 
 
