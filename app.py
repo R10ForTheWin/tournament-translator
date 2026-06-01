@@ -4326,7 +4326,28 @@ def api_raw_slots(tournament_id, sheet_name):
     if not excel:
         abort(404)
     games = [g for g in load_and_parse(excel) if g["sheet"] == sheet_name]
-    return jsonify([{"game_id": g["game_id"], "date": str(g["date"]), "white": g["white_team"], "dark": g["dark_team"], "ws": g.get("white_score"), "ds": g.get("dark_score")} for g in games])
+    return jsonify([{"game_id": g["game_id"], "date": str(g["date"]), "white": g["white_team"], "dark": g["dark_team"], "ws": g.get("white_score"), "ds": g.get("dark_score"), "w_to": g.get("w_to"), "l_to": g.get("l_to")} for g in games])
+
+
+@app.route("/api/debug-slots/<tournament_id>/<path:team>")
+def api_debug_slots(tournament_id, team):
+    """Show raw slot strings for all division games — diagnoses bracket expansion."""
+    excel = find_excel(tournament_id)
+    if not excel:
+        abort(404)
+    all_games = load_and_parse(excel)
+    games = _filter_by_dates(all_games, tournament_id)
+    my_games = [g for g in games if team_matches(g["white_team"], team) or team_matches(g["dark_team"], team)]
+    if not my_games:
+        return jsonify({"error": "team not found", "sample_teams": list({strip_prefix(g["white_team"]) for g in games[:20]})})
+    sheet = my_games[0]["sheet"]
+    div_games = [g for g in games if g["sheet"] == sheet]
+    return jsonify({
+        "team": team, "sheet": sheet,
+        "my_game_ids": [g["game_id"] for g in my_games],
+        "all_slots": [{"game_id": g["game_id"], "white": g["white_team"], "dark": g["dark_team"],
+                       "played": g.get("played"), "w_to": g.get("w_to"), "l_to": g.get("l_to")} for g in div_games],
+    })
 
 
 @app.route("/api/status")
