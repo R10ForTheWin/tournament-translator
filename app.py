@@ -3738,13 +3738,35 @@ def api_games(tournament_id, team):
         if _n + 1 not in _by_gn:
             continue
         _col_a, _col_b = _by_gn[_n], _by_gn[_n + 1]
+        # _by_gn is a snapshot taken before this loop starts. If _col_a's
+        # games were already absorbed into an earlier column by a prior
+        # merge in this same pass, treating stale _col_a as a fresh pivot
+        # here would cascade the merge into the NEXT (unrelated) group —
+        # e.g. pool F's 3rd-place branch (already merged left) would look
+        # "disjoint" from pool C's 1st/2nd-place branch and wrongly pull
+        # pool C partway into pool F's column. Skip consumed pivots.
+        if any(_game_num_map.get(g["game_id"]) != _n for g in _col_a):
+            continue
         _paths_a = {_raw_path(g) for g in _col_a}
         _paths_b = {_raw_path(g) for g in _col_b}
         _all_ph_a = all(g.get("placeholder") for g in _col_a)
         _all_ph_b = all(g.get("placeholder") for g in _col_b)
-        if (_all_ph_a and _all_ph_b
-                and _paths_a <= {"win", "lose"} and _paths_b <= {"win", "lose"}
-                and _paths_a | _paths_b == {"win", "lose"}):
+        _is_win_lose_split = (_paths_a <= {"win", "lose"} and _paths_b <= {"win", "lose"}
+                               and _paths_a | _paths_b == {"win", "lose"})
+        # Same idea, but for pool-rank branches (1st/2nd/3rd in pool, etc.) —
+        # a 3-way (or more) branch can split across adjacent columns purely
+        # because two of the three games happen to share an exact kickoff
+        # time and the third doesn't (e.g. two games at 9:00 AM land in one
+        # column, the third at 10:00 AM falls into the next) even though all
+        # of them are the same decision point, not sequential rounds. Merge
+        # whenever both columns are entirely pool_N paths with no rank
+        # appearing in both (disjoint) -- same alternates-not-a-sequence
+        # test as win/lose, generalized past exactly two branches.
+        _is_pool_split = (bool(_paths_a) and bool(_paths_b)
+                          and all(p and p.startswith("pool_") for p in _paths_a)
+                          and all(p and p.startswith("pool_") for p in _paths_b)
+                          and not (_paths_a & _paths_b))
+        if _all_ph_a and _all_ph_b and (_is_win_lose_split or _is_pool_split):
             for g in _col_b:
                 _game_num_map[g["game_id"]] = _n
 
