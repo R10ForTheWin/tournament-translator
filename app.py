@@ -1065,10 +1065,12 @@ def describe_slot(slot: str, division_games: list = None, ref_date=None) -> str:
         gm = _COMPOSITE_SLOT_RE.search(slot) or _FINISH_SLOT_RE.match(slot)
         if gm:
             group = gm.group(1).upper()
-            rank_m = re.search(r'(\d+)', slot)
-            rank = int(rank_m.group(1)) if rank_m else None
-            ordinal_m = re.search(r'(\d+(?:st|nd|rd|th))', slot, re.IGNORECASE)
-            ordinal = ordinal_m.group(1) if ordinal_m else "?"
+            # Rank must come from the digit immediately before st/nd/rd/th, not
+            # just the first digit in the slot — "K1(2ndB)-" has an unrelated
+            # bracket-position digit ("K1") before the real ordinal ("2nd").
+            ordinal_m = re.search(r'(\d+)(?:st|nd|rd|th)', slot, re.IGNORECASE)
+            rank = int(ordinal_m.group(1)) if ordinal_m else None
+            ordinal = ordinal_m.group(0) if ordinal_m else "?"
             if rank:
                 standings = _standings_for_group(group, dg)
                 if standings and len(standings) >= rank:
@@ -2512,6 +2514,22 @@ def _result_str(game, team) -> str:
     ws, ds = game["white_score"], game["dark_score"]
     if ws is None or ds is None: return None
     your_white = team_matches(game["white_team"], team)
+    your_dark  = team_matches(game["dark_team"], team)
+    if not your_white and not your_dark:
+        # Direct name match failed — team may be identified only via a
+        # pool-rank slot (e.g. "H1(1stB)-"), not a literal name in this game.
+        # Without this, the team is silently assumed to be on the dark side,
+        # which inverts win/loss whenever they're actually white.
+        pr, grp = game.get("pool_rank"), game.get("pool_rank_group")
+        if pr and grp:
+            for slot, is_white in ((game["white_team"], True), (game["dark_team"], False)):
+                s = slot.strip()
+                fm = _COMPOSITE_SLOT_RE.search(s) or _FINISH_SLOT_RE.match(s)
+                if fm and fm.group(1).upper() == grp:
+                    rank_m = re.search(r'(\d+)(?:st|nd|rd|th)', s, re.IGNORECASE)
+                    if rank_m and int(rank_m.group(1)) == pr:
+                        your_white = is_white
+                        break
     yours = ws if your_white else ds
     opp   = ds if your_white else ws
     if yours > opp:  return "win"
@@ -2534,14 +2552,21 @@ def _team_opp_slot(g: dict, team: str, dg: list, my_game_ids: set = None) -> str
     if team_matches(white, team): return dark
     if team_matches(dark, team):  return white
 
-    # Finish-slot: pool_rank_group tells us which pool letter is ours
+    # Finish-slot: pool_rank_group tells us which pool letter is ours.
+    # Handles both simple ("1stB-") and composite ("H1(1stB)-") slot formats —
+    # composite slots don't match _FINISH_SLOT_RE (anchored to a leading digit),
+    # so _COMPOSITE_SLOT_RE must be tried too or these games are never matched.
     pr  = g.get("pool_rank")
     grp = g.get("pool_rank_group")
     if pr and grp:
         for slot, other in ((white, dark), (dark, white)):
-            fm = _FINISH_SLOT_RE.match(slot.strip())
+            s = slot.strip()
+            fm = _COMPOSITE_SLOT_RE.search(s) or _FINISH_SLOT_RE.match(s)
             if fm and fm.group(1).upper() == grp:
-                rank_m = re.search(r'(\d+)', slot)
+                # Rank is the digit immediately before st/nd/rd/th, not just the
+                # first digit in the slot — a composite slot's bracket-position
+                # number (e.g. the "1" in "K1(2ndB)-") is a different number.
+                rank_m = re.search(r'(\d+)(?:st|nd|rd|th)', s, re.IGNORECASE)
                 if rank_m and int(rank_m.group(1)) == pr:
                     return other
 

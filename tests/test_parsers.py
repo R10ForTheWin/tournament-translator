@@ -30,7 +30,7 @@ from parsers.format_a import parse as format_a_parse
 from app import (
     _expand_bracket_games, _build_wpl_game_tree,
     team_matches, describe_slot, _SLOT_LIKE_RE, _tournament_meta,
-    _team_opp_slot,
+    _team_opp_slot, _result_str,
 )
 
 FIXTURES_DIR   = os.path.join(ROOT, "Tournaments Excels")
@@ -402,6 +402,85 @@ def test_format_a_id_collision() -> int:
     return failures
 
 
+# ── Composite pool-rank slot bug (Quiksilver Cup round-by-round simulation) ──
+# Regression: describe_slot / _team_opp_slot / _result_str all resolve a team's
+# rank within a pool for composite bracket slots like "K1(2ndB)-" (bracket
+# position K1 seeded by 2nd place in pool B). Found by simulating Trojan
+# Cardinal winning/losing/splitting Pool B and checking each round's API
+# response for Quiksilver Cup 2026:
+#   - describe_slot picked the FIRST digit anywhere in the slot ("1" from "K1")
+#     as the pool rank instead of the ordinal's digit ("2" from "2nd"), so
+#     "K1(2ndB)-" incorrectly resolved to Pool B's 1st-place team instead of 2nd.
+#   - _team_opp_slot only matched the simple "1stB-" format (anchored regex),
+#     never the composite "K1(2ndB)-" format, so it always fell back to
+#     returning the white slot as "opponent" regardless of which side the team
+#     was actually on — silently dropping self-referential games from the
+#     schedule, or (via _result_str, which has the same direct-name-match-only
+#     blind spot) reporting a WIN as a LOSS whenever the team was white.
+
+def _build_pool_b_games():
+    """3-team Pool B round robin (Cardinal 2nd) + one Round-2 composite game
+    referencing Pool B's rank -- mirrors the real Quiksilver Cup bracket shape."""
+    return [
+        {"game_id": "16UB09", "date": date(2026, 7, 10), "time": None, "location": "X",
+         "white_team": "B1-LA JOLLA UNITED", "white_score": 8, "dark_team": "B3-COMMERCE",
+         "dark_score": 4, "comments": "", "division": "16U_BOYS", "sheet": "16U BOYS",
+         "played": True},
+        {"game_id": "16UB12", "date": date(2026, 7, 10), "time": None, "location": "X",
+         "white_team": "B2-TROJAN CARDINAL", "white_score": 9, "dark_team": "B3-COMMERCE",
+         "dark_score": 5, "comments": "", "division": "16U_BOYS", "sheet": "16U BOYS",
+         "played": True},
+        {"game_id": "16UB15", "date": date(2026, 7, 10), "time": None, "location": "X",
+         "white_team": "B1-LA JOLLA UNITED", "white_score": 10, "dark_team": "B2-TROJAN CARDINAL",
+         "dark_score": 6, "comments": "", "division": "16U_BOYS", "sheet": "16U BOYS",
+         "played": True},
+        # Cardinal (2nd in B) is WHITE here, seeded into bracket position K1.
+        # Bracket-position digit (1) intentionally differs from ordinal rank (2).
+        {"game_id": "16UB22", "date": date(2026, 7, 11), "time": None, "location": "X",
+         "white_team": "K1(2ndB)-", "white_score": 9, "dark_team": "K3(2ndF)-",
+         "dark_score": 5, "comments": "", "division": "16U_BOYS", "sheet": "16U BOYS",
+         "played": True},
+    ]
+
+
+def test_composite_pool_rank_slot() -> int:
+    """Cardinal finishes 2nd in Pool B (not 1st) -- every function that resolves
+    a composite pool-rank slot must agree on rank=2, not rank=1."""
+    failures = 0
+    print("\nComposite pool-rank slot correctness (K1(2ndB)- style)")
+
+    games = _build_pool_b_games()
+    team = "Trojan Cardinal"
+
+    resolved = describe_slot("K1(2ndB)-", games)
+    ok = _check("describe_slot('K1(2ndB)-') resolves to the 2nd-place team, not 1st",
+                resolved.upper() == "TROJAN CARDINAL", f"got {resolved!r}")
+    if not ok: failures += 1
+
+    direct = [g for g in games
+              if team_matches(g["white_team"], team) or team_matches(g["dark_team"], team)]
+    extras = _expand_bracket_games(team, direct, games)
+    my_ids = {g["game_id"] for g in direct + extras}
+    k_game = next((g for g in extras if g["game_id"] == "16UB22"), None)
+
+    ok = _check("Round-2 composite-slot game (16UB22) reached via expansion",
+                k_game is not None, f"extras={[g['game_id'] for g in extras]}")
+    if not ok:
+        failures += 1
+    else:
+        opp = _team_opp_slot(k_game, team, games, my_ids)
+        ok = _check("_team_opp_slot identifies K3(2ndF)- as opponent, not our own K1(2ndB)- slot",
+                    opp == "K3(2ndF)-", f"got {opp!r}")
+        if not ok: failures += 1
+
+        result = _result_str(k_game, team)
+        ok = _check("_result_str: Cardinal (white, 9-5) is a WIN, not a loss",
+                    result == "win", f"got {result!r}")
+        if not ok: failures += 1
+
+    return failures
+
+
 def test_cca_opponent_slots() -> int:
     """Verify _team_opp_slot returns the correct (non-self) opponent for CCA placeholder games.
 
@@ -714,6 +793,11 @@ def main():
     print("Format A game-id collision test (Quiksilver Cup regression guard)")
     print("=" * 60)
     total_failures += test_format_a_id_collision()
+
+    print("\n" + "=" * 60)
+    print("Composite pool-rank slot test (Quiksilver Cup regression guard)")
+    print("=" * 60)
+    total_failures += test_composite_pool_rank_slot()
 
     print("\n" + "=" * 60)
     print("CCA opponent-slot tests (self-reference regression guard)")
