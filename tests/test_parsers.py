@@ -26,6 +26,7 @@ sys.path.insert(0, ROOT)
 from parsers.detect import load_and_parse
 from parsers.validate import _valid_slot
 from parsers.format_cca import parse_csv as cca_parse_csv
+from parsers.format_a import parse as format_a_parse
 from app import (
     _expand_bracket_games, _build_wpl_game_tree,
     team_matches, describe_slot, _SLOT_LIKE_RE, _tournament_meta,
@@ -326,6 +327,79 @@ CCA_OPP_CHECKS = [
     #   W#/L# path: W#15 is team's slot (win of 15 in my_ids), opp must not be "W#15"
     ("cca_18u.csv", "18U Boys", "18U", "trojan cardinal", "18U-20", "L#16"),
 ]
+
+
+# ── Format A game-id collision test ──────────────────────────────────────────
+# Regression 1: Quiksilver Cup 2026 reused game number "16UB09" for two different
+# games WITHIN THE SAME SHEET (an organizer typo — one block's numbering should
+# have started at 10). format_a.py's dedup was a flat seen_ids set that silently
+# dropped the second occurrence, which would corrupt pool standings (missing 1 of
+# 3 round-robin results). Fixed by porting format_b.py's collision-rename
+# (-B/-C suffix) pattern into format_a.py.
+#
+# Regression 2 (found while fixing #1): that same-sheet rename logic, if applied
+# globally, wrongly resurrects garbage rows from stale duplicate DIVISION SHEETS.
+# 2025 Newport Spring Invite has both "18U BOYS PLATINUM-23 TEAMS" (real, current)
+# and "18U BOYS PLATINUM-22 TEAMS" (an older stale draft with unfilled slots like
+# "4-"/"21-") — both reuse game_id "18Bpt01". The ORIGINAL cross-sheet global dedup
+# correctly dropped the stale sheet's row (relying on the real sheet appearing
+# first in workbook order); a naive same-ID-different-teams-anywhere rename would
+# have kept the "4-" vs "21-" garbage row as a "new" game. Fix: only rename when
+# the collision is within the SAME sheet; cross-sheet collisions still drop silently.
+
+def test_format_a_id_collision() -> int:
+    """Same game_id + different teams, within ONE sheet: both games must survive
+    (second renamed with a -B suffix). Same game_id across DIFFERENT sheets
+    (stale duplicate division tab) must still silently drop the second, keeping
+    only the first (real) sheet's data. True duplicates (same id, same teams,
+    same sheet) must collapse to one."""
+    import openpyxl
+
+    failures = 0
+    print("\nFormat A game-id collision handling")
+
+    wb = openpyxl.Workbook()
+    ws1 = wb.active
+    ws1.title = "16U BOYS"
+    rows = [
+        (datetime(2026, 7, 10), datetime(2026, 7, 10, 8, 0).time(), "EL MODENA HS", "16UB09",
+         "E1-IMPERIAL", None, "E2-MISSION", None, "", "16U_BOYS"),
+        (datetime(2026, 7, 10), datetime(2026, 7, 10, 9, 0).time(), "BUENA PARK HS", "16UB09",
+         "B1-LA JOLLA UNITED", None, "B3-COMMERCE", None, "", "16U_BOYS"),
+        # True duplicate: same id, same teams, same sheet — must collapse to 1
+        (datetime(2026, 7, 10), datetime(2026, 7, 10, 8, 0).time(), "EL MODENA HS", "16UB09",
+         "E1-IMPERIAL", None, "E2-MISSION", None, "", "16U_BOYS"),
+    ]
+    for r in rows:
+        ws1.append(r)
+
+    # Second sheet: same game_id as a real game above, but garbage/unresolved
+    # team text — simulates a stale duplicate division tab (Newport pattern).
+    ws2 = wb.create_sheet("16U BOYS-OLD DRAFT")
+    ws2.append((datetime(2026, 7, 10), datetime(2026, 7, 10, 8, 0).time(), "EL MODENA HS", "16UB09",
+                "4-", None, "21-", None, "", "16U_BOYS"))
+
+    games = format_a_parse(wb)
+    ids = [g["game_id"] for g in games]
+
+    ok = _check("same-sheet collision: both distinct games survive (2, not 1)",
+                len([g for g in games if g["sheet"] == "16U BOYS"]) == 2,
+                f"got {len(games)} total: {ids}")
+    if not ok: failures += 1
+
+    ok = _check("original id preserved for first occurrence", "16UB09" in ids, f"ids={ids}")
+    if not ok: failures += 1
+
+    ok = _check("same-sheet collision renamed with -B suffix, not dropped",
+                "16UB09-B" in ids, f"ids={ids}")
+    if not ok: failures += 1
+
+    ok = _check("cross-sheet collision (stale draft tab) silently dropped, not renamed",
+                not any(g["sheet"] == "16U BOYS-OLD DRAFT" for g in games),
+                f"ids={ids}, sheets={[g['sheet'] for g in games]}")
+    if not ok: failures += 1
+
+    return failures
 
 
 def test_cca_opponent_slots() -> int:
@@ -635,6 +709,11 @@ def main():
             total_failures += _run_championship_team(
                 sheet, team, anchor, min_d, max_d, min_e, min_t, min_s
             )
+
+    print("\n" + "=" * 60)
+    print("Format A game-id collision test (Quiksilver Cup regression guard)")
+    print("=" * 60)
+    total_failures += test_format_a_id_collision()
 
     print("\n" + "=" * 60)
     print("CCA opponent-slot tests (self-reference regression guard)")

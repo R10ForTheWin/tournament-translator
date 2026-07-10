@@ -13,7 +13,12 @@ SKIP_SHEETS = {
 
 def parse(wb) -> list[dict]:
     games = []
-    seen_ids: dict[str, str] = {}   # game_id -> white_team of first occurrence
+    # game_id -> (white_team, sheet_name) of first occurrence. Dedup stays GLOBAL
+    # across sheets (Format A workbooks often carry stale duplicate/draft division
+    # sheets — e.g. "18U BOYS PLATINUM-22 TEAMS" alongside the real "-23 TEAMS" —
+    # and rely on the first, real occurrence winning; cross-sheet collisions must
+    # still be silently dropped, not renamed).
+    seen_ids: dict[str, tuple[str, str]] = {}
     collision_count: dict[str, int] = {}  # base id -> # of extra occurrences so far
     for sheet_name in wb.sheetnames:
         if sheet_name.upper() in {s.upper() for s in SKIP_SHEETS}:
@@ -38,16 +43,19 @@ def parse(wb) -> list[dict]:
             white_team = str(white).strip()
 
             if gid not in seen_ids:
-                seen_ids[gid] = white_team
-            elif seen_ids[gid] != white_team:
-                # Same ID, different teams — organizer reused an ID by mistake.
-                # Rename to preserve this game instead of silently dropping it.
+                seen_ids[gid] = (white_team, sheet_name)
+            elif seen_ids[gid] == (white_team, sheet_name):
+                continue  # true duplicate (same id, same teams, same sheet) — skip
+            elif seen_ids[gid][1] != sheet_name:
+                continue  # collision from a different sheet (stale/duplicate division tab) — skip
+            else:
+                # Same ID, different teams, SAME sheet — organizer reused an ID by
+                # mistake within one authoritative schedule. Rename to preserve
+                # this game instead of silently dropping it.
                 n = collision_count.get(gid, 0) + 1
                 collision_count[gid] = n
                 gid = f"{gid}-{chr(ord('B') + n - 1)}"
-                seen_ids[gid] = white_team
-            else:
-                continue  # true duplicate (same ID, same teams) — skip
+                seen_ids[gid] = (white_team, sheet_name)
 
             games.append({
                 "date":       date_val.date(),
