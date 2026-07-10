@@ -1805,9 +1805,10 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
 
       lastPathGroup = pathCond;
 
-      // Day-change divider within a column (e.g. win path = Friday, lose path = Saturday)
-      // TBD stubs have no real date — never trigger a spurious "TBD" divider.
-      const cardDay = (g.date && !g.tbd_stub) ? g.date.split(',')[0].trim() : null;
+      // Day-change divider within a column (e.g. win path = Friday, lose path = Saturday).
+      // TBD stubs now carry a real date too (opponent unresolved, day is not),
+      // so they participate in the day-header divider like any other card.
+      const cardDay = g.date ? g.date.split(',')[0].trim() : null;
       if (lastCardDay && cardDay && lastCardDay !== cardDay) {
         const dayDiv = document.createElement('div');
         dayDiv.className = 'bracket-day-header';
@@ -2304,18 +2305,20 @@ function buildResultCard(g, ourName, tournamentId) {
 function buildUpcomingCard(g, tournamentId, team, ourName) {
   const card = document.createElement('div');
   if (g.tbd_stub) {
-    // A game we know is coming (fixed-count format) but can't identify yet —
-    // opponent depends on results not in yet. Deliberately minimal: no header
-    // badge (game_id isn't real), no comments/live-score/next-game sections.
+    // A game we know is coming (fixed-count format) and know the DAY of, but
+    // can't identify the opponent/time/location yet — those depend on
+    // earlier results. Deliberately minimal: no header badge (game_id isn't
+    // real), no comments/live-score/next-game sections.
     card.className = 'game-card placeholder';
+    const dayName = g.date ? g.date.split(',')[0] : null;
     card.innerHTML = `
       <div class="game-card-header">
         <div class="game-card-meta">
-          <div class="game-card-datetime">Game ${g.game_num ?? ''}</div>
+          <div class="game-card-datetime">${dayName || `Game ${g.game_num ?? ''}`}</div>
         </div>
       </div>
       <div class="game-card-body">
-        <div class="tbd-stub-msg">Opponent, time &amp; location TBD — depends on today's results</div>
+        <div class="tbd-stub-msg">Opponent, time &amp; location TBD — set once earlier results are in</div>
       </div>`;
     return card;
   }

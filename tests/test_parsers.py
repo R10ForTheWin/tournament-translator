@@ -609,6 +609,14 @@ def test_tbd_stub_placeholders() -> int:
                     f"got {[(g['game_id'], g.get('tbd_stub')) for g in pre_upcoming]}")
         if not ok: failures += 1
 
+        # T2's row already has a real date (Jul 11) in the sheet even though its
+        # opponent isn't resolvable yet -- the stub must surface that day, not a
+        # blank "TBD", so parents know which day the game is on.
+        ok = _check("pre-results: stub shows T2's real day (Saturday, Jul 11), not a blank TBD",
+                    stubs and stubs[0].get("date") == "Saturday, Jul 11",
+                    f"got date={stubs[0].get('date') if stubs else None!r}")
+        if not ok: failures += 1
+
         post = _fetch(round1_played=True)
         post_played = post.get("played", [])
         post_upcoming = post.get("upcoming", [])

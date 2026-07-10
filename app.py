@@ -1479,6 +1479,21 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
     return extras
 
 
+def _literal_team_count(sheet_games: list) -> int:
+    """Count distinct real (non-slot, non-composite) team names in a sheet."""
+    teams: set = set()
+    for g in sheet_games:
+        for slot in (g["white_team"], g["dark_team"]):
+            # Strip the pool-position prefix FIRST ("B2-Trojan Cardinal" is a
+            # permanent, real name in this format, not an unresolved slot) —
+            # only check slot-likeness on what's left after stripping.
+            name = strip_prefix(slot.strip()).strip()
+            if not name or len(name) < 2 or _SLOT_LIKE_RE.match(name) or _WL_SLOT_RE.match(name):
+                continue
+            teams.add(name.upper())
+    return len(teams)
+
+
 def _expected_games_per_team(sheet_games: list) -> int | None:
     """If every team in this sheet's division plays the same total number of
     games, return that fixed count. True for round-robin + crossover formats
@@ -1494,21 +1509,38 @@ def _expected_games_per_team(sheet_games: list) -> int | None:
     """
     if not sheet_games:
         return None
-    game_ids = {g["game_id"] for g in sheet_games}
-    teams: set = set()
-    for g in sheet_games:
-        for slot in (g["white_team"], g["dark_team"]):
-            # Strip the pool-position prefix FIRST ("B2-Trojan Cardinal" is a
-            # permanent, real name in this format, not an unresolved slot) —
-            # only check slot-likeness on what's left after stripping.
-            name = strip_prefix(slot.strip()).strip()
-            if not name or len(name) < 2 or _SLOT_LIKE_RE.match(name) or _WL_SLOT_RE.match(name):
-                continue
-            teams.add(name.upper())
-    if not teams:
+    n_teams = _literal_team_count(sheet_games)
+    if not n_teams:
         return None
-    ratio = (len(game_ids) * 2) / len(teams)
+    game_ids = {g["game_id"] for g in sheet_games}
+    ratio = (len(game_ids) * 2) / n_teams
     return int(ratio) if ratio == int(ratio) else None
+
+
+def _expected_games_per_team_by_day(sheet_games: list) -> dict | None:
+    """Same fixed-count logic as _expected_games_per_team, but broken down by
+    calendar date. Every date's rows already carry a real date/time/location
+    in this format even before an opponent is resolvable, so a "games
+    remaining" placeholder can say WHICH DAY it falls on without needing to
+    know who or where. Returns {date: expected_games_that_day} or None if any
+    date's breakdown doesn't divide evenly (bail rather than guess)."""
+    if not sheet_games:
+        return None
+    n_teams = _literal_team_count(sheet_games)
+    if not n_teams:
+        return None
+    by_date: dict = {}
+    for g in sheet_games:
+        d = g.get("date")
+        if d:
+            by_date.setdefault(d, set()).add(g["game_id"])
+    result: dict = {}
+    for d, ids in by_date.items():
+        ratio = (len(ids) * 2) / n_teams
+        if ratio != int(ratio):
+            return None
+        result[d] = int(ratio)
+    return result
 
 
 def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> list:
@@ -4156,30 +4188,45 @@ def api_games(tournament_id, team):
     # candidate happens to appear first in the sheet when the team's actual
     # pool rank isn't known yet). Never modifies existing games or resolution
     # logic — purely appends stub entries to fill the known gap in count.
+    #
+    # Broken down by calendar date (not just a flat total) because every row
+    # in this format already carries a real date/time/location even before an
+    # opponent is resolvable — so a stub can say WHICH DAY it falls on (e.g.
+    # "Saturday, Jul 11") without knowing who or where, which is what parents
+    # actually need to plan around.
     if display_mode == "flat_schedule" and my_games:
         _stub_sheet = my_games[0].get("sheet", "")
-        _expected_total = _expected_games_per_team(div_map.get(_stub_sheet, []))
-        _known_total = len(played_out) + len(upcoming_out)
-        if _expected_total and _known_total < _expected_total:
+        _expected_by_day = _expected_games_per_team_by_day(div_map.get(_stub_sheet, []))
+        if _expected_by_day:
+            _shown_ids = {g["game_id"] for g in played_out + upcoming_out if not g.get("tbd_stub")}
+            _known_by_day: dict = {}
+            for g in my_games:
+                if g["game_id"] in _shown_ids and g.get("date"):
+                    _known_by_day[g["date"]] = _known_by_day.get(g["date"], 0) + 1
             _next_gn = max([g["game_num"] for g in upcoming_out if g.get("game_num")]
                             + [g["game_num"] for g in played_out if g.get("game_num")]
                             + [0]) + 1
-            for _i in range(_expected_total - _known_total):
-                upcoming_out.append({
-                    "game_id":        f"__tbd_{_stub_sheet}_{_known_total + _i + 1}",
-                    "date":           "TBD",
-                    "time":           "TBD",
-                    "location":       "TBD",
-                    "opponent":       "TBD",
-                    "your_color":     None,
-                    "game_num":       _next_gn + _i,
-                    "is_alternative": False,
-                    "path":           None,
-                    "placeholder":    True,
-                    "tbd_stub":       True,
-                    "our_record":     None,
-                    "opp_record":     None,
-                })
+            _stub_n = 0
+            for _d in sorted(_expected_by_day):
+                _shortfall = _expected_by_day[_d] - _known_by_day.get(_d, 0)
+                for _ in range(max(0, _shortfall)):
+                    _stub_n += 1
+                    upcoming_out.append({
+                        "game_id":        f"__tbd_{_stub_sheet}_{_stub_n}",
+                        "date":           _fmt_date(_d),
+                        "time":           "TBD",
+                        "location":       "TBD",
+                        "opponent":       "TBD",
+                        "your_color":     None,
+                        "game_num":       _next_gn,
+                        "is_alternative": False,
+                        "path":           None,
+                        "placeholder":    True,
+                        "tbd_stub":       True,
+                        "our_record":     None,
+                        "opp_record":     None,
+                    })
+                    _next_gn += 1
 
     parse_format = games[0].get("format") if games else None
     return jsonify({
