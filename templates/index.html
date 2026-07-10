@@ -1747,13 +1747,40 @@ function canonicalToStaircase(cb) {
   return [...(cb.guaranteed_games || []), ...(cb.possible_games || [])];
 }
 
+// A plain vertical list — one card per game, in order, normal page scroll.
+// Used whenever a team's schedule never branches (see buildBracketView):
+// no horizontal swipe to discover, no hint text needed, because scrolling
+// down is the only gesture anyone would try.
+function buildFlatVerticalList(allGames, tournamentId, team, ourName) {
+  const container = document.createElement('div');
+  const ordered = [...allGames].sort((a, b) => (a.game_num || 0) - (b.game_num || 0));
+  let lastDay = null;
+  ordered.forEach(g => {
+    const day = g.date ? g.date.split(',')[0].trim() : null;
+    if (day && day !== lastDay) {
+      const dayHdr = document.createElement('div');
+      dayHdr.className = 'bracket-day-header';
+      dayHdr.textContent = day;
+      container.appendChild(dayHdr);
+      lastDay = day;
+    }
+    const numHdr = document.createElement('div');
+    numHdr.className = 'bracket-game-num-header';
+    numHdr.textContent = `Game ${g.game_num ?? ''}`;
+    container.appendChild(numHdr);
+
+    const cardG = Object.assign({}, g, { path: null, scenarios: null });
+    const card = cardG.result
+      ? buildResultCard(cardG, ourName, tournamentId)
+      : buildUpcomingCard(cardG, tournamentId, team, ourName);
+    container.appendChild(card);
+  });
+  return container;
+}
+
 function buildBracketView(allGames, tournamentId, team, ourName) {
   const _seenIds = new Set();
   allGames = allGames.filter(g => g.game_id && !_seenIds.has(g.game_id) && _seenIds.add(g.game_id));
-
-  const vw = window.innerWidth;
-  const CARD_W = vw >= 1100 ? 480 : vw >= 860 ? 420 : 340;
-  const GAP    = 320;
 
   // Group by column (new field), falling back to game_num
   const columns = {};
@@ -1763,6 +1790,21 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
     columns[col].push(g);
   });
   const colNums = Object.keys(columns).map(Number).sort((a, b) => a - b);
+
+  // If this schedule never branches (every column has exactly one game, no
+  // win/lose alternate paths), the horizontally-scrolling staircase is
+  // unneeded complexity built for a shape that doesn't apply here — round
+  // robin + crossover formats (Quiksilver Cup) never branch. Use a plain
+  // vertical list instead; nothing to discover, nothing to explain.
+  const hasBranching = colNums.some(col => columns[col].length > 1)
+    || allGames.some(g => g.path === 'win' || g.path === 'lose');
+  if (!hasBranching) {
+    return buildFlatVerticalList(allGames, tournamentId, team, ourName);
+  }
+
+  const vw = window.innerWidth;
+  const CARD_W = vw >= 1100 ? 480 : vw >= 860 ? 420 : 340;
+  const GAP    = 320;
 
   // Outer container is plain, ordinary page content — never horizontally
   // scrollable, never subject to any touch-action override. Only `wrap`
