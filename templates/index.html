@@ -41,7 +41,12 @@
       background: var(--bg);
       color: var(--dark);
       min-height: 100vh;
-      padding-bottom: calc(32px + env(safe-area-inset-bottom));
+      /* Diagnostic (?scrolldebug=1) showed body.scrollHeight only ~100-120px
+         taller than window.innerHeight on short pages (e.g. one game card +
+         the Sunday note) -- iOS Safari can be unreliable engaging scroll for
+         a margin that marginal. Force real breathing room so the page is
+         unambiguously scrollable rather than teetering at the edge. */
+      padding-bottom: calc(220px + env(safe-area-inset-bottom));
     }
 
     /* ── Hero (home view only) ── */
