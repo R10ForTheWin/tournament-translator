@@ -510,10 +510,14 @@ def test_game_num_chronological_order() -> int:
     ws = wb.active
     ws.title = "16U BOYS-18 TEAMS"
     rows = [
+        # Both Pool B games played (Cardinal wins both) so pool_rank=1 is known --
+        # otherwise the composite Round-2 slot below is correctly suppressed as
+        # an unresolved guess (see _expand_bracket_games) and wouldn't appear at
+        # all, which is the right behavior but not what this test is checking.
         (datetime(2026, 7, 10), datetime(2026, 7, 10, 11, 0).time(), "BUENA PARK HS", "16UB12",
-         "B2-TROJAN CARDINAL", None, "B3-COMMERCE", None, "", "16U_BOYS"),
+         "B2-TROJAN CARDINAL", 10, "B3-COMMERCE", 5, "", "16U_BOYS"),
         (datetime(2026, 7, 10), datetime(2026, 7, 10, 14, 0).time(), "BUENA PARK HS", "16UB15",
-         "B1-LA JOLLA UNITED", None, "B2-TROJAN CARDINAL", None, "", "16U_BOYS"),
+         "B1-LA JOLLA UNITED", 6, "B2-TROJAN CARDINAL", 9, "", "16U_BOYS"),
         (datetime(2026, 7, 11), datetime(2026, 7, 11, 9, 0).time(), "EL MODENA HS", "16UB21",
          "H1(1stB)-", None, "H3(1stF)-", None, "", "16U_BOYS"),
     ]
@@ -543,6 +547,77 @@ def test_game_num_chronological_order() -> int:
             ok = _check("game_num order matches chronological order (Fri 11am, Fri 2pm, Sat 9am)",
                         order_ids == ["16UB12", "16UB15", "16UB21"], f"got order={order_ids}")
             if not ok: failures += 1
+    finally:
+        appmod.find_excel = orig_find_excel
+        appmod._parse_cache.clear()
+
+    return failures
+
+
+# ── "Games remaining" TBD stubs (fixed-game-count formats only) ──────────────
+# Feature: for round-robin + crossover formats where every team plays the same
+# total number of games (Quiksilver Cup: always 5), show generic "TBD" stub
+# cards for games not yet reachable via slot resolution instead of either
+# nothing, or _expand_bracket_games' old behavior of guessing a single specific
+# composite match (whichever candidate happened to appear first in the sheet)
+# before the team's actual pool rank was known. Must NOT fire for elimination
+# formats (WPL/Kap7) where game count varies by win/loss -- _expected_games_per_team
+# returns None there and no stubs should ever appear.
+
+def test_tbd_stub_placeholders() -> int:
+    """Minimal 2-team, 2-game division: 1 literal round-robin game + 1 Round-2
+    composite slot referencing that same pool. Expected games/team = 2."""
+    import io as _io
+    import json as _json
+    import openpyxl
+
+    failures = 0
+    print("\nTBD stub placeholders (fixed-game-count formats)")
+
+    def _make_wb(round1_played: bool):
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "MINI DIV"
+        r1_scores = (10, 5) if round1_played else (None, None)
+        ws.append((datetime(2026, 7, 10), datetime(2026, 7, 10, 11, 0).time(), "VENUE", "T1",
+                   "P1-TROJAN CARDINAL", r1_scores[0], "P2-TEAM B", r1_scores[1], "", "MINI"))
+        ws.append((datetime(2026, 7, 11), datetime(2026, 7, 11, 11, 0).time(), "VENUE", "T2",
+                   "X1(1stP)-", None, "X2(2ndP)-", None, "", "MINI"))
+        buf = _io.BytesIO(); wb.save(buf)
+        return buf.getvalue()
+
+    import app as appmod
+    orig_find_excel = appmod.find_excel
+
+    def _fetch(round1_played: bool):
+        xlsx_bytes = _make_wb(round1_played)
+        appmod.find_excel = lambda tid: _io.BytesIO(xlsx_bytes) if tid == "quiksilver-cup" else orig_find_excel(tid)
+        appmod._parse_cache.clear()
+        with appmod.app.test_client() as c:
+            r = c.get("/api/games/quiksilver-cup/Trojan%20Cardinal")
+            return _json.loads(r.data)
+
+    try:
+        pre = _fetch(round1_played=False)
+        pre_upcoming = pre.get("upcoming", [])
+        ok = _check("pre-results: 1 real game + 1 TBD stub = 2 total (expected games/team)",
+                    len(pre_upcoming) == 2, f"got {[g['game_id'] for g in pre_upcoming]}")
+        if not ok: failures += 1
+        stubs = [g for g in pre_upcoming if g.get("tbd_stub")]
+        ok = _check("pre-results: exactly 1 stub, no misleading specific guess for T2",
+                    len(stubs) == 1 and "T2" not in [g["game_id"] for g in pre_upcoming],
+                    f"got {[(g['game_id'], g.get('tbd_stub')) for g in pre_upcoming]}")
+        if not ok: failures += 1
+
+        post = _fetch(round1_played=True)
+        post_played = post.get("played", [])
+        post_upcoming = post.get("upcoming", [])
+        ok = _check("post-results: T2 now resolves to a real game, no stub needed",
+                    len(post_played) == 1 and len(post_upcoming) == 1
+                    and post_upcoming[0]["game_id"] == "T2" and not post_upcoming[0].get("tbd_stub"),
+                    f"played={[g['game_id'] for g in post_played]} "
+                    f"upcoming={[(g['game_id'], g.get('tbd_stub')) for g in post_upcoming]}")
+        if not ok: failures += 1
     finally:
         appmod.find_excel = orig_find_excel
         appmod._parse_cache.clear()
@@ -929,6 +1004,11 @@ def main():
     print("game_num ascending order (generic, cross-format checklist guard)")
     print("=" * 60)
     total_failures += test_game_num_ascending_order()
+
+    print("\n" + "=" * 60)
+    print("TBD stub placeholders (fixed-game-count formats)")
+    print("=" * 60)
+    total_failures += test_tbd_stub_placeholders()
 
     print("\n" + "=" * 60)
     print("CCA opponent-slot tests (self-reference regression guard)")

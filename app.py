@@ -1344,15 +1344,6 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             reachable[n] = (g, d > 0, d)
 
     extras = []
-    # Only deduplicate true composite slots (e.g. "K4(1stG)") — simple finish slots
-    # like "1stE-" can appear in multiple distinct games (WPL has 2 Sunday games per finish).
-    composite_added: set = set()
-    for g in direct_games:
-        for slot in (g["white_team"], g["dark_team"]):
-            s = slot.strip()
-            cm = _COMPOSITE_SLOT_RE.search(s)
-            if cm and cm.group(1).upper() in groups:
-                composite_added.add(cm.group(1).upper())
     changed = True
     while changed:
         changed = False
@@ -1377,10 +1368,14 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     rank = int(rank_m.group(1)) if rank_m else None
                     if rank and grp in team_pool_ranks and team_pool_ranks[grp] != rank:
                         break
-                    # For true composite slots, show only one per group to avoid clutter.
-                    # Simple finish slots (1stE-, 2ndE-, …) are allowed multiple times.
+                    # For true composite slots, only show one once our rank in this
+                    # group is actually known. Before that, every candidate slot
+                    # (1st/2nd/3rd) is equally possible — picking whichever happens
+                    # to appear first in the sheet would be a misleading guess, not
+                    # a genuine narrowing. Suppress all of them; the caller shows a
+                    # neutral "games remaining" count instead (_expected_games_per_team).
                     is_composite = bool(_COMPOSITE_SLOT_RE.search(s))
-                    if is_composite and grp not in team_pool_ranks and grp in composite_added:
+                    if is_composite and grp not in team_pool_ranks:
                         break
                     add_pool_rank = rank
                     add_grp = grp
@@ -1470,7 +1465,6 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     g_copy["pool_rank"] = add_pool_rank
                 if add_grp:
                     g_copy["pool_rank_group"] = add_grp
-                    composite_added.add(add_grp)
                 extras.append(g_copy)
                 seen_ids.add(g["game_id"])
                 n = _game_num(g["game_id"])
@@ -1483,6 +1477,38 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                 changed = True
 
     return extras
+
+
+def _expected_games_per_team(sheet_games: list) -> int | None:
+    """If every team in this sheet's division plays the same total number of
+    games, return that fixed count. True for round-robin + crossover formats
+    (Quiksilver Cup, CCA pool play) where the bracket size is fixed in
+    advance. False for elimination formats (WPL, Kap7) where winning or
+    losing changes how many games a team plays, so there is no single
+    "expected total" — callers must get None back and skip any
+    placeholder-count logic rather than guess.
+
+    Heuristic: (distinct game_ids * 2 team-slots) / (distinct literal team
+    names) must divide evenly. Composite/finish-slot placeholders are
+    excluded from the team count since they aren't real names yet.
+    """
+    if not sheet_games:
+        return None
+    game_ids = {g["game_id"] for g in sheet_games}
+    teams: set = set()
+    for g in sheet_games:
+        for slot in (g["white_team"], g["dark_team"]):
+            # Strip the pool-position prefix FIRST ("B2-Trojan Cardinal" is a
+            # permanent, real name in this format, not an unresolved slot) —
+            # only check slot-likeness on what's left after stripping.
+            name = strip_prefix(slot.strip()).strip()
+            if not name or len(name) < 2 or _SLOT_LIKE_RE.match(name) or _WL_SLOT_RE.match(name):
+                continue
+            teams.add(name.upper())
+    if not teams:
+        return None
+    ratio = (len(game_ids) * 2) / len(teams)
+    return int(ratio) if ratio == int(ratio) else None
 
 
 def _build_wpl_game_tree(team: str, division_games: list, anchor_date=None) -> list:
@@ -4120,6 +4146,40 @@ def api_games(tournament_id, team):
         bracket_confidence, bracket_warnings, display_mode,
         my_games[0].get("sheet", "") if my_games else "",
     ) if wpl_bracket else None
+
+    # Additive-only "games remaining" placeholders: for fixed-game-count formats
+    # (round-robin + crossover, e.g. Quiksilver Cup) where every team plays the
+    # same total number of games, show generic TBD stubs for games not yet
+    # reachable via slot resolution — instead of either showing nothing, or a
+    # single misleadingly-specific guess (see _expand_bracket_games' "show only
+    # one composite slot per group" anti-clutter rule, which picks whichever
+    # candidate happens to appear first in the sheet when the team's actual
+    # pool rank isn't known yet). Never modifies existing games or resolution
+    # logic — purely appends stub entries to fill the known gap in count.
+    if display_mode == "flat_schedule" and my_games:
+        _stub_sheet = my_games[0].get("sheet", "")
+        _expected_total = _expected_games_per_team(div_map.get(_stub_sheet, []))
+        _known_total = len(played_out) + len(upcoming_out)
+        if _expected_total and _known_total < _expected_total:
+            _next_gn = max([g["game_num"] for g in upcoming_out if g.get("game_num")]
+                            + [g["game_num"] for g in played_out if g.get("game_num")]
+                            + [0]) + 1
+            for _i in range(_expected_total - _known_total):
+                upcoming_out.append({
+                    "game_id":        f"__tbd_{_stub_sheet}_{_known_total + _i + 1}",
+                    "date":           "TBD",
+                    "time":           "TBD",
+                    "location":       "TBD",
+                    "opponent":       "TBD",
+                    "your_color":     None,
+                    "game_num":       _next_gn + _i,
+                    "is_alternative": False,
+                    "path":           None,
+                    "placeholder":    True,
+                    "tbd_stub":       True,
+                    "our_record":     None,
+                    "opp_record":     None,
+                })
 
     parse_format = games[0].get("format") if games else None
     return jsonify({
