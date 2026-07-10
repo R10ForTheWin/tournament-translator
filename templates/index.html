@@ -2586,6 +2586,55 @@ async function submitFeedback() {
     btn.disabled = false;
   }
 }
+
+// ── Scroll dead-zone diagnostic overlay ──────────────────────────────────────
+// Only active with ?scrolldebug=1 in the URL. Parents never see this.
+// Shows, on every tap, exactly which DOM element is at that point and its
+// scroll-relevant properties, plus overall page scroll dimensions — so the
+// dead-zone bug can be diagnosed from a screenshot without connecting the
+// phone to a computer.
+(function() {
+  if (new URLSearchParams(window.location.search).get('scrolldebug') !== '1') return;
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:rgba(0,150,0,0.95);'
+    + 'color:#fff;font:11px/1.4 monospace;padding:6px 8px;white-space:pre-wrap;pointer-events:none;'
+    + 'max-height:45vh;overflow:auto;';
+  document.body.appendChild(box);
+
+  function describe(el) {
+    if (!el) return '(none)';
+    const parts = [];
+    let node = el;
+    for (let i = 0; i < 6 && node && node !== document.body; i++) {
+      const cs = getComputedStyle(node);
+      parts.push(`${node.tagName.toLowerCase()}${node.className ? '.' + String(node.className).replace(/\s+/g, '.') : ''}`
+        + ` [h=${node.clientHeight} sh=${node.scrollHeight} ovX=${cs.overflowX} ovY=${cs.overflowY} ta=${cs.touchAction} pe=${cs.pointerEvents}]`);
+      node = node.parentElement;
+    }
+    return parts.join('\n  <- ');
+  }
+
+  function report(label, x, y) {
+    const el = document.elementFromPoint(x, y);
+    box.textContent =
+      `${label} at (${Math.round(x)}, ${Math.round(y)})\n` +
+      `window.innerHeight=${window.innerHeight}  body.scrollHeight=${document.body.scrollHeight}  ` +
+      `scrollY=${window.scrollY}  docEl.scrollHeight=${document.documentElement.scrollHeight}\n` +
+      `element chain (innermost first):\n  <- ${describe(el)}`;
+  }
+
+  document.addEventListener('touchstart', e => {
+    const t = e.touches[0];
+    report('touchstart', t.clientX, t.clientY);
+  }, { capture: true, passive: true });
+
+  document.addEventListener('touchmove', e => {
+    const t = e.touches[0];
+    report('touchmove', t.clientX, t.clientY);
+  }, { capture: true, passive: true });
+
+  report('initial load', window.innerWidth / 2, window.innerHeight / 2);
+})();
 </script>
 </body>
 </html>
