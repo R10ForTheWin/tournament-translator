@@ -1758,6 +1758,14 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
   });
   const colNums = Object.keys(columns).map(Number).sort((a, b) => a - b);
 
+  // Outer container is plain, ordinary page content — never horizontally
+  // scrollable, never subject to any touch-action override. Only `wrap`
+  // (holding just the bracket columns) is the special overflow-x region.
+  // Anything appended after the bracket itself (e.g. the Sunday note) goes
+  // on the outer container as a sibling, NOT inside `wrap`, so it can never
+  // end up nested inside the touch-handling quirks of the scroll region.
+  const outer = document.createElement('div');
+
   const wrap = document.createElement('div');
   wrap.className = 'bracket-stair-wrap';
 
@@ -1835,15 +1843,18 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
   });
 
   wrap.appendChild(inner);
+  outer.appendChild(wrap);
 
   // Sunday note — show when every Sunday upcoming game is still a placeholder,
   // so parents know the schedule will fill in automatically (not an app error).
+  // Appended to `outer`, NOT `wrap` — this is plain page content, not part of
+  // the horizontally-scrollable bracket region.
   const sundayUpcoming = allGames.filter(g => !g.result && g.date && g.date.startsWith('Sunday'));
   if (sundayUpcoming.length > 0 && sundayUpcoming.every(g => g.placeholder !== false)) {
     const sunNote = document.createElement('div');
     sunNote.className = 'sunday-bracket-note';
     sunNote.textContent = 'Sunday bracket games are based on expected tournament format. Times, locations, and opponents will update automatically when the tournament publishes the Sunday schedule.';
-    wrap.appendChild(sunNote);
+    outer.appendChild(sunNote);
   }
 
   requestAnimationFrame(() => {
@@ -1933,7 +1944,7 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
     _applyPZ();
   }, { passive: false });
 
-  return wrap;
+  return outer;
 }
 
 function drawBracketLines(inner, rounds, roundNums) {
