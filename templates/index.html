@@ -53,7 +53,10 @@
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
       background: var(--bg);
       color: var(--dark);
-      padding-bottom: env(safe-area-inset-bottom);
+      /* #feedback-btn is position:fixed, ~34px tall, sitting 20px off the
+         bottom -- without real clearance here the last real content (e.g.
+         the Sunday note) ends up flush against it, visually overlapping. */
+      padding-bottom: calc(90px + env(safe-area-inset-bottom));
     }
 
     /* ── Hero (home view only) ── */
