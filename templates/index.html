@@ -36,17 +36,24 @@
 
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
+    /* Background lives on html, not body -- so short pages still look fully
+       dark everywhere without body needing min-height: 100vh to fake it.
+       Diagnostic (?scrolldebug=1) traced the real scroll dead-zone here:
+       min-height: 100vh forced body's rendered height to match iOS Safari's
+       LARGEST possible viewport (address bar collapsed) whenever real content
+       was shorter than that -- creating a page that's only ambiguously
+       scrollable (a marginal few dozen px, exactly the address-bar-collapse
+       amount) instead of either clearly scrollable or cleanly not. Root
+       cause, not a recent regression -- this rule has been here since early
+       in the project; it just never got exercised by a page this short
+       before (Quiksilver Cup's early-tournament schedule is unusually sparse).
+       Letting body size to its actual content removes the ambiguity outright. */
+    html { background: var(--bg); }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
       background: var(--bg);
       color: var(--dark);
-      min-height: 100vh;
-      /* Diagnostic (?scrolldebug=1) showed body.scrollHeight only ~100-120px
-         taller than window.innerHeight on short pages (e.g. one game card +
-         the Sunday note) -- iOS Safari can be unreliable engaging scroll for
-         a margin that marginal. Force real breathing room so the page is
-         unambiguously scrollable rather than teetering at the edge. */
-      padding-bottom: calc(220px + env(safe-area-inset-bottom));
+      padding-bottom: env(safe-area-inset-bottom);
     }
 
     /* ── Hero (home view only) ── */
