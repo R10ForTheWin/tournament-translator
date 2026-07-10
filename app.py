@@ -3775,6 +3775,15 @@ def api_games(tournament_id, team):
             continue
         if _fmt_for_merge == "CCA":
             continue
+        # Only merge genuine bracket alternates (win/lose siblings of the same
+        # parent game) — never two independent real games, e.g. two round-robin
+        # pool games against different opponents on the same day. Without this,
+        # merging + the later self-heal split-back-out reassigns the split game
+        # to the end of the sequence instead of its correct chronological spot,
+        # scrambling game_num order relative to other days' games.
+        if not all(_raw_path(_g2) in ("win", "lose")
+                   for _n2 in _gns2 for _g2 in _by_gn2.get(_n2, [])):
+            continue
         # Check for time-range overlap between adjacent columns (sorted by game_num).
         # If B's earliest time <= A's latest time, they overlap → sequential rounds → skip.
         _gns_sorted = sorted(_gns2)

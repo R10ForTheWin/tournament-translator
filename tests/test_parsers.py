@@ -481,6 +481,75 @@ def test_composite_pool_rank_slot() -> int:
     return failures
 
 
+# ── game_num chronological-order bug (day-merge wrongly merging pool games) ──
+# Regression: found live on quiksilver-cup (zero games played yet). Trojan
+# Cardinal's schedule is 2 round-robin Pool B games on Friday (different
+# opponents, non-overlapping times) followed by one Saturday placeholder.
+# The "merge same-day pure-single-day columns" step merged the two independent
+# Friday games into one game_num (they're not bracket alternates, just two
+# separate real games), then the later self-heal step split them back apart
+# but appended the recovered game at the END of the sequence instead of
+# re-sorting chronologically -- result: Game 1 (Fri 11am), Game 2 (Sat
+# placeholder), Game 3 (Fri 2pm) -- Friday's second game displayed AFTER
+# Saturday's, despite being a full day earlier. Fixed by only allowing the
+# day-merge to combine groups that are genuine win/lose bracket alternates
+# (bracket_path in {"win","lose"}), never two independent scheduled games.
+
+def test_game_num_chronological_order() -> int:
+    """game_num must increase strictly in chronological (date, time) order for
+    a team's own real games -- Friday's games can never be numbered after a
+    Saturday placeholder."""
+    import io as _io
+    import json as _json
+    import openpyxl
+
+    failures = 0
+    print("\ngame_num chronological order (Quiksilver Cup Pool B shape)")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "16U BOYS-18 TEAMS"
+    rows = [
+        (datetime(2026, 7, 10), datetime(2026, 7, 10, 11, 0).time(), "BUENA PARK HS", "16UB12",
+         "B2-TROJAN CARDINAL", None, "B3-COMMERCE", None, "", "16U_BOYS"),
+        (datetime(2026, 7, 10), datetime(2026, 7, 10, 14, 0).time(), "BUENA PARK HS", "16UB15",
+         "B1-LA JOLLA UNITED", None, "B2-TROJAN CARDINAL", None, "", "16U_BOYS"),
+        (datetime(2026, 7, 11), datetime(2026, 7, 11, 9, 0).time(), "EL MODENA HS", "16UB21",
+         "H1(1stB)-", None, "H3(1stF)-", None, "", "16U_BOYS"),
+    ]
+    for r in rows:
+        ws.append(r)
+    buf = _io.BytesIO()
+    wb.save(buf)
+    xlsx_bytes = buf.getvalue()
+
+    import app as appmod
+    orig_find_excel = appmod.find_excel
+    def fake_find_excel(tid):
+        return _io.BytesIO(xlsx_bytes) if tid == "quiksilver-cup" else orig_find_excel(tid)
+    appmod.find_excel = fake_find_excel
+    appmod._parse_cache.clear()
+    try:
+        with appmod.app.test_client() as c:
+            r = c.get("/api/games/quiksilver-cup/Trojan%20Cardinal")
+            data = _json.loads(r.data)
+            games_by_id = {g["game_id"]: g for g in data.get("upcoming", []) + data.get("played", [])}
+
+            ok = _check("all 3 games present", len(games_by_id) == 3, f"got {list(games_by_id)}")
+            if not ok: failures += 1
+
+            order = sorted(games_by_id.values(), key=lambda g: g["game_num"])
+            order_ids = [g["game_id"] for g in order]
+            ok = _check("game_num order matches chronological order (Fri 11am, Fri 2pm, Sat 9am)",
+                        order_ids == ["16UB12", "16UB15", "16UB21"], f"got order={order_ids}")
+            if not ok: failures += 1
+    finally:
+        appmod.find_excel = orig_find_excel
+        appmod._parse_cache.clear()
+
+    return failures
+
+
 def test_cca_opponent_slots() -> int:
     """Verify _team_opp_slot returns the correct (non-self) opponent for CCA placeholder games.
 
@@ -798,6 +867,11 @@ def main():
     print("Composite pool-rank slot test (Quiksilver Cup regression guard)")
     print("=" * 60)
     total_failures += test_composite_pool_rank_slot()
+
+    print("\n" + "=" * 60)
+    print("game_num chronological order test (Quiksilver Cup regression guard)")
+    print("=" * 60)
+    total_failures += test_game_num_chronological_order()
 
     print("\n" + "=" * 60)
     print("CCA opponent-slot tests (self-reference regression guard)")
