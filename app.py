@@ -64,6 +64,9 @@ JO_QUALS_GID_16U     = "2019076064"
 JO_QUALS_TOURNAMENTS = {"jo-quals"}
 _JO_QUALS_SENTINEL   = "__jo_quals__"
 
+QUIKSILVER_SHEETS_ID  = "18yVkTqV4amoIyESXsB1RzZSs1TI0_EKQ"
+QUIKSILVER_GID_16U     = "472292980"
+
 TOURNAMENT_URLS = {
     "kap7-intl":      "",  # update before Jan 2027 tournament
     "kap7-cup":       "https://onedrive.live.com/:x:/g/personal/6f253ef3afcfe1c8/IQDxdebmKQFASaux2nx7kWcvASg2jqJRHO5Kj9EwKW4D82o?rtime=GrzV592c3kg&redeem=aHR0cHM6Ly8xZHJ2Lm1zL3gvYy82ZjI1M2VmM2FmY2ZlMWM4L0lRRHhkZWJtS1FGQVNhdXgybng3a1djdkFTZzJqcUpSSE81S2o5RXdLVzREODJvP2U9WEdNa1FB",
@@ -71,6 +74,8 @@ TOURNAMENT_URLS = {
     "newport-invite": "https://onedrive.live.com/download?resid=6F253EF3AFCFE1C8!66694&authkey=!AO8pyWY0qwL2sYE",
     "jo-quals":       "",  # update when schedule is posted
     "junior-olympics":"",  # update when schedule is posted
+    "quiksilver-cup":  (f"https://docs.google.com/spreadsheets/d/{QUIKSILVER_SHEETS_ID}"
+                         f"/export?format=xlsx&gid={QUIKSILVER_GID_16U}"),
 }
 
 PRESET_URL_TOURNAMENTS = WPL_TOURNAMENTS | {k for k, v in TOURNAMENT_URLS.items() if v}
@@ -122,6 +127,8 @@ KNOWN_TOURNAMENTS = [
      "date_start": date(2026, 5, 29), "date_end": date(2026, 5, 31)},
     {"id": "futures-super",   "name": "Futures Superfinal",     "dates": "Jun 26–28, 2026",
      "date_start": date(2026, 6, 26), "date_end": date(2026, 6, 28)},
+    {"id": "quiksilver-cup",  "name": "Quiksilver Cup",         "dates": "Jul 10–12, 2026",
+     "date_start": date(2026, 7, 10), "date_end": date(2026, 7, 12)},
     {"id": "junior-olympics", "name": "Junior Olympics",        "dates": "Jul 23–26, 2026",
      "date_start": date(2026, 7, 23), "date_end": date(2026, 7, 26)},
 ]

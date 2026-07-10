@@ -13,7 +13,8 @@ SKIP_SHEETS = {
 
 def parse(wb) -> list[dict]:
     games = []
-    seen_ids: set = set()
+    seen_ids: dict[str, str] = {}   # game_id -> white_team of first occurrence
+    collision_count: dict[str, int] = {}  # base id -> # of extra occurrences so far
     for sheet_name in wb.sheetnames:
         if sheet_name.upper() in {s.upper() for s in SKIP_SHEETS}:
             continue
@@ -34,15 +35,26 @@ def parse(wb) -> list[dict]:
                 continue
 
             gid = game_id.strip()
-            if gid in seen_ids:
-                continue
-            seen_ids.add(gid)
+            white_team = str(white).strip()
+
+            if gid not in seen_ids:
+                seen_ids[gid] = white_team
+            elif seen_ids[gid] != white_team:
+                # Same ID, different teams — organizer reused an ID by mistake.
+                # Rename to preserve this game instead of silently dropping it.
+                n = collision_count.get(gid, 0) + 1
+                collision_count[gid] = n
+                gid = f"{gid}-{chr(ord('B') + n - 1)}"
+                seen_ids[gid] = white_team
+            else:
+                continue  # true duplicate (same ID, same teams) — skip
+
             games.append({
                 "date":       date_val.date(),
                 "time":       time_val if hasattr(time_val, "hour") else None,
                 "location":   str(location).strip() if location else "TBD",
                 "game_id":    gid,
-                "white_team": str(white).strip(),
+                "white_team": white_team,
                 "white_score": _to_int(w_score),
                 "dark_team":  str(dark).strip(),
                 "dark_score": _to_int(d_score),
