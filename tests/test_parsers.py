@@ -550,6 +550,58 @@ def test_game_num_chronological_order() -> int:
     return failures
 
 
+# ── Generic game_num ordering guard (automates a checklist item, not a script) ──
+# feedback-new-tournament-checklist has always said, as a MANUAL step: "upcoming
+# game_nums are in ascending date+time order". The Quiksilver Cup game_num bug
+# (Friday's second game numbered after Saturday's placeholder) is exactly the
+# bug that checklist line exists to catch — and it wasn't actually run as a
+# concrete assertion before shipping, only eyeballed for crashes/self-references.
+# test_game_num_chronological_order (above) only reproduces that ONE shape.
+# This test makes the checklist item itself a permanent, generic check across
+# multiple tournament formats, so the same class of bug in a different shape
+# (not just this exact 2-Friday/1-Saturday case) still gets caught automatically.
+GAME_NUM_ORDER_CHECKS = [
+    # (tournament_id, team, sheet-or-None)
+    ("quiksilver-cup", "Trojan Cardinal", None),
+    ("jo-quals", "TROJAN CARDINAL A",  "18U Boys"),
+    ("jo-quals", "TROJAN GOLD B",       "18U Boys"),
+    ("jo-quals", "TROJAN CARDINAL (A)", "16U Boys"),
+    ("jo-quals", "TROJAN GOLD (B)",     "16U Boys"),
+    ("jo-quals", "TROJAN SILVER (C)",   "16U Boys"),
+]
+
+def test_game_num_ascending_order() -> int:
+    """For each checked team, the API already returns 'played' and 'upcoming'
+    sorted chronologically (my_games.sort() in api_games runs before game_num
+    is assigned) -- so within each list, game_num must be non-decreasing along
+    list order. A decrease means a later-dated game got a lower game_num than
+    an earlier one, i.e. exactly the Friday-after-Saturday bug."""
+    from app import app as _flask_app
+    import json as _json
+
+    failures = 0
+    print("\ngame_num ascending order (checklist-derived, cross-format)")
+
+    with _flask_app.test_client() as c:
+        for tid, team, sheet in GAME_NUM_ORDER_CHECKS:
+            url = f"/api/games/{tid}/{team}"
+            if sheet:
+                url += f"?sheet={sheet}"
+            r = c.get(url)
+            if r.status_code != 200:
+                print(f"  [SKIP] {tid}/{team}: status {r.status_code}")
+                continue
+            data = _json.loads(r.data)
+            for list_name in ("played", "upcoming"):
+                nums = [g["game_num"] for g in data.get(list_name, []) if g.get("game_num") is not None]
+                bad = [(a, b) for a, b in zip(nums, nums[1:]) if b < a]
+                ok = _check(f"{tid}/{team} [{list_name}]: game_num non-decreasing in list order",
+                            not bad, f"nums={nums}")
+                if not ok: failures += 1
+
+    return failures
+
+
 def test_cca_opponent_slots() -> int:
     """Verify _team_opp_slot returns the correct (non-self) opponent for CCA placeholder games.
 
@@ -872,6 +924,11 @@ def main():
     print("game_num chronological order test (Quiksilver Cup regression guard)")
     print("=" * 60)
     total_failures += test_game_num_chronological_order()
+
+    print("\n" + "=" * 60)
+    print("game_num ascending order (generic, cross-format checklist guard)")
+    print("=" * 60)
+    total_failures += test_game_num_ascending_order()
 
     print("\n" + "=" * 60)
     print("CCA opponent-slot tests (self-reference regression guard)")
