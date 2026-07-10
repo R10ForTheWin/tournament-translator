@@ -554,19 +554,26 @@ def test_game_num_chronological_order() -> int:
     return failures
 
 
-# ── "Games remaining" TBD stubs (fixed-game-count formats only) ──────────────
-# Feature: for round-robin + crossover formats where every team plays the same
-# total number of games (Quiksilver Cup: always 5), show generic "TBD" stub
-# cards for games not yet reachable via slot resolution instead of either
-# nothing, or _expand_bracket_games' old behavior of guessing a single specific
-# composite match (whichever candidate happened to appear first in the sheet)
-# before the team's actual pool rank was known. Must NOT fire for elimination
-# formats (WPL/Kap7) where game count varies by win/loss -- _expected_games_per_team
-# returns None there and no stubs should ever appear.
+# ── Bracket branching + "games remaining" TBD stubs ──────────────────────────
+# This is a bracket app: before a team's pool rank is known, every candidate
+# slot (1st/2nd/3rd place) is a genuine branch and must be SHOWN as an
+# alternative (tagged with its own pool_rank so the UI can label "If 1st in
+# Pool" / "If 2nd in Pool" / etc.) -- not suppressed. An earlier version of
+# this feature suppressed all candidates pre-rank and replaced them with a
+# generic TBD stub; that was reverted because it hid the actual bracket tree
+# the app exists to show.
+#
+# TBD stubs still exist for the one case a fixed-game-count format truly
+# cannot resolve at all: a game beyond what _expand_bracket_games can reach
+# (e.g. the two-level pool-of-pool-winners gap -- see project memory). Must
+# NOT fire for elimination formats (WPL/Kap7) where game count varies by
+# win/loss -- _expected_games_per_team returns None there.
 
 def test_tbd_stub_placeholders() -> int:
-    """Minimal 2-team, 2-game division: 1 literal round-robin game + 1 Round-2
-    composite slot referencing that same pool. Expected games/team = 2."""
+    """3-team pool P (Cardinal's own) + 3-team pool Q (a different pool, always
+    played) + 1 Round-2 composite game referencing 1st-of-P vs 1st-of-Q --
+    mirrors Quiksilver's real shape where Round 2 opponents always come from a
+    different pool than the team's own."""
     import io as _io
     import json as _json
     import openpyxl
@@ -575,14 +582,32 @@ def test_tbd_stub_placeholders() -> int:
     print("\nTBD stub placeholders (fixed-game-count formats)")
 
     def _make_wb(round1_played: bool):
+        # Pool P (Cardinal's own pool) and pool Q (a different pool) each need
+        # 3 teams so round-robin standings are real, matching Quiksilver's
+        # actual shape -- Round 2 opponents always come from a DIFFERENT pool
+        # than the team's own, never the same one, so there's no ambiguity
+        # about the team's own name appearing among the opponent's candidates.
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "MINI DIV"
-        r1_scores = (10, 5) if round1_played else (None, None)
+        r1 = (10, 5) if round1_played else (None, None)
         ws.append((datetime(2026, 7, 10), datetime(2026, 7, 10, 11, 0).time(), "VENUE", "T1",
-                   "P1-TROJAN CARDINAL", r1_scores[0], "P2-TEAM B", r1_scores[1], "", "MINI"))
+                   "P1-TROJAN CARDINAL", r1[0], "P2-TEAM B", r1[1], "", "MINI"))
+        ws.append((datetime(2026, 7, 10), datetime(2026, 7, 10, 12, 0).time(), "VENUE", "T1B",
+                   "P1-TROJAN CARDINAL", r1[0], "P3-TEAM C", r1[1], "", "MINI"))
+        ws.append((datetime(2026, 7, 10), datetime(2026, 7, 10, 13, 0).time(), "VENUE", "T1C",
+                   "P2-TEAM B", 3, "P3-TEAM C", 1, "", "MINI"))
+        # Pool Q — a separate pool, always played, so its 1st place is known
+        # regardless of round1_played (mirrors real Round 2 opponents being
+        # resolvable independent of the team's own pool result).
+        ws.append((datetime(2026, 7, 10), datetime(2026, 7, 10, 14, 0).time(), "VENUE", "T1D",
+                   "Q1-TEAM X", 10, "Q2-TEAM Y", 2, "", "MINI"))
+        ws.append((datetime(2026, 7, 10), datetime(2026, 7, 10, 15, 0).time(), "VENUE", "T1E",
+                   "Q1-TEAM X", 9, "Q3-TEAM Z", 3, "", "MINI"))
+        ws.append((datetime(2026, 7, 10), datetime(2026, 7, 10, 16, 0).time(), "VENUE", "T1F",
+                   "Q2-TEAM Y", 8, "Q3-TEAM Z", 4, "", "MINI"))
         ws.append((datetime(2026, 7, 11), datetime(2026, 7, 11, 11, 0).time(), "VENUE", "T2",
-                   "X1(1stP)-", None, "X2(2ndP)-", None, "", "MINI"))
+                   "X1(1stP)-", None, "X2(1stQ)-", None, "", "MINI"))
         buf = _io.BytesIO(); wb.save(buf)
         return buf.getvalue()
 
@@ -600,31 +625,35 @@ def test_tbd_stub_placeholders() -> int:
     try:
         pre = _fetch(round1_played=False)
         pre_upcoming = pre.get("upcoming", [])
-        ok = _check("pre-results: 1 real game + 1 TBD stub = 2 total (expected games/team)",
-                    len(pre_upcoming) == 2, f"got {[g['game_id'] for g in pre_upcoming]}")
-        if not ok: failures += 1
-        stubs = [g for g in pre_upcoming if g.get("tbd_stub")]
-        ok = _check("pre-results: exactly 1 stub, no misleading specific guess for T2",
-                    len(stubs) == 1 and "T2" not in [g["game_id"] for g in pre_upcoming],
+        ids = [g["game_id"] for g in pre_upcoming]
+        ok = _check("pre-results: T2 (Round 2 branch) is shown, not suppressed or replaced by a stub",
+                    "T2" in ids and not any(g.get("tbd_stub") for g in pre_upcoming if g["game_id"] == "T2"),
                     f"got {[(g['game_id'], g.get('tbd_stub')) for g in pre_upcoming]}")
         if not ok: failures += 1
 
-        # T2's row already has a real date (Jul 11) in the sheet even though its
-        # opponent isn't resolvable yet -- the stub must surface that day, not a
-        # blank "TBD", so parents know which day the game is on.
-        ok = _check("pre-results: stub shows T2's real day (Saturday, Jul 11), not a blank TBD",
-                    stubs and stubs[0].get("date") == "Saturday, Jul 11",
-                    f"got date={stubs[0].get('date') if stubs else None!r}")
+        t2 = next((g for g in pre_upcoming if g["game_id"] == "T2"), None)
+        ok = _check("pre-results: T2 tagged as a pool_1 branch (not a confirmed game)",
+                    t2 is not None and t2.get("path") == "pool_1" and t2.get("placeholder") is True,
+                    f"got path={t2.get('path') if t2 else None!r} placeholder={t2.get('placeholder') if t2 else None!r}")
+        if not ok: failures += 1
+
+        # Pool Q is always fully played in this fixture (independent of
+        # round1_played) -- Team X is 1st, so T2's opponent should already be
+        # resolvable to a real name even before Cardinal's own pool finishes.
+        ok = _check("pre-results: T2 opponent already resolves via pool Q's standings (Team X)",
+                    t2 is not None and t2.get("opponent", "").upper() == "TEAM X",
+                    f"got opponent={t2.get('opponent') if t2 else None!r}")
         if not ok: failures += 1
 
         post = _fetch(round1_played=True)
         post_played = post.get("played", [])
         post_upcoming = post.get("upcoming", [])
-        ok = _check("post-results: T2 now resolves to a real game, no stub needed",
-                    len(post_played) == 1 and len(post_upcoming) == 1
-                    and post_upcoming[0]["game_id"] == "T2" and not post_upcoming[0].get("tbd_stub"),
+        t2_post = next((g for g in post_upcoming if g["game_id"] == "T2"), None)
+        ok = _check("post-results: Cardinal 2-0 in pool P, T2 still correctly resolved (not dropped)",
+                    len(post_played) == 2 and t2_post is not None
+                    and t2_post.get("opponent", "").upper() == "TEAM X",
                     f"played={[g['game_id'] for g in post_played]} "
-                    f"upcoming={[(g['game_id'], g.get('tbd_stub')) for g in post_upcoming]}")
+                    f"t2_opponent={t2_post.get('opponent') if t2_post else None!r}")
         if not ok: failures += 1
     finally:
         appmod.find_excel = orig_find_excel

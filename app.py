@@ -1368,15 +1368,12 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     rank = int(rank_m.group(1)) if rank_m else None
                     if rank and grp in team_pool_ranks and team_pool_ranks[grp] != rank:
                         break
-                    # For true composite slots, only show one once our rank in this
-                    # group is actually known. Before that, every candidate slot
-                    # (1st/2nd/3rd) is equally possible — picking whichever happens
-                    # to appear first in the sheet would be a misleading guess, not
-                    # a genuine narrowing. Suppress all of them; the caller shows a
-                    # neutral "games remaining" count instead (_expected_games_per_team).
-                    is_composite = bool(_COMPOSITE_SLOT_RE.search(s))
-                    if is_composite and grp not in team_pool_ranks:
-                        break
+                    # This is a bracket app — before our rank in this group is known,
+                    # every candidate slot (1st/2nd/3rd) is a genuine branch, not a
+                    # guess to suppress. Add each one as its own alternative, tagged
+                    # with its own pool_rank so the UI can label them distinctly
+                    # ("If 1st in Pool" / "If 2nd in Pool" / "If 3rd in Pool"), the
+                    # same way win/lose branches work for elimination brackets.
                     add_pool_rank = rank
                     add_grp = grp
                     add_placeholder = True
@@ -1445,16 +1442,19 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
             if add_placeholder is not None:
                 if _game_num(g["game_id"]) is None:
                     continue  # skip non-game rows (e.g. embedded standings entries)
-                # Per-day cap: max 4 depth-2+ games per calendar day so Saturday can't
+                # Per-day cap: max 8 depth-2+ games per calendar day so Saturday can't
                 # crowd out Sunday. Only depth-2+ games count toward the cap so that
                 # depth-1 direct W/L successors (which are exempt) don't consume a slot
                 # and block win/lose siblings later in the same BFS pass.
+                # 8 (not 4) because a 3-way pool-rank branch (1st/2nd/3rd, each its own
+                # 2-game round robin) is up to 6 legitimate alternatives on its own —
+                # this is a bracket app, showing every real branch is the point.
                 # Absolute cap of 20 as a safety net.
                 _gdate = g.get("date", "")
                 if _gdate and add_ph_depth >= 2:
                     _capped_day = sum(1 for e in extras
                                       if e.get("date") == _gdate and e.get("_ph_depth", 0) >= 2)
-                    if _capped_day >= 4:
+                    if _capped_day >= 8:
                         continue
                 if len(extras) >= 20:
                     continue
