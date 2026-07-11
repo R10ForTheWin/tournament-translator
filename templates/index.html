@@ -55,8 +55,15 @@
       color: var(--dark);
       /* #feedback-btn is position:fixed, ~34px tall, sitting 20px off the
          bottom -- without real clearance here the last real content (e.g.
-         the Sunday note) ends up flush against it, visually overlapping. */
-      padding-bottom: calc(90px + env(safe-area-inset-bottom));
+         the Sunday note) ends up flush against it, visually overlapping.
+         Also deliberately generous (not just button-clearance-sized):
+         ?scrolldebug=1 showed scroll genuinely working (scrollY moved) but
+         with only a ~44px budget once Saturday's branches resolve down to
+         single real opponents and the page gets short again -- that's a
+         marginal-enough range to feel like it "stops working" near the
+         bottom. More headroom means the page is never that marginal,
+         regardless of how many cards happen to be showing right now. */
+      padding-bottom: calc(260px + env(safe-area-inset-bottom));
     }
 
     /* ── Hero (home view only) ── */
