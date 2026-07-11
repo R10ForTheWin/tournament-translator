@@ -421,7 +421,20 @@ def is_trojan(team_slot: str) -> bool:
     return "TROJAN" in strip_prefix(team_slot).upper()
 
 def team_matches(slot: str, name: str) -> bool:
-    return name.upper() in strip_prefix(slot).upper()
+    stripped = strip_prefix(slot).upper()
+    if name.upper() in stripped:
+        return True
+    # Organizers sometimes hand-type just the club name ("Trojan") into a
+    # newly-resolved slot, dropping the team-color qualifier ("Cardinal" /
+    # "Gold" / etc.) that actually distinguishes which specific team it is
+    # (seen live: "K1(2ndB)- TROJAN" instead of "... TROJAN CARDINAL").
+    # Without this, that game silently never matches the real team at all —
+    # it's this app's whole job to track Trojan-affiliated teams, so treating
+    # a bare "TROJAN" as a match for any Trojan-team search is a much safer
+    # failure mode than dropping the team's own game from its own schedule.
+    if stripped == "TROJAN" and "TROJAN" in name.upper():
+        return True
+    return False
 
 # 'a' intentionally excluded: single-letter A/B/C are pool group names, not articles.
 _LOWER_WORDS = frozenset({'in', 'of', 'or', 'and', 'the', 'an', 'at', 'by', 'for', 'to', 'vs'})
@@ -1480,17 +1493,25 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
 
 
 def _literal_team_count(sheet_games: list) -> int:
-    """Count distinct real (non-slot, non-composite) team names in a sheet."""
+    """Count distinct teams in a sheet, from the STABLE Round-1 pool seeding
+    only (LETTER+DIGIT-TEAMNAME, e.g. "B2-Trojan Cardinal") — never from
+    composite/resolved slots elsewhere in the sheet.
+
+    Round-1 seeding is fixed once at the start of the tournament and never
+    edited again. Composite Round-2/3 slots, by contrast, get hand-typed
+    resolved names added live during the tournament, in whatever format the
+    organizer happens to use — e.g. "K1(2ndB)- TROJAN" instead of the full
+    "TROJAN CARDINAL". Counting those as distinct teams inflates the total
+    (confirmed live: 21 instead of 18), which breaks the whole-number ratio
+    _expected_games_per_team(_by_day) needs and silently disables the TBD
+    stub feature for the entire division, not just the affected team.
+    """
     teams: set = set()
     for g in sheet_games:
         for slot in (g["white_team"], g["dark_team"]):
-            # Strip the pool-position prefix FIRST ("B2-Trojan Cardinal" is a
-            # permanent, real name in this format, not an unresolved slot) —
-            # only check slot-likeness on what's left after stripping.
-            name = strip_prefix(slot.strip()).strip()
-            if not name or len(name) < 2 or _SLOT_LIKE_RE.match(name) or _WL_SLOT_RE.match(name):
-                continue
-            teams.add(name.upper())
+            m = _POOL_SLOT_RE.match(slot.strip())
+            if m:
+                teams.add(m.group(3).strip().upper())
     return len(teams)
 
 
@@ -2748,6 +2769,21 @@ def api_trojan_teams(tournament_id):
             if "TROJAN" in name.upper():
                 key = (name, g["sheet"])
                 counts[key] = counts.get(key, 0) + 1
+
+    # A bare "Trojan" entry (organizer typed just the club name into a
+    # resolved slot, dropping the color qualifier — see team_matches) isn't
+    # a separate team; fold its count into the one more-specific "Trojan ..."
+    # candidate in the same sheet, if there's exactly one. If there's more
+    # than one (e.g. both Trojan Cardinal and Trojan Gold in the same sheet),
+    # we can't tell which it means — leave it showing rather than guess wrong.
+    for sheet in {s for (_, s) in counts}:
+        bare_key = ("TROJAN", sheet)
+        if bare_key not in counts:
+            continue
+        specific = [k for k in counts if k[1] == sheet and k[0].upper() != "TROJAN"
+                    and "TROJAN" in k[0].upper()]
+        if len(specific) == 1:
+            counts[specific[0]] += counts.pop(bare_key)
 
     # Build candidate list
     candidates = []
