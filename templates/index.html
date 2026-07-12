@@ -121,6 +121,15 @@
       font-family: inherit; flex-shrink: 0;
     }
     .back-btn:active { opacity: 0.7; }
+    .subnav-predict-btn {
+      background: none; border: none;
+      color: var(--gold);
+      font-size: 13px; font-weight: 700;
+      cursor: pointer; padding: 8px 10px;
+      font-family: inherit; flex-shrink: 0;
+      letter-spacing: 0.03em;
+    }
+    .subnav-predict-btn:active { opacity: 0.7; }
     .subnav-title {
       flex: 1; text-align: center;
       font-size: 15px; font-weight: 700;
@@ -691,6 +700,7 @@
   <div class="subnav-inner">
     <button class="back-btn" id="back-btn">‹ Back</button>
     <div class="subnav-title" id="subnav-title"></div>
+    <button class="subnav-predict-btn" id="subnav-predict-btn" style="display:none">Predict</button>
   </div>
   <div id="subnav-tabs">
     <div class="subnav-tab-bar">
@@ -883,12 +893,23 @@ function updateSubnav() {
   const view = document.querySelector('.view.active').id;
   const titleEl = document.getElementById('subnav-title');
   const backBtn = document.getElementById('back-btn');
+  const predictBtn = document.getElementById('subnav-predict-btn');
   if (view === 'view-teams') {
     titleEl.textContent = state.tournament?.past ? 'Results' : (state.tournament?.name || '');
     backBtn.onclick = goHome;
+    predictBtn.style.display = 'none';
   } else if (view === 'view-games') {
     titleEl.textContent = state.friendly || state.team || '';
     backBtn.onclick = goTournament;
+    // WPL Futures tournaments already have a dedicated Rankings tab for this;
+    // everything else only ever gets the predictor via the team-list card,
+    // which is skipped entirely for single-team tournaments (see loadTeams) --
+    // this is the fallback entry point for that case.
+    const showPredict = !!(state.tournament && state.team && !state.tournament.id.startsWith('futures'));
+    predictBtn.style.display = showPredict ? '' : 'none';
+    if (showPredict) {
+      predictBtn.onclick = () => showPredictorSheet(state.tournament.id, state.team, state.sheet, state.friendly || state.team);
+    }
   }
 }
 
