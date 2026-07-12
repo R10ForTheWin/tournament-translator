@@ -3677,11 +3677,14 @@ def _last_meeting(team: str, opponent: str, all_games: list,
     }
 
 
-def _head_to_head(team: str, opponent: str, all_games: list, sheet: str = None) -> dict | None:
+def _head_to_head(team: str, opponent: str, all_games: list, sheet: str = None,
+                   exclude_game_id: str = None) -> dict | None:
     """Tally the full W/L/T record between team and opponent across every
     played meeting found — same matching rules as _last_meeting (which only
     returns the single most recent one), aggregated across all local Excel
-    files via _all_historical_games() by the caller."""
+    files via _all_historical_games() by the caller.
+    exclude_game_id: for a played-game card, excludes that game itself so the
+    result isn't trivially just restated as its own "history"."""
     if not opponent or _SLOT_LIKE_RE.match(opponent):
         return None
     wins = losses = ties = 0
@@ -3689,6 +3692,8 @@ def _head_to_head(team: str, opponent: str, all_games: list, sheet: str = None) 
         if not g.get("played"):
             continue
         if sheet and g.get("sheet") != sheet:
+            continue
+        if exclude_game_id and g.get("game_id") == exclude_game_id:
             continue
         wt = strip_prefix(g["white_team"]).strip()
         dt = strip_prefix(g["dark_team"]).strip()
@@ -4136,6 +4141,14 @@ def api_games(tournament_id, team):
             base["opp_score"] = ds if color == "WHITE" else ws
             result = _result_str(g, team)
             base["result"] = result
+            # Prior meetings only (excludes this game itself) -- omitted
+            # entirely when there's no OTHER history, since "0-0" would just
+            # be restating this game's own result as if it were new info.
+            base["last_meeting"] = _last_meeting(team, opponent_label, _h2h_games,
+                                                  before_date=g.get("date"),
+                                                  sheet=g.get("sheet"))
+            base["h2h"] = _head_to_head(team, opponent_label, _h2h_games,
+                                         sheet=g.get("sheet"), exclude_game_id=gid)
             next_game = winner_next if result == "win" else loser_next if result == "loss" else None
             if next_game:
                 base["next"] = _next_summary(next_game, team, dg, ref_date=_weekend_ref_date, my_game_ids=my_game_ids)
@@ -4166,8 +4179,14 @@ def api_games(tournament_id, team):
             base["last_meeting"] = _last_meeting(team, opponent_label, _h2h_games,
                                                   before_date=g.get("date"),
                                                   sheet=g.get("sheet"))
-            base["h2h"] = _head_to_head(team, opponent_label, _h2h_games,
-                                         sheet=g.get("sheet"))
+            # For an upcoming game with a real (non-TBD) opponent, explicitly
+            # show "0-0" rather than hiding the section when there's no prior
+            # history — omitting it here (unlike the played-game case) reads
+            # as a missing feature rather than a deliberate "first meeting"
+            # signal. A still-unresolved opponent slot has nothing to default.
+            base["h2h"] = _head_to_head(team, opponent_label, _h2h_games, sheet=g.get("sheet"))
+            if base["h2h"] is None and opponent_label and not _SLOT_LIKE_RE.match(opponent_label):
+                base["h2h"] = {"wins": 0, "losses": 0, "ties": 0}
             upcoming_out.append(base)
 
     placement = _infer_placement(played_out)

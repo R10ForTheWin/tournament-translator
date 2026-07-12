@@ -2367,6 +2367,7 @@ function buildResultCard(g, ourName, tournamentId) {
           <span class="team-row-score theirs">${g.opp_score ?? ''}</span>
         </div>
         ${recordWithLabel(oppRec)}
+        ${fmtH2H(g)}
       </div>
     </div>`;
   if (tournamentId) _addCommentsSection(card, tournamentId, g.game_id);
