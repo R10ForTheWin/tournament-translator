@@ -2527,6 +2527,24 @@ def _tournament_records(division_games: list) -> dict:
             records[dt]["wins"] += 1; records[wt]["losses"] += 1
         else:
             records[wt]["ties"] += 1; records[dt]["ties"] += 1
+
+    # Organizers sometimes hand-type just the bare club name ("TROJAN") into
+    # a newly-resolved bracket slot instead of the full team name ("TROJAN
+    # CARDINAL") used elsewhere in the sheet -- silently splitting one team's
+    # record across two dict keys (seen live: Quiksilver Cup's Saturday/Sunday
+    # K-bracket slots use bare "TROJAN" while Friday's pool slots spell out
+    # "TROJAN CARDINAL"). Fold the bare key into the one specific team it
+    # unambiguously refers to.
+    for bare in [k for k in records if " " not in k]:
+        specific = [k for k in records if k != bare and k.startswith(bare + " ")]
+        if len(specific) == 1:
+            tgt = specific[0]
+            for field in ("wins", "losses", "ties"):
+                records[tgt][field] += records[bare][field]
+            # Keep the bare key pointing at the same (now-merged) record so a
+            # lookup via either spelling returns the full combined total.
+            records[bare] = records[tgt]
+
     return records
 
 
