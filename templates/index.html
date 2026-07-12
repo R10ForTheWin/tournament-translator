@@ -437,6 +437,7 @@
     .wpl-card-opp .vs { font-size: 11px; font-weight: 400; color: var(--muted); margin-right: 4px; }
     .wpl-card-rec { font-size: 10px; color: var(--muted); margin-top: 2px; }
     .last-meeting { font-size: 10px; color: var(--muted); margin-top: 3px; opacity: 0.8; }
+    .record-scope-label { font-size: 9px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); opacity: 0.6; margin-bottom: 3px; }
     .wpl-card-score { font-size: 18px; font-weight: 900; color: var(--gold); letter-spacing: -0.5px; margin-top: 4px; }
     /* Full-width root card */
     .wpl-root-card { max-width: 100%; }
@@ -1176,6 +1177,16 @@ async function loadTeams(tournament) {
 function fmtLastMeeting(lm) {
   if (!lm) return '';
   return `<div class="last-meeting">Last met ${lm.date} · ${lm.our_score}–${lm.opp_score}</div>`;
+}
+function fmtH2H(g) {
+  const h2h = g.h2h, lm = g.last_meeting;
+  if (!h2h) return '';
+  const rec = `${h2h.wins}W–${h2h.losses}L${h2h.ties ? '–' + h2h.ties + 'T' : ''}`;
+  const last = lm ? ` (last met ${lm.date}, ${lm.our_score}–${lm.opp_score})` : '';
+  return `<div class="last-meeting">All-time vs this team: ${rec}${last}</div>`;
+}
+function recordScopeLabel(ourRec, oppRec) {
+  return (ourRec || oppRec) ? `<div class="record-scope-label">This Tournament</div>` : '';
 }
 
 function fmtRec(r) {
@@ -2345,6 +2356,7 @@ function buildResultCard(g, ourName, tournamentId) {
     </div>
     <div class="game-card-body">
       <div class="team-matchup">
+        ${recordScopeLabel(ourRec, oppRec)}
         <div class="team-row">
           ${withRank(ourName || '', 'team-row-name ours')}
           <span class="team-row-score ours">${g.our_score ?? ''}</span>
@@ -2422,6 +2434,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
     ).join('');
     teamSection = `
       <div class="team-matchup" data-live-game="${gid}" data-our-score="${ourScore}" data-opp-score="${oppScore}" data-quarter="${quarter}">
+        ${recordScopeLabel(ourRec, oppRec)}
         <div class="team-row">
           ${withRank(ourName || '', 'team-row-name ours')}
           <div class="score-controls">
@@ -2440,13 +2453,14 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
           </div>
         </div>
         ${oppRec ? `<div class="team-row-record">${oppRec}</div>` : ''}
-        ${fmtLastMeeting(g.last_meeting)}
+        ${fmtH2H(g)}
         <div class="quarter-strip">${qBtns}</div>
         <div class="live-footer">Unofficial${updAgo ? ` · Updated ${updAgo}` : ''}</div>
       </div>`;
   } else {
     teamSection = `
       <div class="team-matchup">
+        ${recordScopeLabel(ourRec, oppRec)}
         <div class="team-row">
           ${withRank(ourName || '', 'team-row-name ours')}
         </div>
@@ -2455,7 +2469,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
           <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${rankDivBadge(g.opponent)}</span>
         </div>
         ${oppRec ? `<div class="team-row-record">${oppRec}</div>` : ''}
-        ${fmtLastMeeting(g.last_meeting)}
+        ${fmtH2H(g)}
       </div>`;
   }
 

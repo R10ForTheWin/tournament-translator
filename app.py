@@ -3677,6 +3677,37 @@ def _last_meeting(team: str, opponent: str, all_games: list,
     }
 
 
+def _head_to_head(team: str, opponent: str, all_games: list, sheet: str = None) -> dict | None:
+    """Tally the full W/L/T record between team and opponent across every
+    played meeting found — same matching rules as _last_meeting (which only
+    returns the single most recent one), aggregated across all local Excel
+    files via _all_historical_games() by the caller."""
+    if not opponent or _SLOT_LIKE_RE.match(opponent):
+        return None
+    wins = losses = ties = 0
+    for g in all_games:
+        if not g.get("played"):
+            continue
+        if sheet and g.get("sheet") != sheet:
+            continue
+        wt = strip_prefix(g["white_team"]).strip()
+        dt = strip_prefix(g["dark_team"]).strip()
+        if not (team_matches(wt, team) or team_matches(dt, team)):
+            continue
+        if not (team_matches(wt, opponent) or team_matches(dt, opponent)):
+            continue
+        result = _result_str(g, team)
+        if result == "win":
+            wins += 1
+        elif result == "loss":
+            losses += 1
+        else:
+            ties += 1
+    if wins + losses + ties == 0:
+        return None
+    return {"wins": wins, "losses": losses, "ties": ties}
+
+
 @app.route("/api/games/<tournament_id>/<path:team>")
 def api_games(tournament_id, team):
     excel = find_excel(tournament_id)
@@ -3685,6 +3716,21 @@ def api_games(tournament_id, team):
 
     _all_games = load_and_parse(excel)
     games      = _filter_by_dates(_all_games, tournament_id)
+
+    # Live-fetched tournaments (Quiksilver Cup, JO Quals, WPL) never land in
+    # EXCEL_DIR as a local file, so _all_historical_games() alone misses this
+    # tournament's own games entirely -- last_meeting/h2h would never surface
+    # a matchup that only happened earlier in THIS same event. Combine both,
+    # deduped by game_id in case a tournament is ever backed by both a local
+    # snapshot and a live fetch.
+    _seen_h2h_gids: set = set()
+    _h2h_games: list = []
+    for _g in list(_all_games) + list(_all_historical_games()):
+        _gid = _g.get("game_id")
+        if _gid in _seen_h2h_gids:
+            continue
+        _seen_h2h_gids.add(_gid)
+        _h2h_games.append(_g)
 
     # Weekend reference date for scoping describe_slot standings lookups.
     # Prevents stale pool standings from previous weekends (pool letters repeat in WPL).
@@ -4117,9 +4163,11 @@ def api_games(tournament_id, team):
                 if loser_next and loser_next["game_id"] not in my_game_ids:
                     scenarios["lose"] = _next_summary(loser_next,  team, dg, ref_date=_weekend_ref_date, my_game_ids=my_game_ids)
             base["scenarios"] = scenarios if scenarios else None
-            base["last_meeting"] = _last_meeting(team, opponent_label, _all_historical_games(),
+            base["last_meeting"] = _last_meeting(team, opponent_label, _h2h_games,
                                                   before_date=g.get("date"),
                                                   sheet=g.get("sheet"))
+            base["h2h"] = _head_to_head(team, opponent_label, _h2h_games,
+                                         sheet=g.get("sheet"))
             upcoming_out.append(base)
 
     placement = _infer_placement(played_out)
