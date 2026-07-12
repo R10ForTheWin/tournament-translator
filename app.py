@@ -3636,13 +3636,27 @@ def _build_canonical_bracket(team: str, our_team_name: str, wpl_bracket: list,
     }
 
 
+def _same_division(sheet_a: str, sheet_b: str) -> bool:
+    """True if two sheet names represent the same age+gender division, even
+    across different tournament files with completely different sheet-naming
+    conventions (e.g. Quiksilver Cup's "16U BOYS-18 TEAMS" vs Turbo OC's
+    "16U BOYS PLATINUM GOLD-11 TEAMS" -- both parse to ('Boys', '16U')).
+    A literal sheet-name string match can never succeed across files, since
+    every tournament names its sheets differently -- that would silently
+    limit every cross-tournament search to zero results."""
+    if not sheet_a or not sheet_b:
+        return True  # no scoping info available on one side — don't filter
+    return _parse_sheet(sheet_a) == _parse_sheet(sheet_b)
+
+
 def _last_meeting(team: str, opponent: str, all_games: list,
                   before_date=None, sheet: str = None) -> dict | None:
     """Return the most recent played game between team and opponent.
 
     Searches all_games for a played game where both teams appear.
-    sheet: if provided, restricts search to that division sheet so a 16u Boys
-    lookup doesn't surface 12u Boys results for the same team name.
+    sheet: if provided, restricts search to games in the same age+gender
+    division (see _same_division) so a 16u Boys lookup doesn't surface 12u
+    Boys results for the same team name.
     before_date excludes games on or after that date so the current game
     isn't counted as its own last meeting.
     """
@@ -3652,7 +3666,7 @@ def _last_meeting(team: str, opponent: str, all_games: list,
     for g in all_games:
         if not g.get("played"):
             continue
-        if sheet and g.get("sheet") != sheet:
+        if sheet and not _same_division(sheet, g.get("sheet")):
             continue
         if before_date and g.get("date") and g["date"] >= before_date:
             continue
@@ -3689,7 +3703,7 @@ def _head_to_head(team: str, opponent: str, all_games: list, sheet: str = None) 
     for g in all_games:
         if not g.get("played"):
             continue
-        if sheet and g.get("sheet") != sheet:
+        if sheet and not _same_division(sheet, g.get("sheet")):
             continue
         wt = strip_prefix(g["white_team"]).strip()
         dt = strip_prefix(g["dark_team"]).strip()
