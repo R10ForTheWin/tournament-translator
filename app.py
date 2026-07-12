@@ -851,6 +851,7 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
 
         # [bracket_wins, last_game_date_ordinal, last_game_minute]
         team_rec: dict = {t: [0, 0, 0] for t in all_pool_teams}
+        team_final_rank: dict = {}
 
         for g in bracket_games:
             wt = _resolve_slot_for_sim(g["white_team"], group_standings, game_results)
@@ -890,14 +891,59 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
                     team_rec[key][1] = max(team_rec[key][1], date_ord)
                     team_rec[key][2] = max(team_rec[key][2], time_min)
 
-        def _rank_key(t):
+        # Placement games state their exact final rank directly in "comments"
+        # (e.g. "11th" -> winner finishes 11th, loser 12th). Raw bracket
+        # win-count is not a valid placement proxy for these formats: every
+        # team gets the same number of Saturday/Sunday games regardless of
+        # which tier bracket they're in, so a team stuck in the "17th place"
+        # bracket can rack up the same win count as one in the "1st place"
+        # bracket. Prefer the stated rank whenever a game resolves both real
+        # team names and a bare-ordinal comment; fall back to the old
+        # win-count heuristic only when it doesn't (earlier rounds, formats
+        # without this convention, or a slot that never got a real name).
+        for g in bracket_games:
+            rm = _PLACEMENT_COMMENT_RE.match(g.get("comments") or "")
+            if not rm:
+                continue
+            gid = g["game_id"]
+            if gid not in game_results:
+                continue
+            winner, loser = game_results[gid]
+            rank = int(rm.group(1))
+            wk, lk = _team_key(winner), _team_key(loser)
+            if wk:
+                team_final_rank[wk] = rank
+            if lk:
+                team_final_rank[lk] = rank + 1
+
+        def _fallback_key(t):
             wins, date_ord, time_min = team_rec[t]
             grp = all_pool_teams[t]
             pool_rank = next((i for i, pt in enumerate(group_standings.get(grp, []))
                               if team_matches(pt, t)), 99)
             return (-wins, -date_ord, -time_min, pool_rank)
 
-        sorted_teams = sorted(all_pool_teams.keys(), key=_rank_key)
+        # Assign the stated rank directly rather than sorting-by-key and using
+        # list position -- a placement game that fails to resolve both real
+        # team names (e.g. a spelling mismatch between rounds) leaves a gap in
+        # the known ranks, and position-based numbering would silently shift
+        # every subsequent team's placement by the size of that gap. Teams
+        # without a known rank fill in whichever numbers are left over, still
+        # ordered by the old win-count heuristic among themselves.
+        _unknown = sorted(
+            (t for t in all_pool_teams if t not in team_final_rank),
+            key=_fallback_key,
+        )
+        _available = sorted(set(range(1, len(all_pool_teams) + 1)) - set(team_final_rank.values()))
+        rank_of = dict(team_final_rank)
+        for t, r in zip(_unknown, _available):
+            rank_of[t] = r
+        # Any leftover unknown teams past len(_available) (rank collisions in
+        # the data) fall back to the end, past every assigned rank.
+        for t in _unknown[len(_available):]:
+            rank_of[t] = len(all_pool_teams) + 1
+
+        sorted_teams = sorted(all_pool_teams.keys(), key=lambda t: rank_of[t])
         for i, t in enumerate(sorted_teams):
             p = i + 1
             all_placement_counts[t][p] = all_placement_counts[t].get(p, 0) + 1
@@ -1234,6 +1280,11 @@ _WL_SLOT_RE      = re.compile(r'^[WL]#([^-\s]+)', re.IGNORECASE)   # dash option
 _FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)(?:\s+in\s+)?([A-Z])\s*-', re.IGNORECASE)
 # Composite bracket slots like K4(1stG)- or K4(1stG) — group letter is inside parens
 _COMPOSITE_SLOT_RE = re.compile(r'\(\d+(?:st|nd|rd|th)([A-Z])\)', re.IGNORECASE)
+# Placement games often state their exact final rank as a bare ordinal in the
+# comments column (e.g. "11th" -- winner finishes 11th, loser 12th). Strict
+# full-string match so it never fires on freeform notes that merely mention
+# an ordinal in passing.
+_PLACEMENT_COMMENT_RE = re.compile(r'^\s*(\d+)(?:st|nd|rd|th)\s*$', re.IGNORECASE)
 
 def _team_won(team: str, game: dict):
     """True if team won, False if lost, None if not yet played."""
