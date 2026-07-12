@@ -54,16 +54,15 @@
       background: var(--bg);
       color: var(--dark);
       /* #feedback-btn is position:fixed, ~34px tall, sitting 20px off the
-         bottom -- without real clearance here the last real content (e.g.
-         the Sunday note) ends up flush against it, visually overlapping.
-         Also deliberately generous (not just button-clearance-sized):
-         ?scrolldebug=1 showed scroll genuinely working (scrollY moved) but
-         with only a ~44px budget once Saturday's branches resolve down to
-         single real opponents and the page gets short again -- that's a
-         marginal-enough range to feel like it "stops working" near the
-         bottom. More headroom means the page is never that marginal,
-         regardless of how many cards happen to be showing right now. */
-      padding-bottom: calc(260px + env(safe-area-inset-bottom));
+         bottom -- this just needs to keep the last real content clear of it.
+         (A much larger value used to live here, on the theory that the
+         "lower half doesn't scroll" bug was marginal page-level vertical
+         scroll room. Diagnosed live via phone-attached remote debugging
+         2026-07-11: the real cause was horizontal bracket swipes landing on
+         this blank padding below the last card, outside the scrollable
+         element entirely -- see .bracket-stair-wrap's dynamic min-height in
+         buildBracketView, which is the actual fix.) */
+      padding-bottom: calc(90px + env(safe-area-inset-bottom));
     }
 
     /* ── Hero (home view only) ── */
@@ -1868,6 +1867,23 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
 
   requestAnimationFrame(() => {
     drawBracketLines(inner, columns, colNums);
+
+    // Stretch the swipeable region down toward the fixed Feedback button so a
+    // horizontal drag that starts below the last card row still lands inside
+    // `wrap` (and thus still pans the bracket) instead of hitting blank page
+    // background outside it. Confirmed live via phone-attached remote
+    // debugging 2026-07-11: touches below wrap's natural (content-sized)
+    // bottom edge hit <body> directly and never moved wrap.scrollLeft, which
+    // is exactly the "scrolling doesn't work on the lower half" symptom.
+    const feedbackBtn = document.querySelector('#feedback-btn');
+    if (feedbackBtn) {
+      const wrapTop     = wrap.getBoundingClientRect().top;
+      const feedbackTop = feedbackBtn.getBoundingClientRect().top;
+      const available   = feedbackTop - wrapTop - 24; // 24px buffer above the button
+      if (available > wrap.clientHeight) {
+        wrap.style.minHeight = available + 'px';
+      }
+    }
   });
 
   // Custom pinch-to-zoom anchored at finger midpoint
