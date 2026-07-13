@@ -489,7 +489,8 @@ def _pool_teams_for_group(group: str, division_games: list) -> list[str]:
     teams = {}
     for g in division_games:
         for slot in (g["white_team"], g["dark_team"]):
-            m = _POOL_SLOT_RE.match(slot.strip())
+            s = slot.strip()
+            m = _POOL_SLOT_RE.match(s) or _COMPOSITE_POOL_SEED_RE.match(s)
             if m and m.group(1).upper() == group.upper():
                 seed = int(m.group(2))
                 name = m.group(3).strip()
@@ -519,13 +520,15 @@ def _standings_for_group(group: str, division_games: list, extra_outcomes: dict 
     for name in _pool_teams_for_group(group, division_games):
         team_stats[name] = {"team": name, "wins": 0, "losses": 0, "gf": 0, "ga": 0}
 
-    # Pass 1: direct pool-slot games (B1-X vs B2-Y format)
+    # Pass 1: direct pool-slot games (B1-X vs B2-Y format, or the WPL championship
+    # crossover-pool seed variant "B1 (WIN GM #N) - X")
     direct_ids: set = set()
     game_results: dict = {}  # game_id -> (winner_key, loser_key) for W#/L# resolution
 
     for g in division_games:
-        wm = _POOL_SLOT_RE.match(g["white_team"].strip())
-        dm = _POOL_SLOT_RE.match(g["dark_team"].strip())
+        wt_raw, dt_raw = g["white_team"].strip(), g["dark_team"].strip()
+        wm = _POOL_SLOT_RE.match(wt_raw) or _COMPOSITE_POOL_SEED_RE.match(wt_raw)
+        dm = _POOL_SLOT_RE.match(dt_raw) or _COMPOSITE_POOL_SEED_RE.match(dt_raw)
         if not wm or not dm:
             continue
         if wm.group(1).upper() != group.upper() or dm.group(1).upper() != group.upper():
@@ -1281,6 +1284,12 @@ def _build_division_rounds(division_games: list) -> dict[str, int]:
     return rounds
 
 _POOL_SLOT_RE    = re.compile(r'^([A-Z])(\d+)-(.+)', re.IGNORECASE)
+# WPL championship-weekend crossover pool seed: "G2 (WIN GM #409) - SAN CLEMENTE" —
+# the seed's team comes from a previous round's result, not a fixed name. Same
+# capture-group layout as _POOL_SLOT_RE (letter, seed num, name) so callers can
+# use either interchangeably once matched.
+_COMPOSITE_POOL_SEED_RE = re.compile(
+    r'^([A-Z])(\d+)\s*\([^)]*GM\s*#\d+[^)]*\)\s*-\s*(.+)$', re.IGNORECASE)
 _WL_SLOT_RE      = re.compile(r'^[WL]#([^-\s]+)', re.IGNORECASE)   # dash optional (bare W#2 before scores)
 _FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)(?:\s+in\s+)?([A-Z])\s*-', re.IGNORECASE)
 # Composite bracket slots like K4(1stG)- or K4(1stG) — group letter is inside parens
