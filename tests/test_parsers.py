@@ -28,7 +28,7 @@ from parsers.validate import _valid_slot
 from parsers.format_cca import parse_csv as cca_parse_csv
 from parsers.format_a import parse as format_a_parse
 from app import (
-    _expand_bracket_games, _build_wpl_game_tree,
+    _expand_bracket_games, _build_wpl_game_tree, _build_njo_game_tree,
     team_matches, describe_slot, _SLOT_LIKE_RE, _tournament_meta,
     _team_opp_slot, _result_str,
 )
@@ -943,6 +943,48 @@ def test_game_num_column_integrity() -> int:
     return failures
 
 
+def test_njo_tree_multi_phase() -> int:
+    """NJO trees must include every one of the team's real games, even when they
+    span multiple disconnected segments (a round-robin pool phase with no
+    w_to/l_to links at all, plus a separate elimination-bracket chain with its
+    own numbering) rather than one continuous win/lose chain.
+
+    Real bug found 2026-07-12 against last year's actual Junior Olympics data:
+    a team with 9 real games showed only 3 in the tree because
+    _build_njo_game_tree only followed the first connected chain from the
+    team's earliest game and silently dropped a second, later bracket phase
+    that started a fresh w_to/l_to sequence unconnected to the first.
+    """
+    failures = 0
+    games = [
+        # Two round-robin pool games with no advancement links at all.
+        {"game_id": "T-001", "white_team": "TEST TEAM", "dark_team": "OPP A",
+         "date": date(2026, 7, 24), "time": None, "played": True,
+         "white_score": 10, "dark_score": 5, "w_to": None, "l_to": None},
+        {"game_id": "T-002", "white_team": "TEST TEAM", "dark_team": "OPP B",
+         "date": date(2026, 7, 24), "time": None, "played": True,
+         "white_score": 6, "dark_score": 9, "w_to": None, "l_to": None},
+        # A separate, later elimination-bracket chain: game 3 -> game 4.
+        {"game_id": "T-003", "white_team": "TEST TEAM", "dark_team": "OPP C",
+         "date": date(2026, 7, 25), "time": None, "played": True,
+         "white_score": 8, "dark_score": 4, "w_to": 4, "l_to": None},
+        {"game_id": "T-004", "white_team": "W#3-TEST TEAM", "dark_team": "OPP D",
+         "date": date(2026, 7, 25), "time": None, "played": False,
+         "white_score": None, "dark_score": None, "w_to": None, "l_to": None},
+    ]
+    tree = _build_njo_game_tree("TEST TEAM", games)
+    tree_ids = {n["game_id"] for n in tree}
+    expected_ids = {g["game_id"] for g in games}
+    ok = _check(
+        "NJO tree includes every real game across disconnected segments",
+        tree_ids == expected_ids,
+        f"expected {sorted(expected_ids)}, got {sorted(tree_ids)}",
+    )
+    if not ok:
+        failures += 1
+    return failures
+
+
 def test_last_meeting_available() -> int:
     """At least one upcoming game per Trojan team should have a last_meeting populated,
     confirming cross-tournament history search is active.
@@ -1076,6 +1118,11 @@ def main():
     print("Last meeting availability (cross-tournament history search active)")
     print("=" * 60)
     total_failures += test_last_meeting_available()
+
+    print("\n" + "=" * 60)
+    print("NJO tree multi-phase (Junior Olympics regression guard)")
+    print("=" * 60)
+    total_failures += test_njo_tree_multi_phase()
 
     print("\n" + "=" * 60)
     if total_failures == 0:

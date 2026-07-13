@@ -2114,6 +2114,19 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
 
     root = my_games[0]
     _follow(root, None, None, False)
+
+    # Some teams have multiple disconnected game segments within the same
+    # tournament weekend -- e.g. a placement/consolation phase that starts a
+    # fresh w_to/l_to numbering sequence unconnected to the pool-phase
+    # bracket, or later round-robin games with no advancement links at all.
+    # Following only the very first chain silently drops these later
+    # segments entirely (confirmed live: a real team lost 6 of 9 actual
+    # games from the tree this way). Start a fresh traversal for every one
+    # of the team's known games not already reached by the first chain.
+    for g in my_games:
+        if g["game_id"] not in seen:
+            _follow(g, None, None, False)
+
     return out
 
 
@@ -3124,7 +3137,8 @@ def _derive_expected_bracket(team: str, div_games: list, anchor_date) -> dict:
 
 
 def _check_bracket_structure(team: str, tree: list,
-                              div_games: list = None, anchor_date=None) -> list[str]:
+                              div_games: list = None, anchor_date=None,
+                              allow_multiple_roots: bool = False) -> list[str]:
     """Deterministic structural assertions on the WPL bracket tree. Never calls an LLM.
 
     Pass div_games + anchor_date to also validate against the schedule ground truth —
@@ -3171,7 +3185,12 @@ def _check_bracket_structure(team: str, tree: list,
         )
 
     roots = [n for n in tree if not n.get("src_game_id")]
-    if len(roots) != 1:
+    # NJO trees legitimately have multiple roots: round-robin pool games (no
+    # w_to/l_to at all) and a later placement/consolation phase (a fresh
+    # w_to/l_to numbering sequence) are genuinely disconnected segments, not
+    # a sign of a broken tree. This check only makes sense for WPL, where the
+    # tree builder always produces one connected bracket.
+    if not allow_multiple_roots and len(roots) != 1:
         issues.append(
             f"expected exactly 1 root node, found {len(roots)}: "
             f"{[r['game_id'] for r in roots]}"
@@ -4270,7 +4289,7 @@ def api_games(tournament_id, team):
         tree = _build_njo_game_tree(team, div_games_for_tree, anchor_date=latest_team_date)
         # NJO uses w_to/l_to integer links, not WPL-style WIN GM # slots — skip
         # ground-truth depth checks (_derive_expected_bracket is WPL-specific).
-        struct_issues = _check_bracket_structure(team, tree)
+        struct_issues = _check_bracket_structure(team, tree, allow_multiple_roots=True)
         if struct_issues:
             for _si in struct_issues:
                 print(f"[bracket-struct] {team!r} | {tournament_id}: {_si}", flush=True)
