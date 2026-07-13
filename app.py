@@ -1290,6 +1290,8 @@ _COMPOSITE_SLOT_RE = re.compile(r'\(\d+(?:st|nd|rd|th)([A-Z])\)', re.IGNORECASE)
 # full-string match so it never fires on freeform notes that merely mention
 # an ordinal in passing.
 _PLACEMENT_COMMENT_RE = re.compile(r'^\s*(\d+)(?:st|nd|rd|th)\s*$', re.IGNORECASE)
+# WPL championship prelim-to-pool slot, e.g. "E2 (WIN GM #399)" / "F1 (LOS GM #399)"
+_GM_WINLOS_RE = re.compile(r'\b(WIN|LOS)\s+GM\s+#(\d+)', re.IGNORECASE)
 
 def _team_won(team: str, game: dict):
     """True if team won, False if lost, None if not yet played."""
@@ -3834,290 +3836,120 @@ def api_games(tournament_id, team):
     played_out   = []
     upcoming_out = []
 
-    # Build adjacency map: game_id -> unique successor game_ids in this team's game list
-    _adj: dict[str, list] = {}
-    for g in my_games:
-        dg_pre = div_map.get(g["sheet"], [])
-        wn, ln = find_next_games(g, dg_pre)
-        succs: list[str] = []
-        for nxt in (wn, ln):
-            if nxt and nxt["game_id"] in my_game_ids and nxt["game_id"] not in succs:
-                succs.append(nxt["game_id"])
-        if succs:
-            _adj[g["game_id"]] = succs
+    # ── Game numbering: group by decision point, then sort chronologically ──
+    # Two games share a game_num ("Game N") iff they are alternative outcomes
+    # of the same upstream decision — a win/lose bracket pair, or a multi-way
+    # pool-finish branch (1st/2nd/3rd in pool). Rather than inferring that
+    # after the fact from column adjacency (the old 7-pass approach — BFS
+    # depth, chronological fallback, chronological remap, sibling-merge,
+    # parallel-path merge, day-merge, self-heal split), compute the
+    # decision-point key directly from each game's own slot text: a slot like
+    # "W#12"/"L#12"/"WIN GM #12" names the game it descends from, and a slot
+    # like "1stB-" names the pool group it descends from. Games with no such
+    # pattern (real, already-resolved games) are singleton groups keyed by
+    # their own game_id. Sort all groups by their earliest (date, time) and
+    # number them 1..N — one pass, no merge/split heuristics needed.
+    _known_gms = {_game_num(g["game_id"]) for g in my_games
+                  if _game_num(g["game_id"]) and not re.search(r'-[A-Z]+$', g["game_id"])}
 
-    # ── Game numbering: BFS depth from root game ────────────────────────────
-    # Win-path and lose-path games from the same parent are at the same depth
-    # and share the same game_num ("Game 2"), regardless of their time/date.
-    # Root = chronologically first game not reachable as a successor.
-    # Games not reached by BFS (pool placement orphans) get the fallback.
-    _game_num_map: dict[str, int] = {}
-    if _adj:
-        from collections import deque as _deque
-        _all_succs = {nid for succs in _adj.values() for nid in succs}
-        # Use only the earliest non-successor as root (not all of them).
-        # Other non-successors (pool placement games) fall to the fallback below.
-        _non_succs = sorted(
-            [g for g in my_games if g["game_id"] not in _all_succs],
-            key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
-        )
-        if _non_succs:
-            _game_num_map[_non_succs[0]["game_id"]] = 1
-            _bfs_q: _deque = _deque([(_non_succs[0]["game_id"], 1)])
-            while _bfs_q:
-                _gid, _d = _bfs_q.popleft()
-                for _nid in _adj.get(_gid, []):
-                    if _nid not in _game_num_map:
-                        _game_num_map[_nid] = _d + 1
-                        _bfs_q.append((_nid, _d + 1))
-    # Chronological fallback for games not reached by BFS (or no tree at all)
-    _slot_to_num: dict[tuple, int] = {}
-    _counter = max(_game_num_map.values(), default=0)
-    for g in sorted(
-        [g for g in my_games if g["game_id"] not in _game_num_map],
-        key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
-    ):
-        is_placement = any(_FINISH_SLOT_RE.match(s.strip())
-                           for s in (g["white_team"], g["dark_team"]))
-        _key = (g.get("date"), "__placement__") if is_placement else (g.get("date"), g.get("time"))
-        if _key not in _slot_to_num:
-            _counter += 1
-            _slot_to_num[_key] = _counter
-        _game_num_map[g["game_id"]] = _slot_to_num[_key]
-
-    # Re-number so game_num labels are strictly sequential and chronological.
-    # BFS assigns depth-based numbers; fallback appends at depth+N. Either can
-    # produce a higher-numbered group that starts earlier than a lower-numbered
-    # one (e.g. placement alternatives at 11 AM getting game_num=4 while the
-    # bracket follow-ons at 12 PM keep game_num=3). Fix: find each group's
-    # earliest game time, sort groups by that time, then re-label 1, 2, 3, ...
-    _gn_first: dict[int, tuple] = {}
-    for _g in my_games:
-        _gn = _game_num_map.get(_g["game_id"])
-        if _gn is None:
-            continue
-        _d, _t = _g.get("date"), _g.get("time")
-        if _d is None or _t is None:
-            continue
-        _key2 = (_d, _t)
-        if _gn not in _gn_first or _key2 < _gn_first[_gn]:
-            _gn_first[_gn] = _key2
-    if _gn_first:
-        _sorted_gn = sorted(_gn_first.keys(), key=lambda n: (_gn_first[n], n))
-        _gn_remap  = {old: (new + 1) for new, old in enumerate(_sorted_gn)}
-        _game_num_map = {gid: _gn_remap.get(gn, gn)
-                         for gid, gn in _game_num_map.items()}
-
-    # Merge adjacent win-only / lose-only placeholder columns into one.
-    # Happens when placement games fall out of BFS into the time-keyed fallback,
-    # giving their win and lose successors different game_nums even though they're
-    # siblings (both reachable from the same upstream game, just on different paths).
-    # Use bracket_path (already computed above) to get the win/lose assignment
-    # for each game, since path isn't set on the raw game objects yet.
-    def _raw_path(g):
-        if g.get("pool_rank"):
-            return f"pool_{g['pool_rank']}"
-        return bracket_path.get(g["game_id"])
-
-    _by_gn: dict[int, list] = {}
-    for g in my_games:
-        _gn = _game_num_map.get(g["game_id"])
-        if _gn:
-            _by_gn.setdefault(_gn, []).append(g)
-    for _n in sorted(_by_gn.keys()):
-        if _n + 1 not in _by_gn:
-            continue
-        _col_a, _col_b = _by_gn[_n], _by_gn[_n + 1]
-        # _by_gn is a snapshot taken before this loop starts. If _col_a's
-        # games were already absorbed into an earlier column by a prior
-        # merge in this same pass, treating stale _col_a as a fresh pivot
-        # here would cascade the merge into the NEXT (unrelated) group —
-        # e.g. pool F's 3rd-place branch (already merged left) would look
-        # "disjoint" from pool C's 1st/2nd-place branch and wrongly pull
-        # pool C partway into pool F's column. Skip consumed pivots.
-        if any(_game_num_map.get(g["game_id"]) != _n for g in _col_a):
-            continue
-        _paths_a = {_raw_path(g) for g in _col_a}
-        _paths_b = {_raw_path(g) for g in _col_b}
-        _all_ph_a = all(g.get("placeholder") for g in _col_a)
-        _all_ph_b = all(g.get("placeholder") for g in _col_b)
-        _is_win_lose_split = (_paths_a <= {"win", "lose"} and _paths_b <= {"win", "lose"}
-                               and _paths_a | _paths_b == {"win", "lose"})
-        # Same idea, but for pool-rank branches (1st/2nd/3rd in pool, etc.) —
-        # a 3-way (or more) branch can split across adjacent columns purely
-        # because two of the three games happen to share an exact kickoff
-        # time and the third doesn't (e.g. two games at 9:00 AM land in one
-        # column, the third at 10:00 AM falls into the next) even though all
-        # of them are the same decision point, not sequential rounds. Merge
-        # whenever both columns are entirely pool_N paths with no rank
-        # appearing in both (disjoint) -- same alternates-not-a-sequence
-        # test as win/lose, generalized past exactly two branches.
-        _is_pool_split = (bool(_paths_a) and bool(_paths_b)
-                          and all(p and p.startswith("pool_") for p in _paths_a)
-                          and all(p and p.startswith("pool_") for p in _paths_b)
-                          and not (_paths_a & _paths_b))
-        if _all_ph_a and _all_ph_b and (_is_win_lose_split or _is_pool_split):
-            for g in _col_b:
-                _game_num_map[g["game_id"]] = _n
-
-    # Close any gaps left by the sibling-merge (e.g. 1,2,3,4,6,7 → 1,2,3,4,5,6)
-    _used_gns = sorted(set(_game_num_map.values()))
-    _gap_remap = {old: (new + 1) for new, old in enumerate(_used_gns)}
-    _game_num_map = {gid: _gap_remap[gn] for gid, gn in _game_num_map.items()}
-
-    # Merge parallel bracket paths: when G4 has a win+lose pair, both paths produce a "G5"
-    # (one from winning the win-path game, one from winning the lose-path game).
-    # These land in consecutive game_num columns (N, N+1) instead of being stacked, because
-    # find_next_games can only return one winner_next per game, so one path falls out of BFS.
-    # Fix: if two consecutive single-game placeholder columns both reference games in the same
-    # parent game_num column via W#/L# slots, they're alternatives → merge into one column.
-    _pp_gid_by_num = {_game_num(g["game_id"]): g["game_id"]
-                      for g in my_games if _game_num(g["game_id"])}
-
-    def _pp_parent_gn(g):
-        for _sl in (g["white_team"], g["dark_team"]):
-            _pm = re.match(r"^([WL])\s*#\s*([^-\s]+)", _sl)
-            if _pm:
-                _ref = re.search(r"(\d+)$", _pm.group(2))
-                _rn = str(int(_ref.group(1))) if _ref else None
-                if _rn:
-                    _pred = _pp_gid_by_num.get(_rn)
-                    if _pred:
-                        return _game_num_map.get(_pred)
+    def _slot_ref(slot: str):
+        """('gm', ref_num) | ('pool', group_letter) | None for a bracket slot."""
+        s = slot.strip()
+        m = _GM_WINLOS_RE.search(s)
+        if m:
+            return ('gm', str(int(m.group(2))))
+        m = _WL_SLOT_RE.match(s)
+        if m:
+            ref = re.search(r"(\d+)$", m.group(1))
+            if ref:
+                return ('gm', str(int(ref.group(1))))
+        m = re.search(r'\bL(\d+)\s*$', s, re.IGNORECASE)
+        if m:
+            return ('gm', str(int(m.group(1))))
+        m = re.search(r'\bWinner\s+G?(\d+)', s, re.IGNORECASE)
+        if m:
+            return ('gm', str(int(m.group(1))))
+        m = re.search(r'\bLoser\s+G(\d+)', s, re.IGNORECASE)
+        if m:
+            return ('gm', str(int(m.group(1))))
+        fm = _FINISH_SLOT_RE.match(s) or _COMPOSITE_SLOT_RE.search(s)
+        if fm:
+            return ('pool', fm.group(1).upper())
         return None
 
-    _pp_changed = True
-    while _pp_changed:
-        _pp_changed = False
-        _pp_by_gn: dict[int, list] = {}
-        for _ppg in my_games:
-            _ppgn = _game_num_map.get(_ppg["game_id"])
-            if _ppgn:
-                _pp_by_gn.setdefault(_ppgn, []).append(_ppg)
-        for _ppn in sorted(_pp_by_gn.keys()):
-            if _ppn + 1 not in _pp_by_gn:
-                continue
-            _ppa, _ppb = _pp_by_gn[_ppn], _pp_by_gn[_ppn + 1]
-            if len(_ppa) != 1 or len(_ppb) != 1:
-                continue  # only merge single-game columns
-            if not all(g.get("placeholder") for g in _ppa + _ppb):
-                continue
-            _dates_ppa = {g.get("date") for g in _ppa if g.get("date")}
-            _dates_ppb = {g.get("date") for g in _ppb if g.get("date")}
-            if not _dates_ppa or not _dates_ppb or _dates_ppa != _dates_ppb:
-                continue  # must be same day to be alternatives
-            _par_ppa = {_pp_parent_gn(_ppa[0])}
-            _par_ppb = {_pp_parent_gn(_ppb[0])}
-            if (None not in _par_ppa and None not in _par_ppb
-                    and _par_ppa == _par_ppb):
-                _game_num_map[_ppb[0]["game_id"]] = _ppn
-                _pp_changed = True
-                break
+    def _decision_key(g):
+        # _expand_bracket_games already tagged pool-finish extras with the
+        # team's own group letter (resolved from the team's actual pool seed,
+        # scoped to the right weekend) -- trust that over re-parsing slot
+        # text, since an unresolved composite slot's OTHER side (the
+        # opponent's) can carry an unrelated group letter and there's no way
+        # to tell them apart from raw text alone (see 14Bag14's white slot
+        # "J1(1stA)-" vs. dark slot "J4(1stH)", only the latter is ours).
+        if g.get("pool_rank_group"):
+            return f"pool:{g['sheet']}:{g['pool_rank_group']}"
+        own_num = _game_num(g["game_id"])
+        white_m = team_matches(g["white_team"], team)
+        dark_m  = team_matches(g["dark_team"], team)
+        # If exactly one slot is already resolved to our own name, only that
+        # slot's pattern can be our decision point -- the other slot (if it
+        # also has a pattern) belongs to the opponent's unrelated lineage.
+        if white_m and not dark_m:
+            slots = (g["white_team"],)
+        elif dark_m and not white_m:
+            slots = (g["dark_team"],)
+        else:
+            slots = (g["white_team"], g["dark_team"])
+        refs = [r for r in (_slot_ref(s) for s in slots) if r]
+        # Prefer a 'gm' ref that resolves to a game already in our own game
+        # list — the other slot (if any) belongs to the opponent's unrelated
+        # bracket lineage and isn't a decision point of ours.
+        for kind, val in refs:
+            if kind == 'gm' and val in _known_gms and val != own_num:
+                return f"gm:{g['sheet']}:{val}"
+        for kind, val in refs:
+            if kind == 'pool':
+                return f"pool:{g['sheet']}:{val}"
+        for kind, val in refs:
+            if kind == 'gm':
+                return f"gm:{g['sheet']}:{val}"
+        return None
 
-    # Close any gaps left by the parallel-path merge
-    _used_gns_pp = sorted(set(_game_num_map.values()))
-    _gap_remap_pp = {old: (new + 1) for new, old in enumerate(_used_gns_pp)}
-    _game_num_map = {gid: _gap_remap_pp[gn] for gid, gn in _game_num_map.items()}
+    _groups: dict[str, list] = {}
+    for g in my_games:
+        dk = _decision_key(g) or f"self:{g['game_id']}"
+        _groups.setdefault(dk, []).append(g)
 
-    # Merge same-day pure-single-day columns into one column per day, but ONLY
-    # if their time ranges don't overlap. Overlapping time ranges mean the columns
-    # represent different sequential bracket rounds on the same day (e.g. quarterfinals
-    # at 10AM-2PM and semis at 2PM-6PM) and must stay separate.
-    # Skip for CCA format: CCA tournaments have sequential bracket games on the same
-    # day that must stay as separate GAME columns (e.g. 3:30 PM pool play ≠ 6:50 PM bracket).
-    _fmt_for_merge = my_games[0].get("format") if my_games else None
-    _by_gn2: dict[int, list] = {}
-    for _g2 in my_games:
-        _gn2 = _game_num_map.get(_g2["game_id"])
-        if _gn2:
-            _by_gn2.setdefault(_gn2, []).append(_g2)
-    _gn_unique_days: dict[int, set] = {
-        _n2: {_g2.get("date") for _g2 in _gs2 if _g2.get("date")}
-        for _n2, _gs2 in _by_gn2.items()
-    }
-    _day_pure_gns: dict = {}
-    for _n2, _days2 in _gn_unique_days.items():
-        if len(_days2) == 1:
-            _d2 = next(iter(_days2))
-            _day_pure_gns.setdefault(_d2, []).append(_n2)
-    for _d2, _gns2 in _day_pure_gns.items():
-        if len(_gns2) <= 1:
-            continue
-        if _fmt_for_merge == "CCA":
-            continue
-        # Only merge genuine bracket alternates (win/lose siblings of the same
-        # parent game) — never two independent real games, e.g. two round-robin
-        # pool games against different opponents on the same day. Without this,
-        # merging + the later self-heal split-back-out reassigns the split game
-        # to the end of the sequence instead of its correct chronological spot,
-        # scrambling game_num order relative to other days' games.
-        if not all(_raw_path(_g2) in ("win", "lose")
-                   for _n2 in _gns2 for _g2 in _by_gn2.get(_n2, [])):
-            continue
-        # Check for time-range overlap between adjacent columns (sorted by game_num).
-        # If B's earliest time <= A's latest time, they overlap → sequential rounds → skip.
-        _gns_sorted = sorted(_gns2)
-        _has_overlap = False
-        for _i2 in range(len(_gns_sorted) - 1):
-            _n_a, _n_b = _gns_sorted[_i2], _gns_sorted[_i2 + 1]
-            _times_a = [_g2["time"] for _g2 in _by_gn2.get(_n_a, []) if _g2.get("time") is not None]
-            _times_b = [_g2["time"] for _g2 in _by_gn2.get(_n_b, []) if _g2.get("time") is not None]
-            if not _times_a or not _times_b:
-                _has_overlap = True  # unknown times → safe default: don't merge
-                break
-            if min(_times_b) <= max(_times_a):
-                _has_overlap = True
-                break
-        if _has_overlap:
-            continue
-        _target_gn = min(_gns2)
-        for _n2 in _gns2:
-            if _n2 == _target_gn:
-                continue
-            for _g2 in _by_gn2.get(_n2, []):
-                _game_num_map[_g2["game_id"]] = _target_gn
-    # Re-close gaps after day-merge
-    _used_gns2 = sorted(set(_game_num_map.values()))
-    _gap_remap2 = {old: (new + 1) for new, old in enumerate(_used_gns2)}
-    _game_num_map = {gid: _gap_remap2[gn] for gid, gn in _game_num_map.items()}
+    # A shared decision key only means "mutually exclusive alternatives" when
+    # at most one member has already become real — a decision resolves to
+    # exactly one outcome, so two or more non-placeholder games can never
+    # legitimately share one decision point. Some tournaments reuse the same
+    # bracket-seed label (e.g. "2ndB", or "WIN GM #399") across multiple
+    # SEQUENTIAL real rounds for a team that has already claimed that seed —
+    # those games all resolve to the same decision_key but are not
+    # alternatives of each other. Pull every such real game out into its own
+    # singleton (ordered purely chronologically); any remaining still-
+    # uncertain placeholders stay merged as genuine alternatives.
+    for dk in list(_groups.keys()):
+        members = _groups[dk]
+        real = [m for m in members if not m.get("placeholder")]
+        if len(real) > 1:
+            placeholders = [m for m in members if m.get("placeholder")]
+            del _groups[dk]
+            for m in real:
+                _groups[f"self:{m['game_id']}"] = [m]
+            if placeholders:
+                _groups[dk] = placeholders
 
-    # Self-heal: if multiple non-placeholder games in the same game_num group fall on
-    # the same day at different times, they are sequential rounds that were incorrectly
-    # merged. Split them back out — earlier time keeps the original game_num, each later
-    # time slot gets the next available game_num.
-    _heal_by_gn: dict[int, list] = {}
-    for _gh in my_games:
-        _gn_h = _game_num_map.get(_gh["game_id"])
-        if _gn_h is not None:
-            _heal_by_gn.setdefault(_gn_h, []).append(_gh)
-    _heal_splits: list[tuple[str, int]] = []
-    _heal_next = max(_game_num_map.values(), default=0) + 1
-    for _gn_h, _grp_h in sorted(_heal_by_gn.items()):
-        _days_h = {_g.get("date") for _g in _grp_h if _g.get("date")}
-        if len(_days_h) != 1:
-            continue
-        _real_h = [_g for _g in _grp_h
-                   if not _g.get("placeholder") and _g.get("time") is not None]
-        _real_times = sorted({_g.get("time") for _g in _real_h})
-        if len(_real_times) <= 1:
-            continue
-        # Win/lose path siblings land in the same column at different times —
-        # they are alternatives, not sequential rounds. Don't split them.
-        _real_paths_h = {_raw_path(_g) for _g in _real_h}
-        if "win" in _real_paths_h and "lose" in _real_paths_h:
-            continue
-        for _th in _real_times[1:]:
-            _new_gn = _heal_next
-            _heal_next += 1
-            for _gh in _grp_h:
-                if _gh.get("time") == _th:
-                    _heal_splits.append((_gh["game_id"], _new_gn))
-    for _gid_h, _new_gn_h in _heal_splits:
-        _game_num_map[_gid_h] = _new_gn_h
-    if _heal_splits:
-        _used_gns3 = sorted(set(_game_num_map.values()))
-        _gap_remap3 = {old: (new + 1) for new, old in enumerate(_used_gns3)}
-        _game_num_map = {gid: _gap_remap3[gn] for gid, gn in _game_num_map.items()}
+    def _group_earliest(dk):
+        members = _groups[dk]
+        return min((m.get("date") or date.min, m.get("time") or datetime.min.time())
+                   for m in members)
+
+    _sorted_keys = sorted(_groups.keys(), key=lambda dk: (_group_earliest(dk), dk))
+    _game_num_map: dict[str, int] = {}
+    for _i, _dk in enumerate(_sorted_keys, start=1):
+        for _m in _groups[_dk]:
+            _game_num_map[_m["game_id"]] = _i
 
     show_records = tournament_id not in WPL_TOURNAMENTS
     sheet_records: dict = {}
