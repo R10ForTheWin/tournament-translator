@@ -409,7 +409,12 @@ def _team_sort_key(team: dict):
 # ── Game helpers ───────────────────────────────────────────────────────────────
 
 _PREFIX_RE = re.compile(
-    r"^(?:\d+(?:st|nd|rd|th)\s*(?:in\s+)?[A-Z]+\s*-\s*|[A-Z]+\d+\s*\([^)]+\)\s*-\s*|[WL]\s*#\s*\d+\s*-?\s*|[A-Z]+\d+\s*-\s*|\d+\s*-\s*)(.*)",
+    # [A-Z]+(?:_[A-Z]+)? in the ordinal branch also covers compound
+    # tier_pool codes seen in NJO's "Public Sched" export ("3RD AU_P-",
+    # "2ND BZ_R-" -- tier "AU"/"BZ" + pool "P"/"R"), which the plain
+    # [A-Z]+ alternative can't match past the underscore, leaving the whole
+    # slot un-stripped and surfacing as a phantom team name.
+    r"^(?:\d+(?:st|nd|rd|th)\s*(?:in\s+)?[A-Z]+(?:_[A-Z]+)?\s*-\s*|[A-Z]+\d+\s*\([^)]+\)\s*-\s*|[WL]\s*#\s*\d+\s*-?\s*|[A-Z]+\d+\s*-\s*|\d+\s*-\s*)(.*)",
     re.IGNORECASE,
 )
 

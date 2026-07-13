@@ -849,6 +849,34 @@ def test_trojan_team_names_clean() -> int:
     return failures
 
 
+def test_strip_prefix_compound_pool_codes() -> int:
+    """strip_prefix must handle compound "TIER_POOL" slot codes (e.g. "AU_P",
+    "BZ_R") seen in real Junior Olympics data, not just plain single-letter
+    pool codes ("A", "B").
+
+    The bug: _PREFIX_RE's [A-Z]+ can't match past an underscore, so a slot
+    like "3RD AU_P-ARROYO GRANDE" fails to match the prefix pattern at all and
+    strip_prefix returns the whole raw string unchanged -- surfacing as a
+    phantom team name. Found via a CCA-postmortem-style regression sweep
+    against real 2025 Junior Olympics data (471 occurrences in that file
+    alone) ahead of the 2026 Junior Olympics tournament.
+    """
+    from app import strip_prefix as _strip_prefix
+
+    failures = 0
+    cases = [
+        ("3RD AU_P-ARROYO GRANDE", "ARROYO GRANDE"),
+        ("2ND BZ_R-BURLINGAME", "BURLINGAME"),
+        ("1ST CU_C", "1ST CU_C"),  # unresolved slot, no name yet -- left as-is
+    ]
+    for raw, expected in cases:
+        got = _strip_prefix(raw)
+        ok = _check(f"strip_prefix({raw!r})", got == expected, f"got {got!r}, expected {expected!r}")
+        if not ok:
+            failures += 1
+    return failures
+
+
 def test_no_slot_like_opponents() -> int:
     """Direct (non-placeholder) game cards must never show a slot-like opponent label.
 
@@ -1098,6 +1126,11 @@ def main():
     print("CCA game-num tests (win/lose paths share same game_num)")
     print("=" * 60)
     total_failures += test_cca_game_nums()
+
+    print("\n" + "=" * 60)
+    print("strip_prefix compound tier_pool codes (Junior Olympics regression guard)")
+    print("=" * 60)
+    total_failures += test_strip_prefix_compound_pool_codes()
 
     print("\n" + "=" * 60)
     print("Trojan team name cleanliness (no raw slot strings as team names)")
