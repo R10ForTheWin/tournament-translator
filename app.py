@@ -3368,7 +3368,7 @@ def _bracket_has_cycle(nodes: list) -> bool:
 
 
 def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
-                           serialized_nodes: list = None) -> tuple[str, list]:
+                           serialized_nodes: list = None, is_njo: bool = False) -> tuple[str, list]:
     """Deterministic bracket integrity checks.
 
     Returns (confidence, warnings) where confidence is 'green' | 'yellow' | 'red'.
@@ -3416,9 +3416,18 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
     # ── Node count ceiling ────────────────────────────────────────────────────
     # FORMAT A max = 7 (root + 2 Saturday + 4 Sunday).
     # FORMAT B max ≈ 5–6.  Anything above 7 = runaway expansion.
-    if len(nodes) > 7:
+    # NJO is structurally different: _build_njo_game_tree legitimately starts a
+    # fresh traversal for every disconnected segment a team has (pool phase,
+    # placement phase, sometimes a third consolation phase), each with its own
+    # speculative win/lose branching -- confirmed against real 2025 NJO data,
+    # a genuine, single-lineage bracket routinely lands at 9-10 nodes with
+    # nothing wrong. Use the same generous cap _expand_bracket_games already
+    # uses elsewhere as a true runaway-expansion safety net, not a tight
+    # structural bound that doesn't apply to this format.
+    node_ceiling = 20 if is_njo else 7
+    if len(nodes) > node_ceiling:
         red.append(
-            f"bracket has {len(nodes)} nodes — expected ≤7; "
+            f"bracket has {len(nodes)} nodes — expected ≤{node_ceiling}; "
             "likely a mis-identified prelim or finish-slot pulling in unrelated games"
         )
 
@@ -4222,7 +4231,8 @@ def api_games(tournament_id, team):
 
     if wpl_bracket:
         bracket_confidence, bracket_warnings = _validate_wpl_bracket(
-            team, tree, upcoming=upcoming_out, serialized_nodes=wpl_bracket)
+            team, tree, upcoming=upcoming_out, serialized_nodes=wpl_bracket,
+            is_njo=(tournament_id in _NJO_TOURNAMENTS))
     elif is_bracket_tournament and my_games:
         # Bracket expected but missing — hard RED
         bracket_confidence = "red"
