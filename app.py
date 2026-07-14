@@ -4342,8 +4342,14 @@ def api_games(tournament_id, team):
                              or tournament_id in {"jo-quals", "junior-olympics"})
 
     if wpl_bracket:
+        # Pass raw (pre-serialization) upcoming games, not upcoming_out --
+        # upcoming_out's "date" field is already a display string
+        # (_fmt_date), while `tree`'s nodes carry real date objects.
+        # _validate_wpl_bracket compares dates across both; mixing formatted
+        # strings with date objects crashes that comparison.
+        _raw_upcoming = [g for g in my_games if not g.get("played")]
         bracket_confidence, bracket_warnings = _validate_wpl_bracket(
-            team, tree, upcoming=upcoming_out, serialized_nodes=wpl_bracket,
+            team, tree, upcoming=_raw_upcoming, serialized_nodes=wpl_bracket,
             is_njo=(tournament_id in _NJO_TOURNAMENTS))
     elif is_bracket_tournament and my_games:
         # Bracket expected but missing — hard RED
