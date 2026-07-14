@@ -2088,6 +2088,7 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
         node["src_path"]       = src_path
         node["win_next_ids"]   = []
         node["lose_next_ids"]  = []
+        node["pool_next"]      = {}  # {game_id: rank} -- pool-finish placement branches
         node["sunday_pair_id"] = None
         node["tree_format"]    = "bracket"
         return node
@@ -2162,6 +2163,55 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
     for g in my_games:
         if g["game_id"] not in seen:
             _follow(g, None, None, False)
+
+    # Pool-finish placement games (e.g. "2ndB-") are a separate branch type
+    # from win/lose bracket games -- which one is real depends on the team's
+    # pool STANDING, not a single game's result, so they can't be reached via
+    # w_to/l_to or a W#/L# reference at all. Without this, the tree silently
+    # omits the post-pool placement round even though it's a real upcoming
+    # game (confirmed live: TROJAN GOLD's 18U Invite bracket tree stopped at
+    # 2 nodes despite a 3rd, real placement game being reachable). Attach
+    # every rank candidate as a pool_next branch of the team's LAST pool-
+    # phase game, the same relationship _expand_bracket_games already
+    # captures for the schedule list.
+    _team_pool_group = None
+    for g in my_games:
+        for slot in (g["white_team"], g["dark_team"]):
+            if _POOL_SLOT_RE.match(slot.strip()) and team_matches(slot, team):
+                _team_pool_group = _POOL_SLOT_RE.match(slot.strip()).group(1).upper()
+                break
+        if _team_pool_group:
+            break
+    if _team_pool_group:
+        pool_phase_games = sorted(
+            [g for g in my_games
+             for slot in (g["white_team"], g["dark_team"])
+             if _POOL_SLOT_RE.match(slot.strip()) and team_matches(slot, team)
+             and g["game_id"] in seen],
+            key=lambda g: (g.get("date") or date.min, g.get("time") or datetime.min.time()),
+        )
+        if pool_phase_games:
+            anchor = pool_phase_games[-1]
+            anchor_node = next((n for n in out if n["game_id"] == anchor["game_id"]), None)
+            if anchor_node:
+                for g2 in division_games:
+                    if g2["game_id"] in seen:
+                        continue
+                    for slot in (g2["white_team"], g2["dark_team"]):
+                        s2 = slot.strip()
+                        fm = _FINISH_SLOT_RE.match(s2) or _COMPOSITE_SLOT_RE.search(s2)
+                        if fm and fm.group(1).upper() == _team_pool_group:
+                            rank_m = re.search(r'(\d+)', fm.group(0))
+                            if not rank_m:
+                                break
+                            rank = int(rank_m.group(1))
+                            has_score = (g2.get("played") and g2.get("white_score") is not None
+                                         and g2.get("dark_score") is not None)
+                            child = _follow(g2, anchor["game_id"], f"pool_{rank}",
+                                             not has_score, depth=1)
+                            if child:
+                                anchor_node["pool_next"][g2["game_id"]] = rank
+                            break
 
     return out
 
@@ -3498,6 +3548,8 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
         if not n.get("src_game_id"):
             continue  # root exempt
         gid = n["game_id"]
+        if (n.get("src_path") or "").startswith("pool_"):
+            continue  # pool-finish branch -- tree builder already verified the group match
         direct = (team_matches(n.get("white_team", ""), team)
                   or team_matches(n.get("dark_team", ""), team))
         if not direct:
@@ -3602,14 +3654,17 @@ def _compute_tree_layout(nodes: list, team: str) -> dict:
         return {}
 
     node_map = {n["game_id"]: n for n in nodes}
-    root = next((n for n in nodes if not n.get("src_game_id")), None)
-    if not root:
+    roots = [n for n in nodes if not n.get("src_game_id")]
+    if not roots:
         return {}
 
-    # BFS: column = depth from root (1-indexed)
+    # BFS: column = depth from root (1-indexed). NJO trees can have multiple
+    # disconnected segments (pool phase + a later placement/consolation phase
+    # with no advancement link between them) -- each is its own root, so BFS
+    # must start from all of them, not just the first found.
     from collections import deque as _dq
     column_map: dict[str, int] = {}
-    q = _dq([(root["game_id"], 1)])
+    q = _dq([(r["game_id"], 1) for r in roots])
     visited: set = set()
     while q:
         gid, col = q.popleft()
@@ -3620,7 +3675,9 @@ def _compute_tree_layout(nodes: list, team: str) -> dict:
         n = node_map.get(gid)
         if not n:
             continue
-        for nid in (n.get("win_next_ids") or []) + (n.get("lose_next_ids") or []):
+        next_ids = ((n.get("win_next_ids") or []) + (n.get("lose_next_ids") or [])
+                    + list((n.get("pool_next") or {}).keys()))
+        for nid in next_ids:
             if nid not in visited:
                 q.append((nid, col + 1))
 
@@ -3636,6 +3693,8 @@ def _compute_tree_layout(nodes: list, team: str) -> dict:
                 path_cond[nid] = "win"
             else:
                 path_cond[nid] = "lose"
+        for nid, rank in (n.get("pool_next") or {}).items():
+            path_cond[nid] = f"pool_{rank}"
 
     # eliminated: propagate from played results
     eliminated: set = set()
