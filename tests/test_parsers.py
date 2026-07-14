@@ -971,6 +971,81 @@ def test_game_num_column_integrity() -> int:
     return failures
 
 
+def test_game_num_date_monotonic() -> int:
+    """GAME numbers must track chronological order: GAME 2 can never start
+    before GAME 1, across every real Trojan team/tournament combo currently
+    configured. api_games's numbering pipeline guarantees this by
+    construction (groups are sorted by earliest occurrence before being
+    numbered), but this test is the permanent trip-wire against a future
+    change to that code silently reintroducing an ordering bug -- the same
+    "obvious mistake" a human giving the bracket a common-sense look would
+    catch, done deterministically instead.
+    """
+    from app import app as _flask_app, KNOWN_TOURNAMENTS
+    import json as _json
+
+    # api_games serializes date/time as display strings ("Saturday, Jan 31",
+    # "8:00 AM") for the frontend -- comparing those directly with < is
+    # exactly the bug documented elsewhere in this app (never string-compare
+    # time labels; "12:00 PM" < "8:00 AM" alphabetically). Parse them back
+    # into comparable (month, day) / (hour, minute) tuples instead.
+    _MONTHS = {m: i + 1 for i, m in enumerate(
+        ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])}
+
+    def _parse_date_str(s):
+        if not s or s == "TBD":
+            return None
+        m = re.search(r'([A-Za-z]{3})\w*\s+(\d+)$', s)
+        return (_MONTHS[m.group(1)], int(m.group(2))) if m else None
+
+    def _parse_time_str(s):
+        if not s or s == "TBD":
+            return (0, 0)
+        m = re.match(r'(\d+):(\d+)\s*(AM|PM)', s, re.IGNORECASE)
+        if not m:
+            return (0, 0)
+        h, mi, ap = int(m.group(1)), int(m.group(2)), m.group(3).upper()
+        if ap == "PM" and h != 12: h += 12
+        if ap == "AM" and h == 12: h = 0
+        return (h, mi)
+
+    failures = 0
+    with _flask_app.test_client() as c:
+        for t in KNOWN_TOURNAMENTS:
+            tid = t["id"]
+            r = c.get(f"/api/trojan-teams/{tid}")
+            if r.status_code != 200:
+                continue
+            for team in (_json.loads(r.data) or []):
+                name, sheet = team.get("name"), team.get("sheet")
+                qs = f"?sheet={sheet}" if sheet else ""
+                gr = c.get(f"/api/games/{tid}/{name}{qs}")
+                if gr.status_code != 200:
+                    continue
+                data = _json.loads(gr.data)
+                games = data.get("played", []) + data.get("upcoming", [])
+                earliest: dict[int, tuple] = {}
+                for g in games:
+                    gnum = g.get("game_num")
+                    d = _parse_date_str(g.get("date"))
+                    if gnum is None or d is None:
+                        continue
+                    key = (d, _parse_time_str(g.get("time")))
+                    if gnum not in earliest or key < earliest[gnum]:
+                        earliest[gnum] = key
+                gn_sorted = sorted(earliest)
+                for a, b in zip(gn_sorted, gn_sorted[1:]):
+                    ok = _check(
+                        f"{tid}/{name}: GAME {a} ({earliest[a]}) before GAME {b} ({earliest[b]})",
+                        earliest[a] <= earliest[b],
+                        "game numbers are out of chronological order",
+                    )
+                    if not ok:
+                        failures += 1
+    return failures
+
+
 def test_njo_tree_multi_phase() -> int:
     """NJO trees must include every one of the team's real games, even when they
     span multiple disconnected segments (a round-robin pool phase with no
@@ -1146,6 +1221,11 @@ def main():
     print("Game-num column integrity (no sequential rounds merged into one column)")
     print("=" * 60)
     total_failures += test_game_num_column_integrity()
+
+    print("\n" + "=" * 60)
+    print("Game-num chronological order (GAME 2 never starts before GAME 1)")
+    print("=" * 60)
+    total_failures += test_game_num_date_monotonic()
 
     print("\n" + "=" * 60)
     print("Last meeting availability (cross-tournament history search active)")

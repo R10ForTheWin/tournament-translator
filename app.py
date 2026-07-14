@@ -4059,6 +4059,28 @@ def api_games(tournament_id, team):
         for _m in _groups[_dk]:
             _game_num_map[_m["game_id"]] = _i
 
+    # Defensive invariant check: game_num should always track the chronological
+    # order of each group's earliest occurrence -- guaranteed by construction
+    # above, but a trip-wire here catches it immediately (in server logs) if
+    # any future change to this function silently breaks that guarantee,
+    # rather than a scrambled-looking bracket reaching a parent's phone
+    # unnoticed. Same spirit as the "does the LLM give this a common-sense
+    # check" ask -- deterministic and free instead of a model call.
+    _gn_earliest: dict[int, tuple] = {}
+    for _g in my_games:
+        _gn = _game_num_map.get(_g["game_id"])
+        if _gn is None:
+            continue
+        _key = (_g.get("date") or date.min, _g.get("time") or datetime.min.time())
+        if _gn not in _gn_earliest or _key < _gn_earliest[_gn]:
+            _gn_earliest[_gn] = _key
+    _gn_sorted = sorted(_gn_earliest)
+    for _a, _b in zip(_gn_sorted, _gn_sorted[1:]):
+        if _gn_earliest[_a] > _gn_earliest[_b]:
+            print(f"[game-num-order] {team!r} | {tournament_id}: GAME {_a} starts "
+                  f"{_gn_earliest[_a]} but GAME {_b} starts earlier at {_gn_earliest[_b]} "
+                  "— game numbers are out of chronological order", flush=True)
+
     show_records = tournament_id not in WPL_TOURNAMENTS
     sheet_records: dict = {}
     if show_records:
