@@ -1096,6 +1096,58 @@ def test_njo_tree_multi_phase() -> int:
     return failures
 
 
+def test_jo_2026_teams_reachable() -> int:
+    """Every known Trojan Junior Olympics 2026 team must still be found on
+    the live schedule, return real games, and never show red bracket
+    confidence.
+
+    The JO schedule is a live Google Sheet the organizer edits continuously
+    (confirmed live 2026-07-14: two fetches minutes apart returned different
+    game_ids for the same team/sheet), so this intentionally does NOT pin
+    exact game_ids or game counts the way CHAMPIONSHIP_CHECKS does for the
+    static WPL fixture -- it would go stale within days. Instead it's a
+    loose regression guard against a genuine team disappearing entirely
+    (organizer re-seeding removed them from this sheet/division), a crash,
+    or a real structural break (red confidence) -- as opposed to yellow,
+    which is expected and correct this early before results start rolling in.
+    """
+    from app import app as _flask_app
+    import json as _json
+
+    failures = 0
+    # (team, sheet, min_games) -- confirmed live 2026-07-14 against the
+    # public 2026 JO schedule (see JO_SHEETS_URL in app.py).
+    checks = [
+        ("TROJAN CARDINAL", "18U_M_Champ",      1),
+        ("TROJAN GOLD",     "18U_M_Invite 24",  1),
+        ("TROJAN CARDINAL", "16U_M_Champ",      1),
+        ("TROJAN GOLD",     "16U_M_Classic",    1),
+        ("TROJAN CARDINAL", "14U_M_Classic",    1),
+        ("TROJAN CARDINAL", "12U_M_Classic_53", 1),
+        ("TROJAN GOLD",     "12U_M_Classic_53", 1),
+    ]
+    with _flask_app.test_client() as c:
+        for team, sheet, min_games in checks:
+            r = c.get(f"/api/games/junior-olympics/{team}?sheet={sheet}")
+            ok = _check(f"{team}/{sheet}: request succeeds", r.status_code == 200,
+                        f"status {r.status_code}")
+            if not ok:
+                failures += 1
+                continue
+            data = _json.loads(r.data)
+            games = data.get("played", []) + data.get("upcoming", [])
+            ok = _check(f"{team}/{sheet}: >= {min_games} game(s) found",
+                        len(games) >= min_games, f"got {len(games)}")
+            if not ok:
+                failures += 1
+            conf = data.get("bracket_confidence")
+            ok = _check(f"{team}/{sheet}: bracket confidence is not red",
+                        conf != "red", f"got {conf!r}, warnings={data.get('bracket_warnings')}")
+            if not ok:
+                failures += 1
+    return failures
+
+
 def test_last_meeting_available() -> int:
     """At least one upcoming game per Trojan team should have a last_meeting populated,
     confirming cross-tournament history search is active.
@@ -1234,6 +1286,11 @@ def main():
     print("Game-num chronological order (GAME 2 never starts before GAME 1)")
     print("=" * 60)
     total_failures += test_game_num_date_monotonic()
+
+    print("\n" + "=" * 60)
+    print("JO 2026 teams reachable (live schedule regression guard)")
+    print("=" * 60)
+    total_failures += test_jo_2026_teams_reachable()
 
     print("\n" + "=" * 60)
     print("Last meeting availability (cross-tournament history search active)")
