@@ -3585,22 +3585,23 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
                 if nid in node_map and nid not in visited2:
                     stack.append((node_map[nid], cur_dt or parent_dt))
 
-    # ── Missing Sunday node ────────────────────────────────────────────────────
+    # ── Missing later-day node ─────────────────────────────────────────────────
+    # Originally hardcoded to Saturday/Sunday, which silently never fired for
+    # Junior Olympics (a Thu-Sun event) -- generalized to "day 1 of the
+    # upcoming games this team can see" vs "any later day", so it applies to
+    # any tournament's actual day span instead of assuming a 2-day weekend.
     if upcoming:
-        from datetime import date as _date
         upcoming_dates = {g.get("date") for g in upcoming if g.get("date")}
         node_dates    = {n.get("date") for n in nodes   if n.get("date")}
-        all_sat = upcoming_dates and all(
-            isinstance(d, _date) and d.weekday() == 5 for d in upcoming_dates
-        )
-        has_sun_node = any(
-            isinstance(d, _date) and d.weekday() == 6 for d in node_dates
-        )
-        if all_sat and len(upcoming_dates) >= 1 and not has_sun_node:
-            yellow.append(
-                f"all {len(upcoming)} upcoming game(s) are on Saturday with no Sunday "
-                "node in bracket — Sunday placement data may be missing"
-            )
+        if upcoming_dates:
+            first_day = min(upcoming_dates)
+            all_first_day = all(d == first_day for d in upcoming_dates)
+            has_later_node = any(d > first_day for d in node_dates)
+            if all_first_day and not has_later_node:
+                yellow.append(
+                    f"all {len(upcoming)} upcoming game(s) are on {first_day} with no "
+                    "later-day node in bracket — later-round placement data may be missing"
+                )
 
     # ── Unresolved opponent slot strings (yellow — data quality only) ──────────
     if serialized_nodes:
