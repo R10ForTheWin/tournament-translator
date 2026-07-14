@@ -419,8 +419,15 @@ _PREFIX_RE = re.compile(
     # tier_pool codes seen in NJO's "Public Sched" export ("3RD AU_P-",
     # "2ND BZ_R-" -- tier "AU"/"BZ" + pool "P"/"R"), which the plain
     # [A-Z]+ alternative can't match past the underscore, leaving the whole
-    # slot un-stripped and surfacing as a phantom team name.
-    r"^(?:\d+(?:st|nd|rd|th)\s*(?:in\s+)?[A-Z]+(?:_[A-Z]+)?\s*-\s*|[A-Z]+\d+\s*\([^)]+\)\s*-\s*|[WL]\s*#\s*\d+\s*-?\s*|[A-Z]+\d+\s*-\s*|\d+\s*-\s*)(.*)",
+    # slot un-stripped and surfacing as a phantom team name. The optional
+    # (?:\([^)]+\)\s*)? right before the dash covers the same tier_pool
+    # code combined with a parenthetical win/loss reference, e.g.
+    # "2ND BZ_S(L97)-TROJAN GOLD" or "1ST AU_S(W97)-TPCM SHARKS" -- found
+    # live in the real 2026 Junior Olympics sheet, unresolved as of
+    # 2026-07-14 but due to resolve to a real team name (including one of
+    # our own) as pool play concludes.
+    r"^(?:\d+(?:st|nd|rd|th)\s*(?:in\s+)?[A-Z]+(?:_[A-Z]+)?\s*(?:\([^)]+\)\s*)?-\s*"
+    r"|[A-Z]+\d+\s*\([^)]+\)\s*-\s*|[WL]\s*#\s*\d+\s*-?\s*|[A-Z]+\d+\s*-\s*|\d+\s*-\s*)(.*)",
     re.IGNORECASE,
 )
 

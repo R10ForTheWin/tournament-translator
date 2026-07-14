@@ -868,6 +868,14 @@ def test_strip_prefix_compound_pool_codes() -> int:
         ("3RD AU_P-ARROYO GRANDE", "ARROYO GRANDE"),
         ("2ND BZ_R-BURLINGAME", "BURLINGAME"),
         ("1ST CU_C", "1ST CU_C"),  # unresolved slot, no name yet -- left as-is
+        # Nested variant: tier_pool code + parenthetical win/loss reference,
+        # found live in the real 2026 Junior Olympics sheet (currently
+        # unresolved as of 2026-07-14, but due to resolve to a real team
+        # name -- including TROJAN GOLD itself -- as pool play concludes).
+        ("1ST AU_S(W97)-TPCM SHARKS", "TPCM SHARKS"),
+        ("2ND BZ_S(L97)-TROJAN GOLD", "TROJAN GOLD"),
+        ("3RD BZ_S (W111)-VEGAS RENEGADES", "VEGAS RENEGADES"),
+        ("1ST BZ_S(W97)", "1ST BZ_S(W97)"),  # unresolved -- left as-is
     ]
     for raw, expected in cases:
         got = _strip_prefix(raw)
