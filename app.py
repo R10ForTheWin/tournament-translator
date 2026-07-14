@@ -67,13 +67,19 @@ _JO_QUALS_SENTINEL   = "__jo_quals__"
 QUIKSILVER_SHEETS_ID  = "18yVkTqV4amoIyESXsB1RzZSs1TI0_EKQ"
 QUIKSILVER_GID_16U     = "472292980"
 
+# 2026 Junior Olympics public schedule (Season 2, boys divisions). Single
+# tournament per doc -- no gid-scoping needed (confirmed no cross-tournament
+# contamination, unlike Quiksilver Cup's shared sheet).
+JO_SHEETS_ID  = "1ycEOkayVwo_h37vL98PTXbzEnBpRU_-3S9l6NeiwCc4"
+JO_SHEETS_URL = f"https://docs.google.com/spreadsheets/d/{JO_SHEETS_ID}/export?format=xlsx"
+
 TOURNAMENT_URLS = {
     "kap7-intl":      "",  # update before Jan 2027 tournament
     "kap7-cup":       "https://onedrive.live.com/:x:/g/personal/6f253ef3afcfe1c8/IQDxdebmKQFASaux2nx7kWcvASg2jqJRHO5Kj9EwKW4D82o?rtime=GrzV592c3kg&redeem=aHR0cHM6Ly8xZHJ2Lm1zL3gvYy82ZjI1M2VmM2FmY2ZlMWM4L0lRRHhkZWJtS1FGQVNhdXgybng3a1djdkFTZzJqcUpSSE81S2o5RXdLVzREODJvP2U9WEdNa1FB",
     "turbo-cup":      "https://1drv.ms/x/c/6f253ef3afcfe1c8/IQB7PJXtfzNsT74lTYhWpOeXASFcmpB96L1OpYL_E6HBMM0?e=UsRrMb",
     "newport-invite": "https://onedrive.live.com/download?resid=6F253EF3AFCFE1C8!66694&authkey=!AO8pyWY0qwL2sYE",
     "jo-quals":       "",  # update when schedule is posted
-    "junior-olympics":"",  # update when schedule is posted
+    "junior-olympics": JO_SHEETS_URL,
     "quiksilver-cup":  (f"https://docs.google.com/spreadsheets/d/{QUIKSILVER_SHEETS_ID}"
                          f"/export?format=xlsx&gid={QUIKSILVER_GID_16U}"),
 }
@@ -2099,32 +2105,46 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
         played = game.get("played", False)
         won = _team_won(team, game) if played else None  # True/False/None
 
-        # Follow win path
+        # Advancement is normally tracked via the w_to/l_to columns. Some
+        # seasons' sheets leave those columns blank and encode advancement
+        # the older way instead -- W#N/L#N text inside the next game's own
+        # slot (the same convention WPL/CCA formats use). Resolve w_to/l_to
+        # first; for whichever side is missing, fall back to the same
+        # slot-reference lookup find_next_games uses elsewhere, so the tree
+        # isn't silently truncated to a single node when the columns are
+        # empty. Confirmed live: the 2026 JO sheet leaves w_to/l_to blank
+        # for every game and relies entirely on the text-slot convention.
         w_num = str(game.get("w_to")) if game.get("w_to") is not None else None
-        if w_num and w_num in gnum_map:
-            next_g = gnum_map[w_num]
-            if next_g["game_id"] not in seen:
-                # Only follow if team appears or result unknown
-                involved = (team_matches(next_g["white_team"], team)
-                            or team_matches(next_g["dark_team"], team))
-                next_ph = is_ph or (won is False)  # placeholder if we lost
-                if involved or won is not False:
-                    child = _follow(next_g, game["game_id"], "win", next_ph, depth + 1)
-                    if child:
-                        node["win_next_ids"].append(next_g["game_id"])
+        l_num = str(game.get("l_to")) if game.get("l_to") is not None else None
+        win_next_g  = gnum_map.get(w_num) if w_num else None
+        lose_next_g = gnum_map.get(l_num) if l_num else None
+        if win_next_g is None or lose_next_g is None:
+            fb_win, fb_lose = find_next_games(game, division_games)
+            if win_next_g is None:
+                win_next_g = fb_win
+            if lose_next_g is None:
+                lose_next_g = fb_lose
+
+        # Follow win path
+        if win_next_g and win_next_g["game_id"] not in seen:
+            # Only follow if team appears or result unknown
+            involved = (team_matches(win_next_g["white_team"], team)
+                        or team_matches(win_next_g["dark_team"], team))
+            next_ph = is_ph or (won is False)  # placeholder if we lost
+            if involved or won is not False:
+                child = _follow(win_next_g, game["game_id"], "win", next_ph, depth + 1)
+                if child:
+                    node["win_next_ids"].append(win_next_g["game_id"])
 
         # Follow lose path
-        l_num = str(game.get("l_to")) if game.get("l_to") is not None else None
-        if l_num and l_num in gnum_map:
-            next_g = gnum_map[l_num]
-            if next_g["game_id"] not in seen:
-                involved = (team_matches(next_g["white_team"], team)
-                            or team_matches(next_g["dark_team"], team))
-                next_ph = is_ph or (won is True)  # placeholder if we won
-                if involved or won is not True:
-                    child = _follow(next_g, game["game_id"], "lose", next_ph, depth + 1)
-                    if child:
-                        node["lose_next_ids"].append(next_g["game_id"])
+        if lose_next_g and lose_next_g["game_id"] not in seen:
+            involved = (team_matches(lose_next_g["white_team"], team)
+                        or team_matches(lose_next_g["dark_team"], team))
+            next_ph = is_ph or (won is True)  # placeholder if we won
+            if involved or won is not True:
+                child = _follow(lose_next_g, game["game_id"], "lose", next_ph, depth + 1)
+                if child:
+                    node["lose_next_ids"].append(lose_next_g["game_id"])
 
         return node
 
@@ -3459,8 +3479,21 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
 
     # ── Foreign game detection ─────────────────────────────────────────────────
     # Each non-root node must name the team directly OR reference a tree game
-    # via WIN GM #N / LOS GM #N.
+    # via WIN GM #N / LOS GM #N (WPL championship style) or plain W#N / L#N
+    # (WPL/CCA/NJO's older convention -- e.g. the 2026 JO sheet, which leaves
+    # the dedicated w_to/l_to columns blank and encodes advancement this way).
     tree_game_nums = {_game_num(n["game_id"]) for n in nodes} - {None}
+    def _slot_refs_tree_game(slot: str) -> bool:
+        wgm = re.search(r'\b(?:WIN|LOS)\s+GM\s+#(\d+)', slot, re.IGNORECASE)
+        if wgm and str(int(wgm.group(1))) in tree_game_nums:
+            return True
+        wl = re.match(r'^([WL])\s*#\s*([^-\s]+)', slot.strip(), re.IGNORECASE)
+        if wl:
+            ref = re.search(r'(\d+)$', wl.group(2))
+            ref_num = str(int(ref.group(1))) if ref else None
+            if ref_num and ref_num in tree_game_nums:
+                return True
+        return False
     for n in nodes:
         if not n.get("src_game_id"):
             continue  # root exempt
@@ -3468,15 +3501,12 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
         direct = (team_matches(n.get("white_team", ""), team)
                   or team_matches(n.get("dark_team", ""), team))
         if not direct:
-            ref_found = any(
-                (wgm := re.search(r'\b(?:WIN|LOS)\s+GM\s+#(\d+)', slot, re.IGNORECASE))
-                and str(int(wgm.group(1))) in tree_game_nums
-                for slot in (n.get("white_team", ""), n.get("dark_team", ""))
-            )
+            ref_found = any(_slot_refs_tree_game(slot)
+                             for slot in (n.get("white_team", ""), n.get("dark_team", "")))
             if not ref_found:
                 red.append(
                     f"game {gid}: foreign game — neither slot names {team!r} "
-                    f"nor references a tree game via WIN/LOS GM # "
+                    f"nor references a tree game via WIN/LOS GM # or W#/L# "
                     f"(slots: {n.get('white_team')!r} / {n.get('dark_team')!r})"
                 )
 
