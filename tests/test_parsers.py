@@ -979,6 +979,55 @@ def test_game_num_column_integrity() -> int:
     return failures
 
 
+def test_game_num_cascading_merge() -> int:
+    """Games at the same round must share one game_num even when they
+    descend from DIFFERENT immediate parent games, as long as those parents
+    are themselves already in the same numbered group.
+
+    The bug (caught live via a phone screenshot 2026-07-14, not by any
+    automated check): a win-then-lose path and a lose-then-win path through
+    a multi-round bracket land on different immediate parent games (e.g.
+    game 28 vs game 32), so a decision-key-only grouping gives them
+    different numbers (3 vs 4) even though both parents already share one
+    number (2) and both paths represent exactly the same count of games
+    played. "GAME 3" must mean the same thing regardless of which specific
+    branch got the team there.
+
+    Uses the real kap7-intl static fixture (not live-fetched, so this won't
+    drift) -- TROJAN GOLD's 14U Silver bracket has a real 4-deep case: pool
+    result determines two different round-2 outcomes (1st-in-pool vs
+    2nd-in-pool), each of which further splits win/lose, and all four
+    round-3 games must share one number, with all four of their round-4
+    children sharing the next one.
+    """
+    from app import app as _flask_app
+    import json as _json
+
+    failures = 0
+    with _flask_app.test_client() as c:
+        r = c.get("/api/games/kap7-intl/TROJAN%20GOLD?sheet=14U%20BOYS%20SILVER-17%20TEAMS")
+        if r.status_code != 200:
+            _check("kap7-intl/TROJAN GOLD request succeeds", False, f"status {r.status_code}")
+            return 1
+        data = _json.loads(r.data)
+        by_id = {g["game_id"]: g.get("game_num")
+                 for g in data.get("played", []) + data.get("upcoming", [])}
+
+        round3 = ["14Bag20", "14Bag22", "14Bag24", "14Bag26"]
+        round4 = ["14Bag30", "14Bag32", "14Bag34", "14Bag35"]
+        for label, ids in (("round 3", round3), ("round 4", round4)):
+            nums = {gid: by_id.get(gid) for gid in ids}
+            distinct = set(nums.values())
+            ok = _check(
+                f"kap7-intl/TROJAN GOLD {label}: {ids} all share one game_num",
+                len(distinct) == 1 and None not in distinct,
+                f"got {nums}",
+            )
+            if not ok:
+                failures += 1
+    return failures
+
+
 def test_game_num_date_monotonic() -> int:
     """GAME numbers must track chronological order: GAME 2 can never start
     before GAME 1, across every real Trojan team/tournament combo currently
@@ -1281,6 +1330,11 @@ def main():
     print("Game-num column integrity (no sequential rounds merged into one column)")
     print("=" * 60)
     total_failures += test_game_num_column_integrity()
+
+    print("\n" + "=" * 60)
+    print("Game-num cascading merge (same round shares one number across parents)")
+    print("=" * 60)
+    total_failures += test_game_num_cascading_merge()
 
     print("\n" + "=" * 60)
     print("Game-num chronological order (GAME 2 never starts before GAME 1)")
