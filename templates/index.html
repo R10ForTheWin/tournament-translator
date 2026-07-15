@@ -1891,6 +1891,8 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
       card.dataset.gameTime = g.time || '';
       card.dataset.gameDate = g.date || '';
       card.dataset.path     = pathCond || '';
+      card.dataset.gameId   = g.game_id || '';
+      card.dataset.srcGameId = g.src_game_id || '';
       step.appendChild(card);
     });
 
@@ -2030,6 +2032,8 @@ function drawBracketLines(inner, rounds, roundNums) {
       const r = c.getBoundingClientRect();
       return { card: c, sy: r.top - innerRect.top + r.height / 2, sx: r.right - innerRect.left };
     });
+    const fromById = {};
+    fromMids.forEach(fm => { if (fm.card.dataset.gameId) fromById[fm.card.dataset.gameId] = fm; });
     // All cards in the same step share the same right edge, so gx is constant
     const gx = fromMids[0].sx + 160; // midpoint of the 320px gap between columns
     const R = 7;
@@ -2039,9 +2043,18 @@ function drawBracketLines(inner, rounds, roundNums) {
       const tx = toRect.left - innerRect.left;
       const ty = toRect.top - innerRect.top + toRect.height / 2;
 
-      // Connect to the vertically nearest source card — gives natural 2-path split
-      // (win-path source → upper targets; lose-path source → lower targets)
-      const { card: fromCard, sy, sx } = fromMids.reduce((best, fm) =>
+      // Connect to the card this one actually descends from (src_game_id),
+      // not whichever source card happens to be vertically nearest on screen.
+      // Those coincide in the common case (one parent → its own win/lose
+      // children render adjacent to it) but diverge once a column merges
+      // children of DIFFERENT parents that happen to share one game number
+      // (e.g. a win-then-lose path and a lose-then-win path both landing on
+      // "Game 3") -- nearest-neighbour then silently draws the wrong edge
+      // with the wrong Win/Lose label. Fall back to nearest-neighbour only
+      // when src_game_id data isn't available at all.
+      const srcId = toCard.dataset.srcGameId;
+      const matched = srcId && fromById[srcId];
+      const { card: fromCard, sy, sx } = matched || fromMids.reduce((best, fm) =>
         Math.abs(fm.sy - ty) < Math.abs(best.sy - ty) ? fm : best
       );
 
