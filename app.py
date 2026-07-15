@@ -3966,6 +3966,8 @@ def api_games(tournament_id, team):
     # number them 1..N — one pass, no merge/split heuristics needed.
     _known_gms = {_game_num(g["game_id"]) for g in my_games
                   if _game_num(g["game_id"]) and not re.search(r'-[A-Z]+$', g["game_id"])}
+    _gm_to_gid = {_game_num(g["game_id"]): g["game_id"] for g in my_games
+                  if _game_num(g["game_id"]) and not re.search(r'-[A-Z]+$', g["game_id"])}
 
     def _slot_ref(slot: str):
         """('gm', ref_num) | ('pool', group_letter) | None for a bracket slot."""
@@ -3992,7 +3994,11 @@ def api_games(tournament_id, team):
             return ('pool', fm.group(1).upper())
         return None
 
-    def _decision_key(g):
+    def _decision_ref(g):
+        """('gm', ref_num) | ('pool', group_letter) | None -- what g's own
+        slot says it descends from. Shared by _decision_key (the grouping
+        key) and _predecessor_game_id (the actual predecessor game object),
+        so both agree on what "descends from" means."""
         # _expand_bracket_games already tagged pool-finish extras with the
         # team's own group letter (resolved from the team's actual pool seed,
         # scoped to the right weekend) -- trust that over re-parsing slot
@@ -4001,7 +4007,7 @@ def api_games(tournament_id, team):
         # to tell them apart from raw text alone (see 14Bag14's white slot
         # "J1(1stA)-" vs. dark slot "J4(1stH)", only the latter is ours).
         if g.get("pool_rank_group"):
-            return f"pool:{g['sheet']}:{g['pool_rank_group']}"
+            return ('pool', g['pool_rank_group'])
         own_num = _game_num(g["game_id"])
         white_m = team_matches(g["white_team"], team)
         dark_m  = team_matches(g["dark_team"], team)
@@ -4020,14 +4026,42 @@ def api_games(tournament_id, team):
         # bracket lineage and isn't a decision point of ours.
         for kind, val in refs:
             if kind == 'gm' and val in _known_gms and val != own_num:
-                return f"gm:{g['sheet']}:{val}"
+                return ('gm', val)
         for kind, val in refs:
             if kind == 'pool':
-                return f"pool:{g['sheet']}:{val}"
+                return ('pool', val)
         for kind, val in refs:
             if kind == 'gm':
-                return f"gm:{g['sheet']}:{val}"
+                return ('gm', val)
         return None
+
+    def _decision_key(g):
+        ref = _decision_ref(g)
+        return f"{ref[0]}:{g['sheet']}:{ref[1]}" if ref else None
+
+    def _predecessor_game_id(g):
+        """The actual game_id g's decision point resolves to, or None. Used
+        to detect when two DIFFERENT decision keys (e.g. references to two
+        different games) are nonetheless the same round for this team --
+        see the cascading-merge pass below."""
+        ref = _decision_ref(g)
+        if not ref:
+            return None
+        kind, val = ref
+        if kind == 'gm':
+            return _gm_to_gid.get(val)
+        # pool: anchor to the team's own last direct pool-phase game in this group.
+        candidates = []
+        for m in my_games:
+            for slot in (m["white_team"], m["dark_team"]):
+                pm = _POOL_SLOT_RE.match(slot.strip())
+                if pm and pm.group(1).upper() == val and team_matches(slot, team):
+                    candidates.append(m)
+                    break
+        if not candidates:
+            return None
+        candidates.sort(key=lambda m: (m.get("date") or date.min, m.get("time") or datetime.min.time()))
+        return candidates[-1]["game_id"]
 
     _groups: dict[str, list] = {}
     for g in my_games:
@@ -4054,6 +4088,50 @@ def api_games(tournament_id, team):
                 _groups[f"self:{m['game_id']}"] = [m]
             if placeholders:
                 _groups[dk] = placeholders
+
+    # "Game N" means the Nth game this team plays, not "descends from this
+    # exact predecessor game" -- so two groups whose predecessors are
+    # themselves already in the SAME group (e.g. win-then-lose vs
+    # lose-then-win in a multi-round bracket: 028 and 032 already share one
+    # group as game 2, so whatever comes after either of them is equally
+    # "game 3", regardless of which specific one it descends from) must be
+    # merged into one group too. Repeat until no more merges happen -- a
+    # merge one level can enable another merge one level up. Bounded by the
+    # group count, so this always terminates.
+    _game_to_dk: dict[str, str] = {}
+    for dk, members in _groups.items():
+        for m in members:
+            _game_to_dk[m["game_id"]] = dk
+
+    _changed = True
+    _iterations = 0
+    while _changed and _iterations < len(_groups) + 5:
+        _changed = False
+        _iterations += 1
+        _pred_group: dict[str, str] = {}
+        for dk, members in _groups.items():
+            for m in members:
+                pred_gid = _predecessor_game_id(m)
+                if pred_gid and pred_gid in _game_to_dk:
+                    _pred_group[dk] = _game_to_dk[pred_gid]
+                    break
+        _by_pred: dict[str, list] = {}
+        for dk, pg in _pred_group.items():
+            _by_pred.setdefault(pg, []).append(dk)
+        for pg, dks in _by_pred.items():
+            if len(dks) <= 1:
+                continue
+            merged_members = [m for _dk in dks for m in _groups[_dk]]
+            real = [m for m in merged_members if not m.get("placeholder")]
+            if len(real) > 1:
+                continue  # same reused-label guard as above -- don't merge
+            target = dks[0]
+            for _dk in dks[1:]:
+                _groups[target].extend(_groups[_dk])
+                del _groups[_dk]
+                _changed = True
+            for m in _groups[target]:
+                _game_to_dk[m["game_id"]] = target
 
     def _group_earliest(dk):
         members = _groups[dk]
