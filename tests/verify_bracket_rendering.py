@@ -60,7 +60,11 @@ def verify_bracket(page, tournament_label: str, team_label: str, sheet_hint: str
     """Navigate the real UI (tournament card -> team SCHEDULE button) and
     return the rendered game-card + connector data. Navigates by visible
     text/role, not hardcoded indices, so it survives menu-copy changes."""
-    page.goto(f"http://localhost:{PORT}/", wait_until="networkidle")
+    # NOT wait_until="networkidle" -- this app polls periodically in the
+    # background (_startRefreshTimers), so the network is never truly idle
+    # and that wait condition can hang indefinitely. "load" plus the
+    # explicit wait_for_timeout calls below is what actually works here.
+    page.goto(f"http://localhost:{PORT}/", wait_until="load")
     page.get_by_text(tournament_label, exact=False).first.click()
     page.wait_for_timeout(6000)
 

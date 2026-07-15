@@ -3777,6 +3777,61 @@ def _build_canonical_bracket(team: str, our_team_name: str, wpl_bracket: list,
     }
 
 
+def _estimate_remaining_rounds(tree: list, division_games: list, team: str) -> dict | None:
+    """For a bracket tree that runs out of data before the tournament's own
+    posted schedule does (an elimination format where the spreadsheet
+    doesn't yet specify what happens beyond a certain round -- see
+    _build_njo_game_tree's w_to/l_to and W#/L# fallback, and the pool_next
+    fallback, all of which can still legitimately dead-end early), give
+    parents a rough, HONEST sense of how much further the team's run could
+    extend -- without pretending to know a specific future opponent, time,
+    or location we don't have.
+
+    Deliberately NOT "count every (date, time) slot posted for the whole
+    division after our last known date" -- a large division runs many
+    pools/brackets in PARALLEL, so that vastly overcounts (confirmed live:
+    35 slots for a division where a team can only ever play in one pool at
+    a time). Instead: use the team's OWN observed pace -- the deepest
+    win/lose/pool chain their own tree reaches in a single day -- as an
+    estimate of rounds-per-day, and multiply by the number of remaining
+    days the division has ANY games scheduled. Spot-checked (not treated
+    as ground truth -- it's a third party, not run by the tournament,
+    though reliable to date) against Halftank's own full bracket template
+    for this exact 2026 JO division, 2026-07-15: this pace-based estimate
+    came out to 9 where Halftank's structure implied 8 -- close enough to
+    be a useful signal, without depending on Halftank at runtime.
+
+    Returns None if the tree already reaches the division's last posted
+    date (nothing more on the schedule to speak of) or there's no tree.
+    """
+    if not tree:
+        return None
+    known_dates = [n.get("date") for n in tree if n.get("date")]
+    if not known_dates:
+        return None
+    last_known = max(known_dates)
+
+    future_dates = sorted({g.get("date") for g in division_games
+                            if g.get("date") and g.get("date") > last_known})
+    if not future_dates:
+        return None
+
+    layout = _compute_tree_layout(tree, team)
+    node_by_id = {n["game_id"]: n for n in tree}
+    cols_by_date: dict = {}
+    for gid, info in layout.items():
+        d = node_by_id.get(gid, {}).get("date")
+        if d:
+            cols_by_date.setdefault(d, []).append(info.get("column", 1))
+    pace = max((max(cols) - min(cols) + 1 for cols in cols_by_date.values()), default=1)
+
+    return {
+        "last_known_date":  _fmt_date(last_known),
+        "through_date":     _fmt_date(future_dates[-1]),
+        "max_more_rounds":  pace * len(future_dates),
+    }
+
+
 def _same_division(sheet_a: str, sheet_b: str) -> bool:
     """True if two sheet names represent the same age+gender division, even
     across different tournament files with completely different sheet-naming
@@ -4462,6 +4517,9 @@ def api_games(tournament_id, team):
         my_games[0].get("sheet", "") if my_games else "",
     ) if wpl_bracket else None
 
+    remaining_rounds_estimate = (_estimate_remaining_rounds(tree, div_games_for_tree, team)
+                                  if wpl_bracket else None)
+
     # Additive-only "games remaining" placeholders: for fixed-game-count formats
     # (round-robin + crossover, e.g. Quiksilver Cup) where every team plays the
     # same total number of games, show generic TBD stubs for games not yet
@@ -4523,6 +4581,7 @@ def api_games(tournament_id, team):
         "cumulative_division":  cumulative_division,
         "wpl_bracket":          wpl_bracket,
         "canonical_bracket":    canonical_bracket,
+        "remaining_rounds_estimate": remaining_rounds_estimate,
         "bracket_confidence":   bracket_confidence,
         "display_mode":         display_mode,
         "bracket_warnings":     bracket_warnings or None,

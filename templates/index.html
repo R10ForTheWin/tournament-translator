@@ -365,6 +365,8 @@
     .bracket-game-num-header { font-size: 16px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.14em; color: var(--gold); padding: 0 0 4px; text-align: center; }
     .bracket-day-header { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.18em; color: rgba(255,255,255,0.55); text-align: center; padding: 0 0 10px; }
     .bracket-eliminated { opacity: 0.28; filter: grayscale(0.7); pointer-events: none; }
+    .bracket-remaining-note { margin: 4px 16px 0; padding: 10px 14px; border-radius: var(--radius); background: rgba(255,255,255,0.04); border: 1px dashed rgba(255,255,255,0.18); font-size: 13px; color: var(--muted); text-align: center; }
+    .bracket-remaining-note strong { color: var(--white); font-weight: 700; }
 
     /* ── WPL crossover game tree ── */
     .wpl-tree-wrap { padding: 0 0 32px; }
@@ -1414,6 +1416,8 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opt
     }
 
     bracketPane.appendChild(buildBracketView(schedGames, tournamentId, team, ourName));
+    const remNote1 = buildRemainingRoundsNote(data.remaining_rounds_estimate);
+    if (remNote1) bracketPane.appendChild(remNote1);
 
     // Show subnav tabs and set active state
     document.getElementById('subnav-tabs').style.display = '';
@@ -1434,6 +1438,8 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opt
       ? canonicalToStaircase(data.canonical_bracket)
       : [...(data.played || []), ...(data.upcoming || [])];
     el.appendChild(buildBracketView(allGames, tournamentId, team, ourName));
+    const remNote2 = buildRemainingRoundsNote(data.remaining_rounds_estimate);
+    if (remNote2) el.appendChild(remNote2);
   }
 
   // Update freshness bar and start auto-refresh timers
@@ -1805,6 +1811,21 @@ function buildWplTree(data, tournamentId, team, ourName) {
 function canonicalToStaircase(cb) {
   if (!cb) return [];
   return [...(cb.guaranteed_games || []), ...(cb.possible_games || [])];
+}
+
+// Deliberately NOT another .game-card -- a specific fake "Game 4" card
+// would claim precision (a real opponent/time/location) we don't have.
+// This is an honest, coarser signal: how far the team's run COULD still
+// extend, based on what the tournament has already posted for this
+// division, so parents can plan travel without a guessed opponent.
+function buildRemainingRoundsNote(estimate) {
+  if (!estimate) return null;
+  const note = document.createElement('div');
+  note.className = 'bracket-remaining-note';
+  const n = estimate.max_more_rounds;
+  note.innerHTML = `Could continue through <strong>${estimate.through_date}</strong> — `
+    + `up to <strong>${n}</strong> more possible round${n === 1 ? '' : 's'} depending on results`;
+  return note;
 }
 
 function buildBracketView(allGames, tournamentId, team, ourName) {
