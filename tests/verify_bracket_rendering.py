@@ -114,14 +114,30 @@ def verify_bracket(page, tournament_label: str, team_label: str, sheet_hint: str
         )
         for c in cards
     ]
-    return card_info, console_errors
+
+    # Extract each connector's start/end Y and bend-point X from its SVG
+    # path 'd' string. Straight (same-row) connectors have no bend point.
+    paths = page.evaluate(
+        r"""
+        () => Array.from(document.querySelectorAll('svg path')).map(p => {
+            const d = p.getAttribute('d');
+            let m = d.match(/^M ([\d.]+),([\d.]+) H ([\d.]+)$/);
+            if (m) return {sy: +m[2], ty: +m[2], gx: null};
+            m = d.match(/^M ([\d.]+),([\d.]+) H [\d.]+ Q ([\d.]+),[\d.]+ [\d.]+,[\d.]+ V [\d.]+ Q [\d.]+,([\d.]+)/);
+            if (m) return {sy: +m[2], ty: +m[4], gx: +m[3]};
+            return null;
+        }).filter(Boolean)
+        """
+    )
+    return card_info, console_errors, paths
 
 
 def run_case(page, label, tournament_label, team_label, sheet_hint, min_cards):
     print(f"\n{'=' * 60}\n{label}\n{'=' * 60}")
-    cards, console_errors = verify_bracket(page, tournament_label, team_label, sheet_hint)
-    if cards is None:
+    result = verify_bracket(page, tournament_label, team_label, sheet_hint)
+    if result[0] is None:
         return
+    cards, console_errors, paths = result
 
     check(f"at least {min_cards} bracket cards rendered", len(cards) >= min_cards,
           f"got {len(cards)}")
@@ -134,11 +150,54 @@ def run_case(page, label, tournament_label, team_label, sheet_hint, min_cards):
     ids = {c["id"] for c in cards if c["id"]}
     non_root = [c for c in cards if c["path"]]  # root card has path=''
     for c in non_root:
-        ok = check(
+        check(
             f"{c['id']}: src_game_id {c['src']!r} resolves to a rendered card",
             bool(c["src"]) and c["src"] in ids,
             f"card data: {c}",
         )
+
+    # The second bug, caught only by a human looking at a screenshot: two
+    # data-correct crossing connectors that bend through the SAME x point
+    # visually collapse into what looks like one merged trunk. Data
+    # correctness alone (the check above) can't catch this -- it's a
+    # legibility property of the rendered lines. Approximate it
+    # geometrically: any two connectors whose vertical spans overlap (they
+    # cross or run parallel on screen) must bend at visually distinct x
+    # positions.
+    bent = [p for p in paths if p["gx"] is not None]
+    for i in range(len(bent)):
+        for j in range(i + 1, len(bent)):
+            a, b = bent[i], bent[j]
+            lo_a, hi_a = sorted((a["sy"], a["ty"]))
+            lo_b, hi_b = sorted((b["sy"], b["ty"]))
+            overlaps = lo_a < hi_b and lo_b < hi_a
+            if overlaps:
+                check(
+                    f"crossing connectors near y={lo_a:.0f}-{hi_a:.0f} have distinct bend points",
+                    abs(a["gx"] - b["gx"]) > 5,
+                    f"gx={a['gx']} vs gx={b['gx']} -- would visually overlap",
+                )
+
+    return cards, paths
+
+
+def run_tbd_stub_case(page, tournament_label, team_label, sheet_hint):
+    """When a team's bracket tree runs out of real data before the
+    tournament's own posted schedule does, the app appends TBD placeholder
+    cards (one per remaining day) directly into the tree -- not a text
+    footer. Confirm they actually render as cards with the expected
+    minimal content, not just that the backend returns tbd_stub=true."""
+    print(f"\n{'=' * 60}\nTBD stub cards render correctly\n{'=' * 60}")
+    result = verify_bracket(page, tournament_label, team_label, sheet_hint)
+    if result[0] is None:
+        return
+    stub_cards = page.query_selector_all(".game-card.placeholder .tbd-stub-msg")
+    check("at least one TBD stub card rendered", len(stub_cards) > 0,
+          f"got {len(stub_cards)}")
+    if stub_cards:
+        text = stub_cards[0].inner_text()
+        check("TBD stub card shows the expected placeholder message",
+              "TBD" in text, f"got {text!r}")
 
 
 PORT = 5099
@@ -179,6 +238,8 @@ if __name__ == "__main__":
             # their REAL parent, not whichever card is nearest on screen.
             run_case(page, "Junior Olympics: TROJAN GOLD 16U (cascading-merge case)",
                      "Junior Olympics", "Trojan Gold", "16U", min_cards=4)
+
+            run_tbd_stub_case(page, "Junior Olympics", "Trojan Gold", "16U")
 
             browser.close()
     finally:

@@ -3557,6 +3557,8 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
         gid = n["game_id"]
         if (n.get("src_path") or "").startswith("pool_"):
             continue  # pool-finish branch -- tree builder already verified the group match
+        if n.get("tbd_stub"):
+            continue  # synthetic placeholder -- deliberately names neither team
         direct = (team_matches(n.get("white_team", ""), team)
                   or team_matches(n.get("dark_team", ""), team))
         if not direct:
@@ -3777,59 +3779,77 @@ def _build_canonical_bracket(team: str, our_team_name: str, wpl_bracket: list,
     }
 
 
-def _estimate_remaining_rounds(tree: list, division_games: list, team: str) -> dict | None:
-    """For a bracket tree that runs out of data before the tournament's own
+def _append_tbd_stub_chain(tree: list, division_games: list, tree_sheet: str) -> None:
+    """When a bracket tree runs out of data before the tournament's own
     posted schedule does (an elimination format where the spreadsheet
     doesn't yet specify what happens beyond a certain round -- see
     _build_njo_game_tree's w_to/l_to and W#/L# fallback, and the pool_next
-    fallback, all of which can still legitimately dead-end early), give
-    parents a rough, HONEST sense of how much further the team's run could
-    extend -- without pretending to know a specific future opponent, time,
-    or location we don't have.
+    fallback, all of which can still legitimately dead-end early), mutate
+    `tree` in place to append one TBD placeholder node per remaining
+    tournament day -- so parents see a real stub card for every day a game
+    could still happen, instead of the bracket silently stopping.
 
-    Deliberately NOT "count every (date, time) slot posted for the whole
-    division after our last known date" -- a large division runs many
-    pools/brackets in PARALLEL, so that vastly overcounts (confirmed live:
-    35 slots for a division where a team can only ever play in one pool at
-    a time). Instead: use the team's OWN observed pace -- the deepest
-    win/lose/pool chain their own tree reaches in a single day -- as an
-    estimate of rounds-per-day, and multiply by the number of remaining
-    days the division has ANY games scheduled. Spot-checked (not treated
-    as ground truth -- it's a third party, not run by the tournament,
-    though reliable to date) against Halftank's own full bracket template
-    for this exact 2026 JO division, 2026-07-15: this pace-based estimate
-    came out to 9 where Halftank's structure implied 8 -- close enough to
-    be a useful signal, without depending on Halftank at runtime.
+    Deliberately day-level, not an attempt to model exact round count or a
+    specific future opponent -- that data genuinely isn't in the
+    spreadsheet yet. Reuses the frontend's existing tbd_stub card style
+    (already built for fixed-count formats -- see the flat_schedule stub
+    logic in api_games) rather than inventing a new one. Chains through
+    BOTH win_next_ids and lose_next_ids of every "frontier" node (the
+    tree's unresolved dead ends at its latest known date), matching
+    _compute_tree_layout's existing "reachable via both win and lose =
+    neutral, always shown" rule -- no changes needed there.
 
-    Returns None if the tree already reaches the division's last posted
-    date (nothing more on the schedule to speak of) or there's no tree.
+    No-op if the tree already reaches the division's last posted date
+    (nothing more on the schedule to speak of), if there's no tree, or if
+    every node at the latest date already has a real continuation.
     """
     if not tree:
-        return None
+        return
     known_dates = [n.get("date") for n in tree if n.get("date")]
     if not known_dates:
-        return None
+        return
     last_known = max(known_dates)
 
     future_dates = sorted({g.get("date") for g in division_games
                             if g.get("date") and g.get("date") > last_known})
     if not future_dates:
-        return None
+        return
 
-    layout = _compute_tree_layout(tree, team)
-    node_by_id = {n["game_id"]: n for n in tree}
-    cols_by_date: dict = {}
-    for gid, info in layout.items():
-        d = node_by_id.get(gid, {}).get("date")
-        if d:
-            cols_by_date.setdefault(d, []).append(info.get("column", 1))
-    pace = max((max(cols) - min(cols) + 1 for cols in cols_by_date.values()), default=1)
+    frontier = [n for n in tree
+                if n.get("date") == last_known
+                and not n.get("win_next_ids") and not n.get("lose_next_ids")
+                and not n.get("pool_next")]
+    if not frontier:
+        return
 
-    return {
-        "last_known_date":  _fmt_date(last_known),
-        "through_date":     _fmt_date(future_dates[-1]),
-        "max_more_rounds":  pace * len(future_dates),
-    }
+    by_id = {n["game_id"]: n for n in tree}
+    prev_ids = [n["game_id"] for n in frontier]
+    for i, d in enumerate(future_dates):
+        stub_id = f"__tbd_{tree_sheet}_{i}"
+        stub = {
+            "game_id":        stub_id,
+            "date":           d,
+            "time":           None,
+            "location":       None,
+            "white_team":     "TBD",
+            "dark_team":      "TBD",
+            "played":         False,
+            "placeholder":    True,
+            "tbd_stub":       True,
+            "src_game_id":    prev_ids[0],
+            "src_path":       None,
+            "win_next_ids":   [],
+            "lose_next_ids":  [],
+            "pool_next":      {},
+            "sunday_pair_id": None,
+            "tree_format":    "bracket",
+        }
+        for pid in prev_ids:
+            by_id[pid]["win_next_ids"].append(stub_id)
+            by_id[pid]["lose_next_ids"].append(stub_id)
+        tree.append(stub)
+        by_id[stub_id] = stub
+        prev_ids = [stub_id]
 
 
 def _same_division(sheet_a: str, sheet_b: str) -> bool:
@@ -4402,6 +4422,7 @@ def api_games(tournament_id, team):
                 print(f"[bracket-struct] {team!r} | {tournament_id}: {_si}", flush=True)
 
     if tree:
+        _append_tbd_stub_chain(tree, div_games_for_tree, tree_sheet)
         # Serialize tree nodes: format dates/times, add opponent label
         def _serialize_tree_node(node, dg):
             gid = node["game_id"]
@@ -4441,6 +4462,7 @@ def api_games(tournament_id, team):
                 "your_color":     color,
                 "placeholder":    node["placeholder"],
                 "played":         bool(node.get("played", False)),
+                "tbd_stub":       node.get("tbd_stub", False),
                 "placement_rank": node.get("placement_rank"),
                 "src_game_id":    node["src_game_id"],
                 "src_path":       node["src_path"],
@@ -4517,9 +4539,6 @@ def api_games(tournament_id, team):
         my_games[0].get("sheet", "") if my_games else "",
     ) if wpl_bracket else None
 
-    remaining_rounds_estimate = (_estimate_remaining_rounds(tree, div_games_for_tree, team)
-                                  if wpl_bracket else None)
-
     # Additive-only "games remaining" placeholders: for fixed-game-count formats
     # (round-robin + crossover, e.g. Quiksilver Cup) where every team plays the
     # same total number of games, show generic TBD stubs for games not yet
@@ -4581,7 +4600,6 @@ def api_games(tournament_id, team):
         "cumulative_division":  cumulative_division,
         "wpl_bracket":          wpl_bracket,
         "canonical_bracket":    canonical_bracket,
-        "remaining_rounds_estimate": remaining_rounds_estimate,
         "bracket_confidence":   bracket_confidence,
         "display_mode":         display_mode,
         "bracket_warnings":     bracket_warnings or None,
