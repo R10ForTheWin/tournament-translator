@@ -1421,7 +1421,18 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opt
 
   } else {
     document.getElementById('subnav-tabs').style.display = 'none';
-    const allGames = [...(data.played || []), ...(data.upcoming || [])];
+    // Same canonical_bracket preference as the WPL branch above -- without
+    // this, every non-WPL tournament (NJO/CCA/Kap7/Turbo/Quiksilver/etc.)
+    // silently fell back to the flat played+upcoming list, which carries
+    // game_num/path but no src_game_id or win_next_ids/lose_next_ids at
+    // all. drawBracketLines then had no real edge data to match connector
+    // lines against and fell back to "nearest card on screen", which is
+    // wrong the moment a column merges children of different parents (see
+    // the src_game_id matching fix in drawBracketLines/buildBracketView).
+    const useBracket = data.display_mode === 'bracket' && data.canonical_bracket;
+    const allGames = useBracket
+      ? canonicalToStaircase(data.canonical_bracket)
+      : [...(data.played || []), ...(data.upcoming || [])];
     el.appendChild(buildBracketView(allGames, tournamentId, team, ourName));
   }
 
