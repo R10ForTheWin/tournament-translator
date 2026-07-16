@@ -4486,11 +4486,38 @@ def api_games(tournament_id, team):
             return d
         wpl_bracket = [_serialize_tree_node(n, div_games_for_tree) for n in tree]
 
-        # Annotate serialized nodes with tree layout (column, path_condition, eliminated).
+        # Annotate serialized nodes with tree layout (path_condition, eliminated).
+        # NOTE: column/game_num do NOT come from _compute_tree_layout's raw BFS
+        # depth. That BFS starts every root at column 1 -- correct for win/lose
+        # or pool-finish ALTERNATIVES (they share one decision point, so sharing
+        # a column is right), but wrong the moment a team has more than one
+        # real, independent root game (e.g. two separate pool-play games against
+        # different opponents, neither descending from the other) -- those all
+        # landed on column 1 / "GAME 1" together, silently merging two distinct
+        # real games in the UI. _game_num_map (computed above, same decision-key
+        # + cascading-merge pass used for the flat played/upcoming lists) already
+        # gets this right, so reuse it here instead of a second, divergent
+        # numbering system. Only synthetic TBD stub nodes (never part of
+        # my_games) fall back to counting up from their resolved predecessor.
         layout = _compute_tree_layout(tree, team)
+        # TBD stub numbers must continue from the team's overall highest real
+        # game number, not "this stub's specific frontier parent's number + 1"
+        # -- a dead-end branch's own parent can be numbered lower than other,
+        # unrelated real games that already claimed higher numbers elsewhere
+        # in the tree (e.g. parent=Game 1, but Games 2-3 already exist on
+        # other branches), which would otherwise collide with them.
+        _tbd_next = max(_game_num_map.values(), default=0)
+        _tree_num: dict[str, int] = {}
+        for n in tree:
+            gid = n["game_id"]
+            gn = _game_num_map.get(gid)
+            if gn is None:
+                _tbd_next += 1
+                gn = _tbd_next
+            _tree_num[gid] = gn
         for sn in wpl_bracket:
             info = layout.get(sn["game_id"], {})
-            sn["column"]         = info.get("column", 1)
+            sn["column"]         = _tree_num.get(sn["game_id"], info.get("column", 1))
             sn["path_condition"] = info.get("path_condition")
             sn["eliminated"]     = info.get("eliminated", False)
             # Aliases kept for validate_tournament.py backwards compatibility

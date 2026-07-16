@@ -1197,6 +1197,78 @@ def test_jo_2026_teams_reachable() -> int:
     return failures
 
 
+def test_bracket_tree_game_num_no_collision() -> int:
+    """canonical_bracket's game_num (what the bracket UI actually renders as
+    "GAME N" and uses to lay out columns) must never assign the same number
+    to two DIFFERENT real, independent root games -- and TBD stub numbers
+    must never collide with a real game's number either.
+
+    The bug (caught live via phone screenshots 2026-07-15, not by any
+    automated check): _compute_tree_layout's BFS started every root node at
+    column 1, which is correct for genuine win/lose or pool-finish
+    ALTERNATIVES (they share one decision point) but wrong the moment a team
+    has more than one real, independent root game -- e.g. two separate pool
+    games against different opponents, neither descending from the other.
+    Those silently landed on the same "GAME 1", hiding a real scheduled game
+    from the bracket view entirely. Every other game_num test in this file
+    (test_game_num_cascading_merge, test_game_num_date_monotonic, etc.)
+    checks the FLAT played/upcoming list, which was already correct -- none
+    of them touch canonical_bracket, which is the actual bracket-view data
+    this bug lived in. This test closes that coverage gap directly.
+
+    Confirmed live on 3 of the 7 known JO teams before the fix: 18U Trojan
+    Gold (games 005 vs 021), 12U Trojan Gold (3 independent pool games), and
+    (post-fix, from the TBD-stub numbering bug found while fixing this) 18U
+    Trojan Gold's TBD chain colliding with game 021's real number 2.
+    """
+    from app import app as _flask_app
+    import json as _json
+
+    failures = 0
+    checks = [
+        ("TROJAN CARDINAL", "18U_M_Champ",      1),
+        ("TROJAN GOLD",     "18U_M_Invite 24",  1),
+        ("TROJAN CARDINAL", "16U_M_Champ",      1),
+        ("TROJAN GOLD",     "16U_M_Classic",    1),
+        ("TROJAN CARDINAL", "14U_M_Classic",    1),
+        ("TROJAN CARDINAL", "12U_M_Classic_53", 1),
+        ("TROJAN GOLD",     "12U_M_Classic_53", 1),
+    ]
+    with _flask_app.test_client() as c:
+        for team, sheet, _min in checks:
+            r = c.get(f"/api/games/junior-olympics/{team}?sheet={sheet}")
+            if r.status_code != 200:
+                continue
+            data = _json.loads(r.data)
+            cb = data.get("canonical_bracket")
+            if not cb:
+                continue
+            nodes = cb.get("guaranteed_games", []) + cb.get("possible_games", [])
+
+            roots = [n for n in nodes if not n.get("src_game_id") and not n.get("placeholder")]
+            root_nums: dict = {}
+            for n in roots:
+                prev = root_nums.get(n["game_num"])
+                ok = _check(
+                    f"{team}/{sheet}: root game {n['game_id']!r} (game_num {n['game_num']}) "
+                    f"doesn't collide with another independent root",
+                    prev is None or prev == n["game_id"],
+                    f"also root {prev!r}" if prev else "",
+                )
+                if not ok:
+                    failures += 1
+                root_nums[n["game_num"]] = n["game_id"]
+
+            real_nums = {n["game_num"] for n in nodes if not n.get("tbd_stub")}
+            stub_nums = {n["game_num"] for n in nodes if n.get("tbd_stub")}
+            overlap = real_nums & stub_nums
+            ok = _check(f"{team}/{sheet}: TBD stub numbers don't collide with real game numbers",
+                        not overlap, f"overlap={overlap}")
+            if not ok:
+                failures += 1
+    return failures
+
+
 def test_last_meeting_available() -> int:
     """At least one upcoming game per Trojan team should have a last_meeting populated,
     confirming cross-tournament history search is active.
@@ -1345,6 +1417,11 @@ def main():
     print("JO 2026 teams reachable (live schedule regression guard)")
     print("=" * 60)
     total_failures += test_jo_2026_teams_reachable()
+
+    print("\n" + "=" * 60)
+    print("Bracket-tree game_num collision guard (canonical_bracket, not the flat list)")
+    print("=" * 60)
+    total_failures += test_bracket_tree_game_num_no_collision()
 
     print("\n" + "=" * 60)
     print("Last meeting availability (cross-tournament history search active)")
