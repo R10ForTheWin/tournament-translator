@@ -110,7 +110,8 @@ def verify_bracket(page, tournament_label: str, team_label: str, sheet_hint: str
     card_info = [
         c.evaluate(
             "el => ({id: el.dataset.gameId, src: el.dataset.srcGameId, "
-            "path: el.dataset.path, top: el.getBoundingClientRect().top})"
+            "path: el.dataset.path, top: el.getBoundingClientRect().top, "
+            "left: el.getBoundingClientRect().left})"
         )
         for c in cards
     ]
@@ -176,6 +177,36 @@ def run_case(page, label, tournament_label, team_label, sheet_hint, min_cards):
                     f"crossing connectors near y={lo_a:.0f}-{hi_a:.0f} have distinct bend points",
                     abs(a["gx"] - b["gx"]) > 5,
                     f"gx={a['gx']} vs gx={b['gx']} -- would visually overlap",
+                )
+
+    # Third bug (caught live via a phone screenshot 2026-07-15, after the
+    # first two): even with correct src_game_id data and distinct bend
+    # points, sorting each column purely by "win before lose" -- ignoring
+    # which row the card's own parent actually sits in -- put the win-child
+    # of the BOTTOM column N-1 parent above the lose-child of the TOP column
+    # N-1 parent. Both cards were individually correct, but the two
+    # connectors crossed unnecessarily, rendering as a confusing hook/loop
+    # shape instead of a clean staircase. Assert the fix holds: whenever two
+    # cards in the same column both have a src_game_id resolvable to a row
+    # in the immediately previous column, their own row order must match
+    # their parents' row order.
+    by_left: dict = {}
+    for c in cards:
+        by_left.setdefault(round(c["left"] / 50) * 50, []).append(c)
+    col_lefts = sorted(by_left.keys())
+    for i in range(len(col_lefts) - 1):
+        prev_col = sorted(by_left[col_lefts[i]], key=lambda c: c["top"])
+        this_col = sorted(by_left[col_lefts[i + 1]], key=lambda c: c["top"])
+        prev_row = {c["id"]: idx for idx, c in enumerate(prev_col)}
+        resolved = [(c, prev_row.get(c["src"])) for c in this_col if c["src"] in prev_row]
+        for a in range(len(resolved)):
+            for b in range(a + 1, len(resolved)):
+                (ca, pa), (cb, pb) = resolved[a], resolved[b]
+                check(
+                    f"{ca['id']} (parent row {pa}) vs {cb['id']} (parent row {pb}): "
+                    f"no unnecessary connector crossing",
+                    pa <= pb,
+                    f"{ca['id']} sits above {cb['id']} but its parent is BELOW {cb['id']}'s parent",
                 )
 
     return cards, paths

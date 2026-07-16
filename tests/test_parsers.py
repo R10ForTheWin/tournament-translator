@@ -1197,6 +1197,72 @@ def test_jo_2026_teams_reachable() -> int:
     return failures
 
 
+def test_bracket_tree_last_meeting_parity() -> int:
+    """canonical_bracket's last_meeting must never be worse-informed than the
+    flat played/upcoming list's last_meeting for the exact same game_id.
+
+    The bug (found 2026-07-16 while auditing JO for the same "two divergent
+    code paths" pattern as the game_num bug): the tree serializer
+    (_serialize_tree_node, what canonical_bracket/the bracket UI actually
+    uses) computed last_meeting from _all_historical_games() alone -- local
+    archive files on disk. The flat list already used _h2h_games (archive +
+    this tournament's own live-fetched data combined), added earlier this
+    project for exactly this reason: live-fetched tournaments (JO Quals,
+    Junior Olympics, Quiksilver, WPL) never land in EXCEL_DIR as a local
+    file, so a same-tournament rematch (a team facing the same opponent
+    twice across pool play and bracket rounds, which JO's format makes
+    likely) would never surface in the bracket view even though the flat
+    list would show it correctly. Fixed by pointing the tree serializer at
+    _h2h_games too.
+
+    No known JO team currently has a same-tournament rematch to exercise
+    positively (checked live 2026-07-16), so this test can only catch the
+    divergence, not prove a real rematch renders -- that's a live spot-check
+    the moment one occurs, not something this fixture-free live-data test
+    can force.
+    """
+    from app import app as _flask_app
+    import json as _json
+
+    failures = 0
+    checks = [
+        ("TROJAN CARDINAL", "18U_M_Champ"),
+        ("TROJAN GOLD",     "18U_M_Invite 24"),
+        ("TROJAN CARDINAL", "16U_M_Champ"),
+        ("TROJAN GOLD",     "16U_M_Classic"),
+        ("TROJAN CARDINAL", "14U_M_Classic"),
+        ("TROJAN CARDINAL", "12U_M_Classic_53"),
+        ("TROJAN GOLD",     "12U_M_Classic_53"),
+    ]
+    with _flask_app.test_client() as c:
+        for team, sheet in checks:
+            r = c.get(f"/api/games/junior-olympics/{team}?sheet={sheet}")
+            if r.status_code != 200:
+                continue
+            data = _json.loads(r.data)
+            cb = data.get("canonical_bracket")
+            if not cb:
+                continue
+            flat_lm = {g["game_id"]: g.get("last_meeting")
+                       for g in data.get("upcoming", []) if g.get("game_id")}
+            for n in cb.get("guaranteed_games", []) + cb.get("possible_games", []):
+                gid = n["game_id"]
+                if gid not in flat_lm:
+                    continue
+                flat_val = flat_lm[gid]
+                if flat_val is None:
+                    continue  # nothing the tree could be missing
+                ok = _check(
+                    f"{team}/{sheet}: canonical_bracket last_meeting for {gid!r} "
+                    f"matches the flat list (not worse-informed)",
+                    n.get("last_meeting") == flat_val,
+                    f"flat={flat_val!r} tree={n.get('last_meeting')!r}",
+                )
+                if not ok:
+                    failures += 1
+    return failures
+
+
 def test_bracket_tree_game_num_no_collision() -> int:
     """canonical_bracket's game_num (what the bracket UI actually renders as
     "GAME N" and uses to lay out columns) must never assign the same number
@@ -1422,6 +1488,11 @@ def main():
     print("Bracket-tree game_num collision guard (canonical_bracket, not the flat list)")
     print("=" * 60)
     total_failures += test_bracket_tree_game_num_no_collision()
+
+    print("\n" + "=" * 60)
+    print("Bracket-tree last_meeting parity (JO same-tournament rematch guard)")
+    print("=" * 60)
+    total_failures += test_bracket_tree_last_meeting_parity()
 
     print("\n" + "=" * 60)
     print("Last meeting availability (cross-tournament history search active)")

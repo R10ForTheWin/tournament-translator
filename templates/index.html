@@ -1824,6 +1824,19 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
   });
   const colNums = Object.keys(columns).map(Number).sort((a, b) => a - b);
 
+  // Row position a card inherits from its own parent in the previous
+  // column, carried forward as each column is laid out below. Keeps a
+  // win/lose lineage in one consistent vertical "lane" end to end, so a
+  // connector only crosses another when the underlying bracket genuinely
+  // crosses (a card's own parent swapped lanes), never as an artifact of
+  // sorting by this card's own win/lose label in isolation. Without this,
+  // sorting column 3 purely by "win before lose" put the win-child of the
+  // BOTTOM column-2 parent above the lose-child of the TOP column-2 parent
+  // -- both data-correct, but the two connectors crossed unnecessarily and
+  // rendered as a confusing hook/loop shape instead of a clean staircase
+  // (caught live via a phone screenshot 2026-07-15).
+  let _prevRowIndex = {};
+
   // Outer container is plain, ordinary page content — never horizontally
   // scrollable, never subject to any touch-action override. Only `wrap`
   // (holding just the bracket columns) is the special overflow-x region.
@@ -1854,13 +1867,22 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
 
     const pc = g => g.path_condition ?? g.path;
 
-    // Sort: no-path/neutral first, then win, then lose
+    // Sort: prefer the row this card's own parent already occupies in the
+    // previous column (see _prevRowIndex above) -- only cards with no
+    // resolved parent row (both roots, or same parent) fall back to
+    // no-path/neutral first, then win, then lose, then day/time.
     const ordered = [...colGames].sort((a, b) => {
+      const pa = _prevRowIndex[a.src_game_id];
+      const pb = _prevRowIndex[b.src_game_id];
+      if (pa !== undefined && pb !== undefined && pa !== pb) return pa - pb;
       const o = { undefined: 0, null: 0, win: 1, lose: 2 };
       return ((o[pc(a)] ?? 0) - (o[pc(b)] ?? 0))
           || (_dayNum(a.date) - _dayNum(b.date))
           || ((parseTimeMin(a.time) || 0) - (parseTimeMin(b.time) || 0));
     });
+    const _newRowIndex = {};
+    ordered.forEach((g, i) => { _newRowIndex[g.game_id] = i; });
+    _prevRowIndex = _newRowIndex;
 
     const _isPoolPath = p => p && p.startsWith('pool_');
     const hasScenarios = ordered.some(g => {

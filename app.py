@@ -4479,8 +4479,16 @@ def api_games(tournament_id, team):
                 d["opp_score"] = ds if color == "WHITE" else ws
                 d["result"]    = _result_str(node, team)
             if not node.get("played"):
+                # _h2h_games (not _all_historical_games() alone) -- the bracket
+                # tree is what live-fetched tournaments (JO Quals, Junior
+                # Olympics, Quiksilver, WPL) actually render, and
+                # _all_historical_games() alone misses this tournament's own
+                # games (they never land in EXCEL_DIR as a local file), so a
+                # same-tournament rematch would never surface here even though
+                # the flat played/upcoming list (which already uses
+                # _h2h_games) gets it right.
                 d["last_meeting"] = _last_meeting(
-                    team, opp_name, _all_historical_games(), before_date=node.get("date"))
+                    team, opp_name, _h2h_games, before_date=node.get("date"))
             if live:
                 d["live_score"] = live
             return d
