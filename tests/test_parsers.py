@@ -1197,29 +1197,113 @@ def test_jo_2026_teams_reachable() -> int:
     return failures
 
 
+def test_all_known_tournaments_teams_healthy() -> int:
+    """New-tournament checklist item 4, automated generically instead of
+    hand-copied per tournament.
+
+    Every prior version of this check (test_jo_2026_teams_reachable,
+    test_no_slot_like_opponents, CCA_GAME_NUM_CHECKS, etc.) hardcodes its own
+    (tournament_id, team, sheet) list -- someone has to remember to add a new
+    tournament's teams to a new test function. That's exactly the failure
+    mode documented in feedback-new-tournament-checklist: "reviewing this
+    list is not the same as running it" -- Quiksilver Cup's game_num bug
+    shipped because checklist item 4 was eyeballed, not encoded as a running
+    assertion, for that specific tournament.
+
+    This test instead discovers every Trojan team for every tournament in
+    KNOWN_TOURNAMENTS via /api/trojan-teams/<id> (the same discovery
+    mechanism the pre-game monitor uses) and runs the same battery against
+    whatever it finds -- so a newly-added tournament is covered automatically
+    the moment it's added to KNOWN_TOURNAMENTS, with no new test to write.
+
+    Deliberately loose (matches test_jo_2026_teams_reachable's philosophy):
+    does not pin exact game_ids/counts, since several tournaments here are
+    live-fetched and drift. Checks the structural invariants a "look at it
+    for a second" pass would catch: no crash, no red confidence, no
+    self-referencing opponent, no raw unresolved slot leaking into a
+    non-placeholder card, and non-decreasing game_num order.
+    """
+    from app import app as _flask_app, KNOWN_TOURNAMENTS, _SLOT_LIKE_RE as _slre, team_matches
+    import json as _json
+
+    failures = 0
+    with _flask_app.test_client() as c:
+        for t in KNOWN_TOURNAMENTS:
+            tid = t["id"]
+            r = c.get(f"/api/trojan-teams/{tid}")
+            if r.status_code != 200:
+                print(f"  [SKIP] {tid}: /api/trojan-teams returned {r.status_code}")
+                continue
+            teams = _json.loads(r.data)
+            if not teams:
+                print(f"  [SKIP] {tid}: no Trojan teams discovered (no local fixture / live URL not set)")
+                continue
+            for team_info in teams:
+                name, sheet = team_info["name"], team_info["sheet"]
+                label = f"{tid}/{name}/{sheet}"
+                gr = c.get(f"/api/games/{tid}/{name}?sheet={sheet}")
+                ok = _check(f"{label}: request succeeds", gr.status_code == 200,
+                            f"status {gr.status_code}")
+                if not ok:
+                    failures += 1
+                    continue
+                data = _json.loads(gr.data)
+                games = data.get("played", []) + data.get("upcoming", [])
+                if not games:
+                    print(f"  [SKIP] {label}: 0 games returned")
+                    continue
+
+                conf = data.get("bracket_confidence")
+                ok = _check(f"{label}: bracket confidence is not red", conf != "red",
+                            f"got {conf!r}, warnings={data.get('bracket_warnings')}")
+                if not ok:
+                    failures += 1
+
+                for g in games:
+                    opp = g.get("opponent", "")
+                    ok = _check(f"{label} game {g['game_id']}: opponent is not a self-reference",
+                                not team_matches(opp, name), f"opponent {opp!r} matches team name")
+                    if not ok:
+                        failures += 1
+                    if not g.get("placeholder"):
+                        ok = _check(f"{label} game {g['game_id']}: opponent is not a raw unresolved slot",
+                                    not _slre.match(opp), f"got {opp!r}")
+                        if not ok:
+                            failures += 1
+
+                for list_name in ("played", "upcoming"):
+                    nums = [g["game_num"] for g in data.get(list_name, []) if g.get("game_num") is not None]
+                    bad = [(a, b) for a, b in zip(nums, nums[1:]) if b < a]
+                    ok = _check(f"{label} [{list_name}]: game_num non-decreasing", not bad,
+                                f"nums={nums}")
+                    if not ok:
+                        failures += 1
+    return failures
+
+
 def test_bracket_tree_last_meeting_parity() -> int:
-    """canonical_bracket's last_meeting must never be worse-informed than the
-    flat played/upcoming list's last_meeting for the exact same game_id.
+    """canonical_bracket's last_meeting must exactly match the flat
+    played/upcoming list's last_meeting for the exact same game_id --
+    checked in BOTH directions, not just "tree is not worse-informed."
 
-    The bug (found 2026-07-16 while auditing JO for the same "two divergent
-    code paths" pattern as the game_num bug): the tree serializer
-    (_serialize_tree_node, what canonical_bracket/the bracket UI actually
-    uses) computed last_meeting from _all_historical_games() alone -- local
-    archive files on disk. The flat list already used _h2h_games (archive +
-    this tournament's own live-fetched data combined), added earlier this
-    project for exactly this reason: live-fetched tournaments (JO Quals,
-    Junior Olympics, Quiksilver, WPL) never land in EXCEL_DIR as a local
-    file, so a same-tournament rematch (a team facing the same opponent
-    twice across pool play and bracket rounds, which JO's format makes
-    likely) would never surface in the bracket view even though the flat
-    list would show it correctly. Fixed by pointing the tree serializer at
-    _h2h_games too.
+    Two distinct real bugs shipped at this exact call site, both found
+    2026-07-16 while auditing JO for the "two divergent code paths" pattern:
 
-    No known JO team currently has a same-tournament rematch to exercise
-    positively (checked live 2026-07-16), so this test can only catch the
-    divergence, not prove a real rematch renders -- that's a live spot-check
-    the moment one occurs, not something this fixture-free live-data test
-    can force.
+    1. Tree used _all_historical_games() alone (local archive only) while
+       the flat list used _h2h_games (archive + this tournament's own live
+       data combined) -- tree could be WORSE-INFORMED, missing a
+       same-tournament rematch the flat list would show. Fixed by pointing
+       the tree serializer at _h2h_games too.
+    2. This test originally only checked direction 1 (skipped the
+       comparison whenever flat_val was None, on the theory that null means
+       "nothing to miss"). That let a SECOND bug slip past it undetected:
+       the tree's call never passed sheet=, so it was unscoped across every
+       age division while the flat list's call was correctly scoped to the
+       team's own division -- tree could be BETTER-INFORMED in a way that
+       was actually WRONG, surfacing a 16U opponent's history on a 12U
+       team's bracket card (confirmed live: 12U Trojan Cardinal vs Asphalt
+       Green). Fixed by passing sheet=tree_sheet. Now checks strict equality
+       both ways so neither direction of divergence can hide again.
     """
     from app import app as _flask_app
     import json as _json
@@ -1250,11 +1334,9 @@ def test_bracket_tree_last_meeting_parity() -> int:
                 if gid not in flat_lm:
                     continue
                 flat_val = flat_lm[gid]
-                if flat_val is None:
-                    continue  # nothing the tree could be missing
                 ok = _check(
                     f"{team}/{sheet}: canonical_bracket last_meeting for {gid!r} "
-                    f"matches the flat list (not worse-informed)",
+                    f"exactly matches the flat list",
                     n.get("last_meeting") == flat_val,
                     f"flat={flat_val!r} tree={n.get('last_meeting')!r}",
                 )
@@ -1483,6 +1565,11 @@ def main():
     print("JO 2026 teams reachable (live schedule regression guard)")
     print("=" * 60)
     total_failures += test_jo_2026_teams_reachable()
+
+    print("\n" + "=" * 60)
+    print("All known tournaments, all Trojan teams (generic checklist item 4)")
+    print("=" * 60)
+    total_failures += test_all_known_tournaments_teams_healthy()
 
     print("\n" + "=" * 60)
     print("Bracket-tree game_num collision guard (canonical_bracket, not the flat list)")

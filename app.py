@@ -283,7 +283,17 @@ def all_excels():
 _ALL_HISTORICAL_GAMES_CACHE: list | None = None
 
 def _all_historical_games() -> list:
-    """All played games across every local Excel file, cached in memory."""
+    """All played games across every LOCAL Excel file only, cached in memory.
+
+    Do not call this directly for any opponent-history feature (last_meeting,
+    head-to-head, strength ratings, etc.) -- live-fetched tournaments (JO
+    Quals, Junior Olympics, Quiksilver, WPL) never land in EXCEL_DIR as a
+    local file, so this alone silently misses a tournament's own live games.
+    That exact gap has shipped as a real bug three separate times (matchup
+    history's sheet-scoping, the bracket tree's last_meeting, then the same
+    bracket-tree bug again for JO). Use _h2h_source() instead, which combines
+    this with whatever live game list the caller already has in hand.
+    """
     global _ALL_HISTORICAL_GAMES_CACHE
     if _ALL_HISTORICAL_GAMES_CACHE is not None:
         return _ALL_HISTORICAL_GAMES_CACHE
@@ -295,6 +305,35 @@ def _all_historical_games() -> list:
         except Exception:
             pass
     _ALL_HISTORICAL_GAMES_CACHE = combined
+    return combined
+
+
+def _h2h_source(*sources: list) -> list:
+    """Combine any number of game lists (typically a tournament's own
+    live-fetched games plus _all_historical_games()) into one deduped list,
+    for any feature that needs a team's full opponent history: last_meeting,
+    head-to-head tallies, strength ratings, etc.
+
+    This is the ONE sanctioned way to build that combined list -- see the
+    warning on _all_historical_games(). Earlier occurrences of this exact
+    gap were each an independent inline combine-and-dedup block that someone
+    had to remember to write correctly; routing every caller through this
+    function means there is only one place left to get it right.
+
+    Dedup keeps the FIRST occurrence of each game_id, so argument order
+    encodes precedence -- pass the source you want to win on conflict first
+    (e.g. live data before local archives, so a live tournament's own
+    up-to-date copy of a game wins over a possibly-stale archived one).
+    """
+    seen: set = set()
+    combined: list = []
+    for source in sources:
+        for g in source:
+            gid = g.get("game_id")
+            if gid in seen:
+                continue
+            seen.add(gid)
+            combined.append(g)
     return combined
 
 
@@ -778,13 +817,8 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
 
     # Collect game records: (white_key, dark_key, white_frac_win, recency_weight)
     _bt_records: list = []
-    _seen_gids:  set  = set()
 
-    for _g in list(_all_historical_games()) + list(division_games):
-        _gid = _g.get("game_id")
-        if _gid in _seen_gids:
-            continue
-        _seen_gids.add(_gid)
+    for _g in _h2h_source(_all_historical_games(), division_games):
         if not _g.get("played") or _g.get("white_score") is None:
             continue
         _wk = _team_key(_slot_name(_g["white_team"]))
@@ -3651,6 +3685,30 @@ def _fire_llm_check(team, nodes, warnings):
         ).start()
 
 
+# Which tree-building algorithm a bracket-tournament format uses, looked up
+# once instead of re-evaluating "tournament_id in WPL_TOURNAMENTS / elif
+# tournament_id in _NJO_TOURNAMENTS" at every call site that needs to build
+# or reason about a team's bracket tree. Both formats' membership sets
+# (WPL_TOURNAMENTS, _NJO_TOURNAMENTS) stay the single source of truth for
+# "which tournament_ids belong to this format" -- this only consolidates the
+# derived "so which tree builder does that imply" decision that was
+# otherwise re-derived at each of several call sites in api_games.
+_TREE_BUILDERS = {
+    "wpl": _build_wpl_game_tree,
+    "njo": _build_njo_game_tree,
+}
+
+
+def _tree_format_for(tournament_id: str) -> str | None:
+    """'wpl' | 'njo' | None -- which bracket-tree format this tournament_id
+    belongs to, or None if it's not a bracket-tournament format at all."""
+    if tournament_id in WPL_TOURNAMENTS:
+        return "wpl"
+    if tournament_id in _NJO_TOURNAMENTS:
+        return "njo"
+    return None
+
+
 def _compute_tree_layout(nodes: list, team: str) -> dict:
     """Assign column (BFS depth), path_condition, and eliminated flag to each node.
 
@@ -3939,6 +3997,27 @@ def _head_to_head(team: str, opponent: str, all_games: list, sheet: str = None) 
     return {"wins": wins, "losses": losses, "ties": ties}
 
 
+def _opponent_history(team: str, opponent_label: str, h2h_games: list,
+                       before_date=None, sheet: str | None = None) -> dict:
+    """Single call site for a game's last_meeting + head-to-head tally.
+
+    The flat played/upcoming list and the bracket tree serializer in
+    api_games both need this; route both through this one function instead
+    of each calling _last_meeting/_head_to_head independently. The
+    flat-vs-tree last_meeting bug shipped TWICE (Quiksilver Cup, then Junior
+    Olympics -- the identical bug, because the first fix only touched the
+    flat list's call site) because each call site had to independently
+    remember to pass the combined h2h_games (this tournament's own live data
+    + local archives) instead of the archives alone. One call site left to
+    get that right, instead of N.
+    """
+    return {
+        "last_meeting": _last_meeting(team, opponent_label, h2h_games,
+                                       before_date=before_date, sheet=sheet),
+        "h2h": _head_to_head(team, opponent_label, h2h_games, sheet=sheet),
+    }
+
+
 @app.route("/api/games/<tournament_id>/<path:team>")
 def api_games(tournament_id, team):
     excel = find_excel(tournament_id)
@@ -3948,20 +4027,9 @@ def api_games(tournament_id, team):
     _all_games = load_and_parse(excel)
     games      = _filter_by_dates(_all_games, tournament_id)
 
-    # Live-fetched tournaments (Quiksilver Cup, JO Quals, WPL) never land in
-    # EXCEL_DIR as a local file, so _all_historical_games() alone misses this
-    # tournament's own games entirely -- last_meeting/h2h would never surface
-    # a matchup that only happened earlier in THIS same event. Combine both,
-    # deduped by game_id in case a tournament is ever backed by both a local
-    # snapshot and a live fetch.
-    _seen_h2h_gids: set = set()
-    _h2h_games: list = []
-    for _g in list(_all_games) + list(_all_historical_games()):
-        _gid = _g.get("game_id")
-        if _gid in _seen_h2h_gids:
-            continue
-        _seen_h2h_gids.add(_gid)
-        _h2h_games.append(_g)
+    # See _h2h_source()'s docstring -- this tournament's own live games must
+    # win over the local archive on conflict, so they go first.
+    _h2h_games = _h2h_source(_all_games, _all_historical_games())
 
     # Weekend reference date for scoping describe_slot standings lookups.
     # Prevents stale pool standings from previous weekends (pool letters repeat in WPL).
@@ -4003,7 +4071,7 @@ def api_games(tournament_id, team):
     # NJO/CCA: deduplicate by game_id only — round-robin sections (GG/HH/II in 18U,
     # BB/AA in 16U) legitimately produce multiple games sharing the same pool_rank
     # metadata; keeping only one per (pool_rank_group, pool_rank) pair would hide them.
-    if tournament_id in {"jo-quals", "junior-olympics"}:
+    if tournament_id in _NJO_TOURNAMENTS:
         seen_gids: set = set()
         deduped = []
         for g in my_games:
@@ -4302,10 +4370,10 @@ def api_games(tournament_id, team):
             # h2h INCLUDES this game -- it's a cumulative record, not a
             # pointer, so it should always reflect the full known matchup
             # history through and including this result.
-            base["last_meeting"] = _last_meeting(team, opponent_label, _h2h_games,
-                                                  before_date=g.get("date"),
-                                                  sheet=g.get("sheet"))
-            base["h2h"] = _head_to_head(team, opponent_label, _h2h_games, sheet=g.get("sheet"))
+            _hist = _opponent_history(team, opponent_label, _h2h_games,
+                                       before_date=g.get("date"), sheet=g.get("sheet"))
+            base["last_meeting"] = _hist["last_meeting"]
+            base["h2h"] = _hist["h2h"]
             next_game = winner_next if result == "win" else loser_next if result == "loss" else None
             if next_game:
                 base["next"] = _next_summary(next_game, team, dg, ref_date=_weekend_ref_date, my_game_ids=my_game_ids)
@@ -4333,15 +4401,15 @@ def api_games(tournament_id, team):
                 if loser_next and loser_next["game_id"] not in my_game_ids:
                     scenarios["lose"] = _next_summary(loser_next,  team, dg, ref_date=_weekend_ref_date, my_game_ids=my_game_ids)
             base["scenarios"] = scenarios if scenarios else None
-            base["last_meeting"] = _last_meeting(team, opponent_label, _h2h_games,
-                                                  before_date=g.get("date"),
-                                                  sheet=g.get("sheet"))
+            _hist = _opponent_history(team, opponent_label, _h2h_games,
+                                       before_date=g.get("date"), sheet=g.get("sheet"))
+            base["last_meeting"] = _hist["last_meeting"]
             # For an upcoming game with a real (non-TBD) opponent, explicitly
             # show "0-0" rather than hiding the section when there's no prior
             # history — omitting it here (unlike the played-game case) reads
             # as a missing feature rather than a deliberate "first meeting"
             # signal. A still-unresolved opponent slot has nothing to default.
-            base["h2h"] = _head_to_head(team, opponent_label, _h2h_games, sheet=g.get("sheet"))
+            base["h2h"] = _hist["h2h"]
             if base["h2h"] is None and opponent_label and not _SLOT_LIKE_RE.match(opponent_label):
                 base["h2h"] = {"wins": 0, "losses": 0, "ties": 0}
             upcoming_out.append(base)
@@ -4404,22 +4472,19 @@ def api_games(tournament_id, team):
     # WPL crossover game tree
     wpl_bracket = None
     tree = None
-    if tournament_id in WPL_TOURNAMENTS and my_games:
+    _tree_format = _tree_format_for(tournament_id)
+    if _tree_format and my_games:
         tree_sheet = my_games[0]['sheet']
         div_games_for_tree = [g for g in _all_games if g['sheet'] == tree_sheet]
         latest_team_date = max((g["date"] for g in my_games if g.get("date")), default=None)
-        tree = _build_wpl_game_tree(team, div_games_for_tree, anchor_date=latest_team_date)
-    elif tournament_id in _NJO_TOURNAMENTS and my_games:
-        tree_sheet = my_games[0]['sheet']
-        div_games_for_tree = [g for g in _all_games if g['sheet'] == tree_sheet]
-        latest_team_date = max((g["date"] for g in my_games if g.get("date")), default=None)
-        tree = _build_njo_game_tree(team, div_games_for_tree, anchor_date=latest_team_date)
-        # NJO uses w_to/l_to integer links, not WPL-style WIN GM # slots — skip
-        # ground-truth depth checks (_derive_expected_bracket is WPL-specific).
-        struct_issues = _check_bracket_structure(team, tree, allow_multiple_roots=True)
-        if struct_issues:
-            for _si in struct_issues:
-                print(f"[bracket-struct] {team!r} | {tournament_id}: {_si}", flush=True)
+        tree = _TREE_BUILDERS[_tree_format](team, div_games_for_tree, anchor_date=latest_team_date)
+        if _tree_format == "njo":
+            # NJO uses w_to/l_to integer links, not WPL-style WIN GM # slots —
+            # skip ground-truth depth checks (_derive_expected_bracket is WPL-specific).
+            struct_issues = _check_bracket_structure(team, tree, allow_multiple_roots=True)
+            if struct_issues:
+                for _si in struct_issues:
+                    print(f"[bracket-struct] {team!r} | {tournament_id}: {_si}", flush=True)
 
     if tree:
         _append_tbd_stub_chain(tree, div_games_for_tree, tree_sheet)
@@ -4479,16 +4544,25 @@ def api_games(tournament_id, team):
                 d["opp_score"] = ds if color == "WHITE" else ws
                 d["result"]    = _result_str(node, team)
             if not node.get("played"):
-                # _h2h_games (not _all_historical_games() alone) -- the bracket
-                # tree is what live-fetched tournaments (JO Quals, Junior
-                # Olympics, Quiksilver, WPL) actually render, and
-                # _all_historical_games() alone misses this tournament's own
-                # games (they never land in EXCEL_DIR as a local file), so a
-                # same-tournament rematch would never surface here even though
-                # the flat played/upcoming list (which already uses
-                # _h2h_games) gets it right.
-                d["last_meeting"] = _last_meeting(
-                    team, opp_name, _h2h_games, before_date=node.get("date"))
+                # _opponent_history (not a direct _last_meeting call) -- see
+                # its docstring. This exact gap (using _all_historical_games()
+                # alone instead of the tournament's own live data combined
+                # in) shipped as a real bug twice at this call site before
+                # being routed through the one shared function.
+                #
+                # sheet=tree_sheet: found while wiring this up -- the ORIGINAL
+                # code here never passed a sheet at all, so this call was
+                # unscoped across every division while the flat list's
+                # equivalent call was correctly scoped to the team's own
+                # division. That let a same-named opponent in a DIFFERENT age
+                # group's history surface here (confirmed live: 12U Trojan
+                # Cardinal vs ASPHALT GREEN showed a match in the bracket view
+                # that the flat list correctly omitted). Same class of bug
+                # this function exists to prevent, just a second instance of
+                # it, found as a direct result of consolidating the call.
+                d["last_meeting"] = _opponent_history(
+                    team, opp_name, _h2h_games, before_date=node.get("date"),
+                    sheet=tree_sheet)["last_meeting"]
             if live:
                 d["live_score"] = live
             return d
@@ -4535,8 +4609,7 @@ def api_games(tournament_id, team):
 
     # ── Bracket confidence + display mode ────────────────────────────────────
     # WPL tournaments always attempt a bracket. Non-WPL/NJO: no bracket expected.
-    is_bracket_tournament = (tournament_id in WPL_TOURNAMENTS
-                             or tournament_id in {"jo-quals", "junior-olympics"})
+    is_bracket_tournament = _tree_format is not None
 
     if wpl_bracket:
         # Pass raw (pre-serialization) upcoming games, not upcoming_out --
@@ -4547,7 +4620,7 @@ def api_games(tournament_id, team):
         _raw_upcoming = [g for g in my_games if not g.get("played")]
         bracket_confidence, bracket_warnings = _validate_wpl_bracket(
             team, tree, upcoming=_raw_upcoming, serialized_nodes=wpl_bracket,
-            is_njo=(tournament_id in _NJO_TOURNAMENTS))
+            is_njo=(_tree_format == "njo"))
     elif is_bracket_tournament and my_games:
         # Bracket expected but missing — hard RED
         bracket_confidence = "red"
@@ -5089,10 +5162,8 @@ def _run_pre_game_sweep(tournament_id: str) -> dict:
                 continue
 
             extras = _expand_bracket_games(team, direct, sheet_games)
-            if tournament_id in _NJO_TOURNAMENTS:
-                tree = _build_njo_game_tree(team, sheet_games, anchor_date=anchor)
-            else:
-                tree = _build_wpl_game_tree(team, sheet_games, anchor_date=anchor)
+            _mon_tree_format = _tree_format_for(tournament_id) or "wpl"
+            tree = _TREE_BUILDERS[_mon_tree_format](team, sheet_games, anchor_date=anchor)
 
             # Count all unique Sunday game IDs visible to this team
             sun_ids: set[str] = set()

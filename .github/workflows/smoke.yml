@@ -18,10 +18,30 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
 
       - name: Import check
         run: python3 -c "import app; print('app import OK')"
 
       - name: Parser unit tests
         run: python3 -m pytest tests/test_parsers.py -x -q
+
+      - name: Install Playwright browser
+        run: python3 -m playwright install --with-deps chromium
+
+      # Real-browser bracket rendering checks (connector correctness, no
+      # unnecessary crossings, TBD stub rendering) -- these are the ONLY
+      # checks in this repo that look at the actual rendered DOM instead of
+      # backend JSON. Every bug they catch was previously "requires a human
+      # eye once per tournament" (see feedback-pre-tournament-smoke-test) --
+      # this closes that gap for the specific class of bug it can see.
+      #
+      # continue-on-error: this points at Junior Olympics, a LIVE Google
+      # Sheet the organizer edits continuously (confirmed to return
+      # different data between fetches minutes apart). A failure here can
+      # mean either a real rendering regression or the live sheet being
+      # temporarily down/thin on data -- non-blocking so the latter never
+      # blocks a deploy, but still visible as a failed step to investigate.
+      - name: Bracket rendering checks (real browser)
+        continue-on-error: true
+        run: python3 tests/verify_bracket_rendering.py --port 5099
