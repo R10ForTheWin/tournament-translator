@@ -45,3 +45,19 @@ jobs:
       - name: Bracket rendering checks (real browser)
         continue-on-error: true
         run: python3 tests/verify_bracket_rendering.py --port 5099
+
+      # Pixel-diff regression against committed baseline screenshots
+      # (tests/visual_baselines/*.png). Scoped to futures-5 -- backed by a
+      # local, committed, static Excel fixture, NOT a live feed -- so a
+      # failure here should mean a real rendering change, never "the live
+      # sheet updated." Baselines were captured on macOS locally; this has
+      # never actually run on GitHub's Linux runners yet, and cross-platform
+      # font rendering is a known source of false positives for pixel-diff
+      # tests even with identical HTML/CSS -- continue-on-error until it's
+      # been observed running for real and the threshold (currently 2%
+      # sampled-pixel delta, tests/visual_regression.py) is confirmed sane
+      # here, not just locally. If a failure IS an intentional UI change,
+      # regenerate locally with --update and commit the new PNGs.
+      - name: Visual regression (pixel diff vs static fixture)
+        continue-on-error: true
+        run: python3 tests/visual_regression.py --port 5099
