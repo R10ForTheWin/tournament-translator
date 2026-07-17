@@ -1345,6 +1345,117 @@ def test_bracket_tree_last_meeting_parity() -> int:
     return failures
 
 
+def test_flat_list_tree_path_parity() -> int:
+    """The flat list's 'path' field (win/lose/pool_N, derived from
+    bracket_path + find_next_games) must agree with canonical_bracket's
+    'path' field (derived from _compute_tree_layout's win_next_ids/
+    lose_next_ids) for every game_id present in both.
+
+    A third independent pair of implementations solving the same problem
+    (which games are a win/lose continuation of which), found auditing for
+    more instances of this session's dominant bug pattern after fixing
+    game_num, last_meeting, and opponent resolution. No divergence found on
+    any of the 7 known JO teams' current real data, so NOT changed to share
+    one implementation -- that would be touching two different graph-
+    traversal algorithms without a concrete bug driving it, the wrong risk
+    trade this close to Junior Olympics (see the is_current fix in this
+    same file for the shape of evidence that WOULD justify it). This test
+    is the safe version: doesn't touch the runtime code, but will catch the
+    moment these two algorithms actually do disagree on real data.
+    """
+    from app import app as _flask_app
+    import json as _json
+
+    failures = 0
+    checks = [
+        ("TROJAN CARDINAL", "18U_M_Champ"),
+        ("TROJAN GOLD",     "18U_M_Invite 24"),
+        ("TROJAN CARDINAL", "16U_M_Champ"),
+        ("TROJAN GOLD",     "16U_M_Classic"),
+        ("TROJAN CARDINAL", "14U_M_Classic"),
+        ("TROJAN CARDINAL", "12U_M_Classic_53"),
+        ("TROJAN GOLD",     "12U_M_Classic_53"),
+    ]
+    with _flask_app.test_client() as c:
+        for team, sheet in checks:
+            r = c.get(f"/api/games/junior-olympics/{team}?sheet={sheet}")
+            if r.status_code != 200:
+                continue
+            data = _json.loads(r.data)
+            flat_path = {g["game_id"]: g.get("path")
+                         for g in data.get("upcoming", []) + data.get("played", [])}
+            cb = data.get("canonical_bracket")
+            if not cb:
+                continue
+            for n in cb.get("guaranteed_games", []) + cb.get("possible_games", []):
+                gid = n["game_id"]
+                if gid not in flat_path:
+                    continue
+                ok = _check(
+                    f"{team}/{sheet}: {gid!r} path agrees between flat list and tree",
+                    flat_path[gid] == n.get("path"),
+                    f"flat={flat_path[gid]!r} tree={n.get('path')!r}",
+                )
+                if not ok:
+                    failures += 1
+    return failures
+
+
+def test_flat_list_is_current_placeholder_guard() -> int:
+    """A live score attached to a placeholder (still-unresolved-opponent)
+    game must never flip is_current=True on the flat played/upcoming list --
+    it must still show live_score, just not the CURRENT GAME badge.
+
+    The tree serializer already had this exact guard (`if live and not
+    node.get("placeholder")`), added after a real live-tournament bug
+    ("CURRENT GAME must never show on a node whose opponent is still an
+    unresolved guess" -- see feedback-wpl-bracket-rendering). The flat
+    list's identical is_current block never got the same guard -- found
+    auditing for other divergent-path bugs after fixing
+    game_num/last_meeting/opponent resolution this same session. A live
+    score CAN legitimately attach to a game_id that's still a placeholder
+    in our data (the organizer's sheet cell hasn't been updated with a real
+    opponent name yet even though the game is being played right now), so
+    this isn't just a hypothetical.
+
+    No real placeholder game currently has a live score (JO hasn't started
+    yet), so this injects a synthetic one directly into _LIVE_SCORES for a
+    known real placeholder game_id, checks the API response, then cleans up.
+    """
+    from app import app as _flask_app, _LIVE_SCORES
+    import json as _json
+
+    failures = 0
+    tid, team, sheet, gid = "junior-olympics", "TROJAN GOLD", "16U_M_Classic", "16BX-028"
+    key = (tid, gid)
+    _LIVE_SCORES[key] = {"our_score": 3, "opp_score": 2, "quarter": "Q2", "updated_at": "now"}
+    try:
+        with _flask_app.test_client() as c:
+            r = c.get(f"/api/games/{tid}/{team}?sheet={sheet}")
+            if r.status_code != 200:
+                print(f"  [SKIP] {tid}/{team}: status {r.status_code}")
+                return 0
+            data = _json.loads(r.data)
+            game = next((g for g in data.get("upcoming", []) if g["game_id"] == gid), None)
+            if game is None:
+                print(f"  [SKIP] {gid} not found in {team}'s upcoming list (data may have moved on)")
+                return 0
+            if not game.get("placeholder"):
+                print(f"  [SKIP] {gid} is no longer a placeholder (organizer resolved it) -- guard not exercised")
+                return 0
+            ok = _check(f"{gid}: live_score is populated", game.get("live_score") is not None,
+                        f"got {game.get('live_score')!r}")
+            if not ok:
+                failures += 1
+            ok = _check(f"{gid}: is_current stays False on a placeholder even with a live score",
+                        game.get("is_current") is False, f"got {game.get('is_current')!r}")
+            if not ok:
+                failures += 1
+    finally:
+        _LIVE_SCORES.pop(key, None)
+    return failures
+
+
 def test_bracket_tree_opponent_resolution_parity() -> int:
     """canonical_bracket's opponent resolution (the tree serializer's own
     inline algorithm) must agree with _team_opp_slot -- the shared function
@@ -1740,6 +1851,16 @@ def main():
     print("Bracket-tree opponent resolution parity (_team_opp_slot vs inline tree algorithm)")
     print("=" * 60)
     total_failures += test_bracket_tree_opponent_resolution_parity()
+
+    print("\n" + "=" * 60)
+    print("Flat list is_current placeholder guard (live score on unresolved opponent)")
+    print("=" * 60)
+    total_failures += test_flat_list_is_current_placeholder_guard()
+
+    print("\n" + "=" * 60)
+    print("Flat list / tree path parity (win-lose-pool derivation, third independent pair)")
+    print("=" * 60)
+    total_failures += test_flat_list_tree_path_parity()
 
     print("\n" + "=" * 60)
     print("Last meeting availability (cross-tournament history search active)")

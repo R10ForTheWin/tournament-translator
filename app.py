@@ -4458,7 +4458,18 @@ def api_games(tournament_id, team):
             live = _LIVE_SCORES.get((tournament_id, gid))
             if live:
                 base["live_score"] = live
-                base["is_current"] = True
+                # Guard added here to match the tree serializer's identical
+                # check (found auditing for other divergent-path bugs after
+                # fixing game_num/last_meeting/opponent resolution this same
+                # session): a live score can attach to a game_id that's
+                # still a placeholder in OUR data (the organizer's sheet
+                # cell hasn't been updated with a real opponent name yet,
+                # even though the game is factually being played right
+                # now) -- CURRENT GAME must never show on a node whose
+                # opponent is still an unresolved guess, only the tree had
+                # this guard until now.
+                if not base.get("placeholder"):
+                    base["is_current"] = True
             scenarios = {}
             # Suppress scenarios on placement-alternative games (pool-finish slots like
             # "1stG-", "2ndH-") — their follow-on games are deeper placement rounds that
