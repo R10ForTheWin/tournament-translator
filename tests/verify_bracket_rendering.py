@@ -221,6 +221,34 @@ def run_case(page, label, tournament_label, team_label, sheet_hint, min_cards):
     return cards, paths
 
 
+def run_escape_html_case(page, port: int):
+    """_escHtml (templates/index.html) is what stands between organizer-
+    controlled spreadsheet text (opponent names, venue locations, team
+    names in standings/predictor) and innerHTML -- found via a security
+    audit that ~12 interpolation sites inserted that text unescaped, one
+    of which (game card location, rendered on every single card) had no
+    protection at all. Verify it actually escapes HTML-special characters
+    instead of just trusting the source code reads correctly."""
+    print(f"\n{'=' * 60}\n_escHtml XSS-escaping sanity check\n{'=' * 60}")
+    page.goto(f"http://localhost:{port}/", wait_until="load")
+    cases = [
+        ("<script>alert(1)</script>", "&lt;script&gt;alert(1)&lt;/script&gt;"),
+        ("Team & Co.", "Team &amp; Co."),
+        ("<img src=x onerror=alert(1)>", "&lt;img src=x onerror=alert(1)&gt;"),
+        ("O'Brien's Team", "O&#39;Brien&#39;s Team"),
+        ("Normal Team Name", "Normal Team Name"),
+        (None, ""),
+    ]
+    results = page.evaluate(
+        "(cases) => cases.map(([input, expected]) => "
+        "({input, expected, got: _escHtml(input)}))",
+        cases,
+    )
+    for r in results:
+        check(f"_escHtml({r['input']!r}) escapes correctly",
+              r["got"] == r["expected"], f"got {r['got']!r}")
+
+
 def run_tbd_stub_case(page, tournament_label, team_label, sheet_hint):
     """When a team's bracket tree runs out of real data before the
     tournament's own posted schedule does, the app appends TBD placeholder
@@ -294,6 +322,8 @@ if __name__ == "__main__":
                 run_case(page, f"Junior Olympics: {team_label} {sheet_hint}",
                          "Junior Olympics", team_label, sheet_hint, min_cards=1)
                 run_tbd_stub_case(page, "Junior Olympics", team_label, sheet_hint)
+
+            run_escape_html_case(page, PORT)
 
             browser.close()
     finally:

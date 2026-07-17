@@ -1,6 +1,6 @@
-flask
-openpyxl
-gunicorn
-requests
-anthropic
-pytest
+flask==3.1.2
+openpyxl==3.1.5
+gunicorn==23.0.0
+requests==2.32.5
+anthropic==0.97.0
+pytest==8.4.2

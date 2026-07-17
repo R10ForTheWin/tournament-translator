@@ -836,7 +836,7 @@ function locationHtml(rawLocation) {
   const addr = venueAddress(rawLocation);
   const query = encodeURIComponent(addr || (rawLocation + ', Orange County, CA'));
   const mapsUrl = `https://maps.google.com/?q=${query}`;
-  return `<a class="game-card-location" href="${mapsUrl}" target="_blank" rel="noopener">📍 ${rawLocation}</a>`;
+  return `<a class="game-card-location" href="${mapsUrl}" target="_blank" rel="noopener">📍 ${_escHtml(rawLocation)}</a>`;
 }
 
 // ── Add to Home Screen prompt ───────────────────────────────────────────────────
@@ -1215,7 +1215,7 @@ function rankDivBadge(name) {
   return parts.length ? ` <span style="font-size:13px;font-weight:500;opacity:0.6">(${parts.join(' · ')})</span>` : '';
 }
 function withRank(name, cssClass) {
-  return `<span class="${cssClass}">${name}${rankDivBadge(name)}</span>`;
+  return `<span class="${cssClass}">${_escHtml(name)}${rankDivBadge(name)}</span>`;
 }
 function recordLine(g) {
   const us   = fmtRec(g.our_record);
@@ -1492,7 +1492,7 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opt
       const mkRow = s => `<div class="standings-row${s.is_mine ? ' mine' : ''}">
         <div class="standings-rank">${s.rank}</div>
         ${'rank_movement' in s ? `<div class="standings-mv">${mvArrow(s)}</div>` : ''}
-        <div class="standings-name">${s.name}${s.is_mine ? ' ★' : ''}</div>
+        <div class="standings-name">${_escHtml(s.name)}${s.is_mine ? ' ★' : ''}</div>
         <div class="standings-pts">${s.points}</div>
         <div class="standings-record">${recStr(s)}</div>
       </div>`;
@@ -1526,7 +1526,7 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opt
     });
     const mkRow = s => `<div class="standings-row${s.is_mine ? ' mine' : ''}">
       <div class="standings-rank">${s.rank}</div>
-      <div class="standings-name">${s.name}${s.is_mine ? ' ★' : ''}</div>
+      <div class="standings-name">${_escHtml(s.name)}${s.is_mine ? ' ★' : ''}</div>
       <div class="standings-pts">${s.points}</div>
       <div class="standings-record">${recStr(s)}</div>
     </div>`;
@@ -1548,6 +1548,27 @@ async function loadGames(tournamentId, team, sheet, defaultView = 'bracket', opt
     </div>`;
     console.error('loadGames render error:', renderErr);
   }
+}
+
+// Every card is built via template-literal .innerHTML, and several fields
+// (opponent, location, team names in standings/predictor) come straight
+// from the tournament organizer's spreadsheet, not developer-controlled
+// constants -- unescaped, a cell containing HTML-special characters would
+// inject markup into the page (stored XSS via the spreadsheet as the
+// injection vector). Found during a security audit: one place already had
+// a one-off fix for exactly this (comment text, `.replace(/</g,'&lt;')`)
+// but it only escaped '<', not '&'/'>'/quotes, and wasn't applied anywhere
+// else that interpolates external text -- the same "fixed once, not every
+// sibling site" pattern behind most of this session's other bugs. One
+// shared, complete escaper instead.
+function _escHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function _dayNum(d) {
@@ -1613,7 +1634,7 @@ function buildWplTree(data, tournamentId, team, ourName) {
           ${locHtml ? `<span class="wpl-card-meta-loc">${locHtml}</span>` : ''}
         </div>
         <div class="wpl-card-opp" style="margin-bottom:2px">${ourName || ''}${badge(ourRank, ourDiv)}</div>
-        <div class="wpl-card-opp"><span class="vs">vs</span>${g.opponent || '?'}${badge(oppRank, oppDiv)}</div>
+        <div class="wpl-card-opp"><span class="vs">vs</span>${_escHtml(g.opponent || '?')}${badge(oppRank, oppDiv)}</div>
         ${rec ? `<div class="wpl-card-rec">${rec}</div>` : ''}
         ${!g.result ? fmtLastMeeting(g.last_meeting) : ''}
         ${scoreHtml}
@@ -2294,7 +2315,7 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
         return `<div class="predictor-mine-row">
           <div class="predictor-mine-header">
             <div class="predictor-team-rank">${t.predicted_rank}</div>
-            <div class="predictor-team-name">${t.team}</div>
+            <div class="predictor-team-name">${_escHtml(t.team)}</div>
             <div class="predictor-team-wl">${t.wins}-${t.losses}</div>
           </div>
           ${inlineBars}
@@ -2302,7 +2323,7 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
       }
       return `<div class="predictor-team-row">
         <div class="predictor-team-rank">${t.predicted_rank}</div>
-        <div class="predictor-team-name">${t.team}</div>
+        <div class="predictor-team-name">${_escHtml(t.team)}</div>
         <div class="predictor-team-wl">${t.wins}-${t.losses}</div>
       </div>`;
     }).join('');
@@ -2369,7 +2390,7 @@ function _addCommentsSection(card, tournamentId, gameId) {
       const r = await fetch(`/api/comments/${encodeURIComponent(tournamentId)}/${encodeURIComponent(gameId)}`);
       const items = await r.json();
       list.innerHTML = items.length
-        ? items.map(c => `<div class="comment-item">${c.text.replace(/</g,'&lt;')}<div class="comment-time">${_fmtCommentAge(c.ts)}</div></div>`).join('')
+        ? items.map(c => `<div class="comment-item">${_escHtml(c.text)}<div class="comment-time">${_fmtCommentAge(c.ts)}</div></div>`).join('')
         : '<div style="font-size:12px;color:var(--muted);padding:4px 0">No comments yet.</div>';
       toggle.querySelector('.comments-label').textContent = `Comments${items.length ? ` (${items.length})` : ''}`;
     } catch(e) {}
@@ -2421,7 +2442,7 @@ function buildResultCard(g, ourName, tournamentId) {
         </div>
         ${recordWithLabel(ourRec)}
         <div class="team-row">
-          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${rankDivBadge(g.opponent)}</span>
+          <span class="team-row-name"><span class="vs">vs</span>${_escHtml(g.opponent)}${rankDivBadge(g.opponent)}</span>
           <span class="team-row-score theirs">${g.opp_score ?? ''}</span>
         </div>
         ${recordWithLabel(oppRec)}
@@ -2503,7 +2524,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
         </div>
         ${recordWithLabel(ourRec)}
         <div class="team-row">
-          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${rankDivBadge(g.opponent)}</span>
+          <span class="team-row-name"><span class="vs">vs</span>${_escHtml(g.opponent)}${rankDivBadge(g.opponent)}</span>
           <div class="score-controls">
             <button class="score-btn" onclick="liveScoreBtn('${tid}','${gid}','opp',-1)">−</button>
             <span class="score-num theirs">${oppScore}</span>
@@ -2523,7 +2544,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
         </div>
         ${recordWithLabel(ourRec)}
         <div class="team-row">
-          <span class="team-row-name"><span class="vs">vs</span>${g.opponent}${rankDivBadge(g.opponent)}</span>
+          <span class="team-row-name"><span class="vs">vs</span>${_escHtml(g.opponent)}${rankDivBadge(g.opponent)}</span>
         </div>
         ${recordWithLabel(oppRec)}
         ${fmtH2H(g)}
@@ -2536,7 +2557,7 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
       bottomSection += `
         <div class="next-game-box" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
           <div class="next-game-label">Next Game</div>
-          <div class="next-game-opponent">vs ${g.next.opponent}</div>
+          <div class="next-game-opponent">vs ${_escHtml(g.next.opponent)}</div>
           <div class="next-game-meta">${g.next.date} · ${g.next.time}</div>
           ${locationHtml(g.next.location)}
         </div>`;
@@ -2545,11 +2566,11 @@ function buildUpcomingCard(g, tournamentId, team, ourName) {
       let branches = '';
       if (g.scenarios.win) {
         const n = g.scenarios.win;
-        branches += `<div class="fork-branch"><div class="fork-content"><div class="fork-label">↗ Win</div><div class="fork-opponent">vs ${n.opponent}</div><div class="fork-when">${n.date} · ${n.time} · ${n.location}</div></div></div>`;
+        branches += `<div class="fork-branch"><div class="fork-content"><div class="fork-label">↗ Win</div><div class="fork-opponent">vs ${_escHtml(n.opponent)}</div><div class="fork-when">${n.date} · ${n.time} · ${_escHtml(n.location)}</div></div></div>`;
       }
       if (g.scenarios.lose) {
         const n = g.scenarios.lose;
-        branches += `<div class="fork-branch"><div class="fork-content"><div class="fork-label">↘ Lose</div><div class="fork-opponent">vs ${n.opponent}</div><div class="fork-when">${n.date} · ${n.time} · ${n.location}</div></div></div>`;
+        branches += `<div class="fork-branch"><div class="fork-content"><div class="fork-label">↘ Lose</div><div class="fork-opponent">vs ${_escHtml(n.opponent)}</div><div class="fork-when">${n.date} · ${n.time} · ${_escHtml(n.location)}</div></div></div>`;
       }
       bottomSection += `<div class="scenarios-box"><div class="scenarios-title">What's Next</div><div class="decision-fork">${branches}</div></div>`;
     }
