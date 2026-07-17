@@ -1,9 +1,10 @@
 name: Scheduled visual/bracket health check
 
 # Runs the real-browser checks (verify_bracket_rendering.py,
-# visual_regression.py) periodically and independently of pushes, and pushes
-# an ntfy alert on failure -- the automated replacement for a human
-# periodically opening the app on their phone and looking at it.
+# visual_regression.py) 3x/day, ONLY on days that fall within a known
+# tournament's date range, and pushes an ntfy alert on failure -- the
+# automated replacement for a human periodically opening the app on their
+# phone and looking at it.
 #
 # Deliberately a SEPARATE scheduled job, not folded into the app's own
 # in-process pre-game monitor (_run_pre_game_sweep in app.py): Playwright +
@@ -17,17 +18,59 @@ name: Scheduled visual/bracket health check
 # Secrets) with the same ntfy.sh topic app.py's _send_ntfy() already uses in
 # production. Without that secret, this job still runs and reports failures
 # in the Actions tab, it just can't push a phone notification.
+#
+# Cost note: this repo is PRIVATE, so GitHub Actions minutes are not free.
+# The full check (install Playwright + a real Chromium browser, drive 7
+# teams through real page loads) is genuinely not cheap -- easily 5-10
+# minutes per run. Running it unconditionally every 3 hours, every day,
+# forever would plausibly burn most of a free-tier monthly minutes
+# allowance on this one workflow. The "gate" job below is the fix: it runs
+# on the SAME 3x/day cron every day (cheap -- checkout + a lightweight pip
+# install + a date check, no Playwright), but only triggers the expensive
+# job on days that actually fall within a KNOWN_TOURNAMENTS date range.
+#
+# Times are UTC-fixed for PDT (UTC-7) -- correct for Junior Olympics
+# (July) and any other spring/summer tournament. GitHub Actions cron has
+# no timezone/DST awareness, so a tournament during PST (roughly
+# Nov-early Mar) would fire these one hour later than intended in Pacific
+# wall-clock terms (e.g. the "5am" run would actually land at 4am PST).
+# None of this app's current tournaments fall in that window except
+# possibly late Feb (futures-2) -- revisit if that ever matters in practice.
 
 on:
   schedule:
-    # Every 3 hours. Tune tighter (e.g. hourly) during an active tournament
-    # weekend if that cadence isn't fast enough to catch issues before a
-    # parent does.
-    - cron: "0 */3 * * *"
+    - cron: "0 12 * * *"   # 5:00 AM PDT
+    - cron: "0 19 * * *"   # 12:00 PM PDT
+    - cron: "0 1 * * *"    # 6:00 PM PDT (previous Pacific calendar day)
   workflow_dispatch: {}
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      is_tournament_day: ${{ steps.check.outputs.is_tournament_day }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Lightweight install only -- NOT requirements-dev.txt (no Playwright
+      # needed just to check a date). Reads KNOWN_TOURNAMENTS directly from
+      # app.py rather than duplicating tournament dates here, so there's
+      # only ever one place these dates need to stay correct.
+      - name: Install lightweight dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check whether today (Pacific) is a tournament day
+        id: check
+        run: python3 scripts/ci_is_tournament_day.py
+
   visual-check:
+    needs: gate
+    if: needs.gate.outputs.is_tournament_day == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
