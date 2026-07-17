@@ -4561,20 +4561,23 @@ def api_games(tournament_id, team):
         # Serialize tree nodes: format dates/times, add opponent label
         def _serialize_tree_node(node, dg):
             gid = node["game_id"]
-            # Try raw slot match first; fall back to resolving W#/L# refs
-            if team_matches(node["white_team"], team):
-                opp_sl, color = node["dark_team"],  "WHITE"
-            elif team_matches(node["dark_team"], team):
-                opp_sl, color = node["white_team"], "DARK"
+            if node.get("tbd_stub"):
+                # Both slots are the literal string "TBD" by construction
+                # (_append_tbd_stub_chain / _fill_missing_branch_stubs) --
+                # short-circuit rather than asking _team_opp_slot to resolve
+                # it, which would log a spurious "unresolved slot" warning
+                # for something that's supposed to be unresolved.
+                opp_sl, color = "TBD", "DARK"
             else:
-                t_w = describe_slot(node["white_team"], dg, ref_date=latest_team_date)
-                t_d = describe_slot(node["dark_team"],  dg, ref_date=latest_team_date)
-                if team_matches(t_w, team):
-                    opp_sl, color = node["dark_team"],  "WHITE"
-                elif team_matches(t_d, team):
-                    opp_sl, color = node["white_team"], "DARK"
-                else:
-                    opp_sl, color = node["white_team"], "DARK"
+                # _team_opp_slot: the same shared function the flat
+                # played/upcoming list already uses, instead of a second,
+                # independent inline algorithm. Verified these two
+                # previously-parallel algorithms already agreed on every
+                # real node across all 7 known JO teams (including deep
+                # round-4+ chains) before making this the single
+                # implementation -- see test_bracket_tree_opponent_resolution_parity.
+                opp_sl = _team_opp_slot(node, team, dg, my_game_ids)
+                color  = "WHITE" if opp_sl == node["dark_team"] else "DARK"
             opp_name = describe_slot(opp_sl, dg, ref_date=latest_team_date)
             # Guard: if resolved opponent still equals our own team, flip slots
             if team_matches(opp_name, team):

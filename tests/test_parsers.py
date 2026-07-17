@@ -1345,6 +1345,112 @@ def test_bracket_tree_last_meeting_parity() -> int:
     return failures
 
 
+def test_bracket_tree_opponent_resolution_parity() -> int:
+    """canonical_bracket's opponent resolution (the tree serializer's own
+    inline algorithm) must agree with _team_opp_slot -- the shared function
+    the flat played/upcoming list already uses -- for every real
+    (non-placeholder) tree node.
+
+    These are two INDEPENDENT algorithms solving the same problem
+    ("which slot in this game is ours"), not one shared function: the tree
+    serializer (_serialize_tree_node) does its own raw-match-then-
+    describe_slot-fallback check inline, while the flat list calls
+    _team_opp_slot (which additionally handles pool_rank_group finish-slots
+    and my_game_ids-based W#/L# resolution that the tree's inline version
+    doesn't). Found while auditing for more instances of this project's
+    single most common bug pattern (two parallel paths computing the same
+    thing, one gets fixed, the other doesn't -- see game_num and
+    last_meeting, both hit multiple times).
+
+    Checked empirically against all 7 known JO teams' real trees before
+    deciding what to do about it: every tree node's pool_rank/
+    pool_rank_group is always None (that _team_opp_slot branch never
+    triggers here), and every slot is either a direct name match or a
+    W#/L# reference -- the two algorithms very likely already agree on all
+    current real data. Rewriting the tree's inline algorithm to share
+    _team_opp_slot directly would be the fuller fix, but doing that a week
+    before Junior Olympics for an unproven benefit is the wrong risk
+    trade -- this parity check is the safer version: it doesn't change the
+    live code path at all, but will catch the moment the two algorithms
+    actually do diverge on real data, which is exactly the trigger for
+    doing the fuller unification with real evidence instead of a guess.
+    """
+    import sys as _sys
+    sys_path_added = ROOT not in _sys.path
+    if sys_path_added:
+        _sys.path.insert(0, ROOT)
+    from app import (
+        app as _flask_app, find_excel, load_and_parse, _filter_by_dates,
+        _build_njo_game_tree, _build_wpl_game_tree, _team_opp_slot,
+        _expand_bracket_games, team_matches, describe_slot, _tournament_meta,
+    )
+    import json as _json
+
+    failures = 0
+    checks = [
+        ("TROJAN CARDINAL", "18U_M_Champ"),
+        ("TROJAN GOLD",     "18U_M_Invite 24"),
+        ("TROJAN CARDINAL", "16U_M_Champ"),
+        ("TROJAN GOLD",     "16U_M_Classic"),
+        ("TROJAN CARDINAL", "14U_M_Classic"),
+        ("TROJAN CARDINAL", "12U_M_Classic_53"),
+        ("TROJAN GOLD",     "12U_M_Classic_53"),
+    ]
+    excel = find_excel("junior-olympics")
+    if not excel:
+        print("  [SKIP] junior-olympics source not reachable")
+        return 0
+    all_games = load_and_parse(excel)
+    games = _filter_by_dates(all_games, "junior-olympics")
+    meta = _tournament_meta("junior-olympics")
+    ref_date = meta.get("date_start") if meta else None
+
+    with _flask_app.test_client() as c:
+        for team, sheet in checks:
+            dg = [g for g in games if g["sheet"] == sheet]
+            direct = [g for g in dg if team_matches(g["white_team"], team)
+                      or team_matches(g["dark_team"], team)]
+            if not direct:
+                continue
+            # Match api_games exactly: my_game_ids (what _team_opp_slot's
+            # W#/L# resolution checks against) includes games reached via
+            # _expand_bracket_games, not just direct name matches -- using
+            # only direct matches here (an earlier version of this test did)
+            # made _team_opp_slot look broken at round 4+ when it isn't;
+            # the real app's my_game_ids is the expanded set.
+            my_games = direct + _expand_bracket_games(team, direct, dg)
+            my_game_ids = {g["game_id"] for g in my_games}
+            latest = max((g["date"] for g in my_games if g.get("date")), default=None)
+            tree = _build_njo_game_tree(team, dg, anchor_date=latest)
+            expected = {}
+            for n in tree:
+                if n.get("placeholder"):
+                    continue
+                opp_sl = _team_opp_slot(n, team, dg, my_game_ids)
+                expected[n["game_id"]] = describe_slot(opp_sl, dg, ref_date=ref_date)
+
+            r = c.get(f"/api/games/junior-olympics/{team}?sheet={sheet}")
+            if r.status_code != 200:
+                continue
+            data = _json.loads(r.data)
+            cb = data.get("canonical_bracket")
+            if not cb:
+                continue
+            for n in cb.get("guaranteed_games", []) + cb.get("possible_games", []):
+                gid = n["game_id"]
+                if gid not in expected or n.get("placeholder"):
+                    continue
+                ok = _check(
+                    f"{team}/{sheet}: {gid!r} opponent resolution agrees between "
+                    f"_team_opp_slot and the tree's own inline algorithm",
+                    n.get("opponent") == expected[gid],
+                    f"tree={n.get('opponent')!r} _team_opp_slot={expected[gid]!r}",
+                )
+                if not ok:
+                    failures += 1
+    return failures
+
+
 def test_bracket_tree_game_num_no_collision() -> int:
     """canonical_bracket's game_num (what the bracket UI actually renders as
     "GAME N" and uses to lay out columns) must never assign the same number
@@ -1629,6 +1735,11 @@ def main():
     print("Bracket-tree last_meeting parity (JO same-tournament rematch guard)")
     print("=" * 60)
     total_failures += test_bracket_tree_last_meeting_parity()
+
+    print("\n" + "=" * 60)
+    print("Bracket-tree opponent resolution parity (_team_opp_slot vs inline tree algorithm)")
+    print("=" * 60)
+    total_failures += test_bracket_tree_opponent_resolution_parity()
 
     print("\n" + "=" * 60)
     print("Last meeting availability (cross-tournament history search active)")
