@@ -3837,6 +3837,75 @@ def _build_canonical_bracket(team: str, our_team_name: str, wpl_bracket: list,
     }
 
 
+def _fill_missing_branch_stubs(tree: list, tree_sheet: str) -> None:
+    """Add a TBD stub for the win or lose branch of a node whose OTHER
+    branch is already a real published game -- a node with exactly one of
+    win_next_ids/lose_next_ids populated, not both and not neither.
+
+    Real bug, found live 2026-07-16: a tournament organizer building out a
+    bracket incrementally can publish one outcome's continuation game
+    before the other (confirmed directly against JO's raw sheet data --
+    "L#28" and "W#32" existed, "W#28" and "L#32" did not, anywhere in the
+    192-game division). Before this fix, a node in that state silently
+    showed only its one known branch, with no card at all for the other
+    outcome -- reading as "if you win game 28, nothing happens next"
+    instead of "we don't know that game yet." Every win/lose split must
+    show two cards or none; never exactly one real card with the other
+    branch simply absent.
+
+    Deliberately distinct from _append_tbd_stub_chain, which handles a node
+    with BOTH branches missing (the tree runs out entirely for the day) by
+    chaining stubs across remaining tournament days. This handles a node
+    with ONLY one branch missing -- must run before that function so its
+    day-chain frontier detection (which requires BOTH branches empty)
+    doesn't also need to special-case a partially-filled node.
+    """
+    if not tree:
+        return
+    by_id = {n["game_id"]: n for n in tree}
+    new_stubs = []
+    for n in list(tree):
+        if n.get("tbd_stub"):
+            continue
+        has_win = bool(n.get("win_next_ids"))
+        has_lose = bool(n.get("lose_next_ids"))
+        if has_win == has_lose:
+            continue  # both present (fine) or both absent (handled elsewhere)
+        missing_path = "lose" if has_win else "win"
+
+        # Best estimate for the stub's date: whichever real child already
+        # exists tells us when this round is actually happening.
+        known_next_ids = (n.get("win_next_ids") or []) + (n.get("lose_next_ids") or [])
+        known_child = by_id.get(known_next_ids[0]) if known_next_ids else None
+        stub_date = (known_child.get("date") if known_child else None) or n.get("date")
+
+        stub_id = f"__tbd_branch_{tree_sheet}_{n['game_id']}"
+        stub = {
+            "game_id":        stub_id,
+            "date":           stub_date,
+            "time":           None,
+            "location":       None,
+            "white_team":     "TBD",
+            "dark_team":      "TBD",
+            "played":         False,
+            "placeholder":    True,
+            "tbd_stub":       True,
+            "src_game_id":    n["game_id"],
+            "src_path":       None,
+            "win_next_ids":   [],
+            "lose_next_ids":  [],
+            "pool_next":      {},
+            "sunday_pair_id": None,
+            "tree_format":    "bracket",
+        }
+        if missing_path == "win":
+            n["win_next_ids"] = [stub_id]
+        else:
+            n["lose_next_ids"] = [stub_id]
+        new_stubs.append(stub)
+    tree.extend(new_stubs)
+
+
 def _append_tbd_stub_chain(tree: list, division_games: list, tree_sheet: str) -> None:
     """When a bracket tree runs out of data before the tournament's own
     posted schedule does (an elimination format where the spreadsheet
@@ -4487,6 +4556,7 @@ def api_games(tournament_id, team):
                     print(f"[bracket-struct] {team!r} | {tournament_id}: {_si}", flush=True)
 
     if tree:
+        _fill_missing_branch_stubs(tree, tree_sheet)
         _append_tbd_stub_chain(tree, div_games_for_tree, tree_sheet)
         # Serialize tree nodes: format dates/times, add opponent label
         def _serialize_tree_node(node, dg):
@@ -4590,9 +4660,21 @@ def api_games(tournament_id, team):
         # other branches), which would otherwise collide with them.
         _tbd_next = max(_game_num_map.values(), default=0)
         _tree_num: dict[str, int] = {}
+        _by_gid = {n["game_id"]: n for n in tree}
+        _branch_stub_prefix = f"__tbd_branch_{tree_sheet}_"
         for n in tree:
             gid = n["game_id"]
             gn = _game_num_map.get(gid)
+            if gn is None and gid.startswith(_branch_stub_prefix):
+                # A missing-branch stub (see _fill_missing_branch_stubs) is
+                # an alternative WITHIN its sibling's round, not a new later
+                # round -- share the sibling's real game_num instead of
+                # falling through to the next sequential number.
+                parent = _by_gid.get(n.get("src_game_id"))
+                sibling_ids = ((parent.get("win_next_ids") or [])
+                               + (parent.get("lose_next_ids") or [])) if parent else []
+                sibling_id = next((sid for sid in sibling_ids if sid != gid), None)
+                gn = _game_num_map.get(sibling_id) if sibling_id else None
             if gn is None:
                 _tbd_next += 1
                 gn = _tbd_next

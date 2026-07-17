@@ -1407,13 +1407,62 @@ def test_bracket_tree_game_num_no_collision() -> int:
                     failures += 1
                 root_nums[n["game_num"]] = n["game_id"]
 
+            # No real (non-stub) node may have exactly one of
+            # win_next_ids/lose_next_ids populated -- that's the bug found
+            # live 2026-07-16 (confirmed against the raw sheet: "L#28" and
+            # "W#32" existed, "W#28" and "L#32" did not, anywhere in the
+            # division). A win/lose split must show both outcomes or
+            # neither; _fill_missing_branch_stubs exists specifically to
+            # turn "one outcome" into "one outcome + one TBD stub for the
+            # other," so this must never observe exactly one after it runs.
+            for n in nodes:
+                if n.get("tbd_stub"):
+                    continue
+                has_win = bool(n.get("win_next_ids"))
+                has_lose = bool(n.get("lose_next_ids"))
+                ok = _check(
+                    f"{team}/{sheet}: {n['game_id']!r} has both branches or neither "
+                    f"(not exactly one dangling)",
+                    has_win == has_lose,
+                    f"win_next_ids={n.get('win_next_ids')} lose_next_ids={n.get('lose_next_ids')}",
+                )
+                if not ok:
+                    failures += 1
+
+            # Day-chain stubs (__tbd_<sheet>_<i>, added when the whole tree
+            # runs dry for a day) represent a LATER round than anything
+            # already known, so they must never collide with a real number.
+            # Missing-branch stubs (__tbd_branch_<sheet>_<parent_gid>, added
+            # by _fill_missing_branch_stubs when only one of a node's two
+            # outcomes has been published) are the OPPOSITE by design: they
+            # fill in the other half of an already-numbered round, so they
+            # MUST share their sibling's number, not avoid it.
             real_nums = {n["game_num"] for n in nodes if not n.get("tbd_stub")}
-            stub_nums = {n["game_num"] for n in nodes if n.get("tbd_stub")}
-            overlap = real_nums & stub_nums
-            ok = _check(f"{team}/{sheet}: TBD stub numbers don't collide with real game numbers",
+            day_chain_nums = {n["game_num"] for n in nodes
+                               if n.get("tbd_stub") and not n["game_id"].startswith("__tbd_branch_")}
+            overlap = real_nums & day_chain_nums
+            ok = _check(f"{team}/{sheet}: day-chain TBD stub numbers don't collide with real game numbers",
                         not overlap, f"overlap={overlap}")
             if not ok:
                 failures += 1
+
+            by_gid = {n["game_id"]: n for n in nodes}
+            for n in nodes:
+                if not n.get("tbd_stub") or not n["game_id"].startswith("__tbd_branch_"):
+                    continue
+                parent = by_gid.get(n.get("src_game_id"))
+                sibling_ids = ((parent.get("win_next_ids") or [])
+                               + (parent.get("lose_next_ids") or [])) if parent else []
+                sibling = next((by_gid[sid] for sid in sibling_ids
+                                if sid != n["game_id"] and sid in by_gid), None)
+                ok = _check(
+                    f"{team}/{sheet}: missing-branch stub {n['game_id']!r} shares "
+                    f"its sibling {sibling['game_id'] if sibling else None!r}'s game_num",
+                    sibling is not None and n["game_num"] == sibling["game_num"],
+                    f"stub game_num={n['game_num']}, sibling game_num={sibling.get('game_num') if sibling else None}",
+                )
+                if not ok:
+                    failures += 1
     return failures
 
 
