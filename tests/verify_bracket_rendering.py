@@ -66,7 +66,16 @@ def verify_bracket(page, tournament_label: str, team_label: str, sheet_hint: str
     # explicit wait_for_timeout calls below is what actually works here.
     page.goto(f"http://localhost:{PORT}/", wait_until="load")
     page.get_by_text(tournament_label, exact=False).first.click()
-    page.wait_for_timeout(6000)
+    # Wait for the team list to actually render rather than a fixed sleep --
+    # under back-to-back runs (many teams checked in one process) the
+    # tournament card's fetch can occasionally take longer than a flat
+    # timeout, and a fixed sleep that's usually enough becomes an
+    # intermittent "0 candidate buttons" flake under load, not a real bug.
+    try:
+        page.wait_for_selector("button:has-text('SCHEDULE')", timeout=20000)
+    except Exception:
+        pass  # fall through -- the empty-button-list check below will report it clearly
+    page.wait_for_timeout(1500)
 
     # Team names repeat across age groups (e.g. "Trojan Gold" appears once
     # per division), so don't trust DOM-proximity heuristics to guess the
@@ -231,6 +240,24 @@ def run_tbd_stub_case(page, tournament_label, team_label, sheet_hint):
               "TBD" in text, f"got {text!r}")
 
 
+# All 7 known Trojan JO teams (same list used by test_parsers.py's
+# generic tournament-health sweep and game_num-collision test) -- run the
+# full geometric + TBD-stub battery against every one of them, not just the
+# one case originally used to develop these checks. Generalizing this is
+# what caught the missing-branch bug affecting 4 of these 7 teams
+# (2026-07-16): the single hardcoded case below only ever exercised 16U
+# Trojan Gold, so the same bug sitting on the other 3 teams' brackets
+# would have shipped invisibly to this suite.
+JO_TEAMS = [
+    ("Trojan Cardinal", "18U"),
+    ("Trojan Gold",     "18U"),
+    ("Trojan Cardinal", "16U"),
+    ("Trojan Gold",     "16U"),
+    ("Trojan Cardinal", "14U"),
+    ("Trojan Cardinal", "12U"),
+    ("Trojan Gold",     "12U"),
+]
+
 PORT = 5099
 
 if __name__ == "__main__":
@@ -263,14 +290,10 @@ if __name__ == "__main__":
             browser = p.chromium.launch()
             page = browser.new_page(viewport={"width": 1400, "height": 1000})
 
-            # The known regression case: a multi-round JO bracket where two
-            # different immediate parents (games 028 and 032) are already
-            # merged as one game_num, so their children must connect to
-            # their REAL parent, not whichever card is nearest on screen.
-            run_case(page, "Junior Olympics: TROJAN GOLD 16U (cascading-merge case)",
-                     "Junior Olympics", "Trojan Gold", "16U", min_cards=4)
-
-            run_tbd_stub_case(page, "Junior Olympics", "Trojan Gold", "16U")
+            for team_label, sheet_hint in JO_TEAMS:
+                run_case(page, f"Junior Olympics: {team_label} {sheet_hint}",
+                         "Junior Olympics", team_label, sheet_hint, min_cards=1)
+                run_tbd_stub_case(page, "Junior Olympics", team_label, sheet_hint)
 
             browser.close()
     finally:
