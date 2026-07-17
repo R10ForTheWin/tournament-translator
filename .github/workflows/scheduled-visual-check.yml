@@ -1,0 +1,71 @@
+name: Scheduled visual/bracket health check
+
+# Runs the real-browser checks (verify_bracket_rendering.py,
+# visual_regression.py) periodically and independently of pushes, and pushes
+# an ntfy alert on failure -- the automated replacement for a human
+# periodically opening the app on their phone and looking at it.
+#
+# Deliberately a SEPARATE scheduled job, not folded into the app's own
+# in-process pre-game monitor (_run_pre_game_sweep in app.py): Playwright +
+# a Chromium browser are real, heavy dependencies (~300MB+) intentionally
+# kept OUT of requirements.txt / the production Railway build so the live
+# app stays lightweight. GitHub Actions already has them installed for CI
+# (see smoke.yml) -- reusing that here instead of adding browser automation
+# to the production server process.
+#
+# Setup required once: `gh secret set NTFY_TOPIC` (or via repo Settings ->
+# Secrets) with the same ntfy.sh topic app.py's _send_ntfy() already uses in
+# production. Without that secret, this job still runs and reports failures
+# in the Actions tab, it just can't push a phone notification.
+
+on:
+  schedule:
+    # Every 3 hours. Tune tighter (e.g. hourly) during an active tournament
+    # weekend if that cadence isn't fast enough to catch issues before a
+    # parent does.
+    - cron: "0 */3 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  visual-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Install Playwright browser
+        run: python3 -m playwright install --with-deps chromium
+
+      - name: Bracket rendering checks (real browser)
+        id: bracket_checks
+        continue-on-error: true
+        run: python3 tests/verify_bracket_rendering.py --port 5099
+
+      - name: Visual regression (pixel diff vs static fixture)
+        id: visual_checks
+        continue-on-error: true
+        run: python3 tests/visual_regression.py --port 5099
+
+      - name: Notify on failure
+        if: steps.bracket_checks.outcome == 'failure' || steps.visual_checks.outcome == 'failure'
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          if [ -z "$NTFY_TOPIC" ]; then
+            echo "NTFY_TOPIC secret not set -- skipping push notification (failure is still visible in this Actions run)."
+            exit 0
+          fi
+          BODY="bracket_checks=${{ steps.bracket_checks.outcome }} visual_checks=${{ steps.visual_checks.outcome }} -- see run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -s -H "Title: Scheduled bracket check FAILED" -H "Priority: high" -H "Tags: warning" \
+            -d "$BODY" "https://ntfy.sh/$NTFY_TOPIC"
+
+      - name: Fail the job if either check failed
+        if: steps.bracket_checks.outcome == 'failure' || steps.visual_checks.outcome == 'failure'
+        run: exit 1
