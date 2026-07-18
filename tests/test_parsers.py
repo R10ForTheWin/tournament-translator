@@ -1304,6 +1304,17 @@ def test_bracket_tree_last_meeting_parity() -> int:
        team's bracket card (confirmed live: 12U Trojan Cardinal vs Asphalt
        Green). Fixed by passing sheet=tree_sheet. Now checks strict equality
        both ways so neither direction of divergence can hide again.
+
+    Also covers h2h, our_record, and opp_record (2026-07-18): these were
+    simply MISSING from the tree serializer entirely until now (Quiksilver,
+    a flat-list tournament, always showed full matchup history + this-
+    tournament records; Junior Olympics, a bracket-tree tournament, only
+    ever showed last_meeting). Lower divergence risk than the other fields
+    here since both paths now call the exact same _opponent_history /
+    sheet_records lookups rather than two independent implementations --
+    still worth checking, since "calls the same function" and "passes it
+    the same arguments" are two different claims, and this file has a
+    documented history of the second one being wrong (last_meeting, twice).
     """
     from app import app as _flask_app
     import json as _json
@@ -1318,6 +1329,7 @@ def test_bracket_tree_last_meeting_parity() -> int:
         ("TROJAN CARDINAL", "12U_M_Classic_53"),
         ("TROJAN GOLD",     "12U_M_Classic_53"),
     ]
+    fields = ["last_meeting", "h2h", "our_record", "opp_record"]
     with _flask_app.test_client() as c:
         for team, sheet in checks:
             r = c.get(f"/api/games/junior-olympics/{team}?sheet={sheet}")
@@ -1327,21 +1339,22 @@ def test_bracket_tree_last_meeting_parity() -> int:
             cb = data.get("canonical_bracket")
             if not cb:
                 continue
-            flat_lm = {g["game_id"]: g.get("last_meeting")
-                       for g in data.get("upcoming", []) if g.get("game_id")}
+            flat_by_id = {g["game_id"]: g for g in data.get("upcoming", []) if g.get("game_id")}
             for n in cb.get("guaranteed_games", []) + cb.get("possible_games", []):
                 gid = n["game_id"]
-                if gid not in flat_lm:
+                if gid not in flat_by_id:
                     continue
-                flat_val = flat_lm[gid]
-                ok = _check(
-                    f"{team}/{sheet}: canonical_bracket last_meeting for {gid!r} "
-                    f"exactly matches the flat list",
-                    n.get("last_meeting") == flat_val,
-                    f"flat={flat_val!r} tree={n.get('last_meeting')!r}",
-                )
-                if not ok:
-                    failures += 1
+                flat_g = flat_by_id[gid]
+                for field in fields:
+                    flat_val = flat_g.get(field)
+                    ok = _check(
+                        f"{team}/{sheet}: canonical_bracket {field} for {gid!r} "
+                        f"exactly matches the flat list",
+                        n.get(field) == flat_val,
+                        f"flat={flat_val!r} tree={n.get(field)!r}",
+                    )
+                    if not ok:
+                        failures += 1
     return failures
 
 

@@ -125,16 +125,18 @@ def verify_bracket(page, tournament_label: str, team_label: str, sheet_hint: str
         for c in cards
     ]
 
-    # Extract each connector's start/end Y and bend-point X from its SVG
-    # path 'd' string. Straight (same-row) connectors have no bend point.
+    # Extract each connector's start/end Y, bend-point X, and source game_id
+    # from its SVG path 'd' string / dataset. Straight (same-row) connectors
+    # have no bend point.
     paths = page.evaluate(
         r"""
         () => Array.from(document.querySelectorAll('svg path')).map(p => {
             const d = p.getAttribute('d');
+            const src = p.dataset.srcGameId || null;
             let m = d.match(/^M ([\d.]+),([\d.]+) H ([\d.]+)$/);
-            if (m) return {sy: +m[2], ty: +m[2], gx: null};
+            if (m) return {sy: +m[2], ty: +m[2], gx: null, src};
             m = d.match(/^M ([\d.]+),([\d.]+) H [\d.]+ Q ([\d.]+),[\d.]+ [\d.]+,[\d.]+ V [\d.]+ Q [\d.]+,([\d.]+)/);
-            if (m) return {sy: +m[2], ty: +m[4], gx: +m[3]};
+            if (m) return {sy: +m[2], ty: +m[4], gx: +m[3], src};
             return null;
         }).filter(Boolean)
         """
@@ -167,26 +169,53 @@ def run_case(page, label, tournament_label, team_label, sheet_hint, min_cards):
         )
 
     # The second bug, caught only by a human looking at a screenshot: two
-    # data-correct crossing connectors that bend through the SAME x point
-    # visually collapse into what looks like one merged trunk. Data
+    # crossing connectors from DIFFERENT sources that bend through the SAME
+    # x point visually collapse into what looks like one merged trunk. Data
     # correctness alone (the check above) can't catch this -- it's a
     # legibility property of the rendered lines. Approximate it
-    # geometrically: any two connectors whose vertical spans overlap (they
-    # cross or run parallel on screen) must bend at visually distinct x
-    # positions.
+    # geometrically: any two connectors from DIFFERENT sources whose
+    # vertical spans overlap (they cross or run parallel on screen) must
+    # bend at visually distinct x positions.
+    #
+    # Connectors from the SAME source are the opposite case and must NOT be
+    # required to differ: a single parent's win/lose children are supposed
+    # to share one bend point (one trunk line forking into two), the
+    # standard tournament-bracket look. An earlier version of this fix
+    # fanned out by TARGET index regardless of source, which "fixed" the
+    # different-parents case but broke this one -- caught live 2026-07-17
+    # via a phone screenshot showing a single source's two children drawn
+    # as two independently-curved, visually crossing lines instead of one
+    # clean fork.
     bent = [p for p in paths if p["gx"] is not None]
     for i in range(len(bent)):
         for j in range(i + 1, len(bent)):
             a, b = bent[i], bent[j]
+            if a["src"] and b["src"] and a["src"] == b["src"]:
+                continue  # same source: sharing a bend point is correct
             lo_a, hi_a = sorted((a["sy"], a["ty"]))
             lo_b, hi_b = sorted((b["sy"], b["ty"]))
             overlaps = lo_a < hi_b and lo_b < hi_a
             if overlaps:
                 check(
-                    f"crossing connectors near y={lo_a:.0f}-{hi_a:.0f} have distinct bend points",
+                    f"crossing connectors near y={lo_a:.0f}-{hi_a:.0f} (src {a['src']!r} vs {b['src']!r}) "
+                    f"have distinct bend points",
                     abs(a["gx"] - b["gx"]) > 5,
                     f"gx={a['gx']} vs gx={b['gx']} -- would visually overlap",
                 )
+
+    # Positive companion to the check above: connectors that DO share a
+    # source must share the exact same bend point (one trunk forking into
+    # two), not just "close enough."
+    by_src: dict = {}
+    for p in bent:
+        if p["src"]:
+            by_src.setdefault(p["src"], []).append(p)
+    for src, group in by_src.items():
+        if len(group) < 2:
+            continue
+        gxs = {p["gx"] for p in group}
+        check(f"{src!r}: all {len(group)} children share one bend point (single fork, not split lines)",
+              len(gxs) == 1, f"gx values={gxs}")
 
     # Third bug (caught live via a phone screenshot 2026-07-15, after the
     # first two): even with correct src_game_id data and distinct bend

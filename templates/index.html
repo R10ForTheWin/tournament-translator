@@ -2093,7 +2093,19 @@ function drawBracketLines(inner, rounds, roundNums) {
     const R = 7;
     const toCardsArr = Array.from(toCards);
 
-    toCardsArr.forEach((toCard, toIdx) => {
+    // Resolve each target card's real source first (see comment below), then
+    // group by that source. Two children of the SAME source (the ordinary
+    // win/lose split) must share one bend point -- one trunk line leaving
+    // the parent that then forks -- not two independently-curved lines from
+    // the same origin, which reads as two unrelated crossing paths even
+    // though it's one clean fork (caught live 2026-07-17: fixed the
+    // different-parents crossing case on 2026-07-15, but that fix fanned
+    // out by TARGET index, so it also fanned apart lines sharing one
+    // source, which is the wrong shape for a standard bracket fork).
+    // Distinct sources whose lines could still visually collide keep
+    // getting distinct bend points, fanned by source index now instead of
+    // target index.
+    const resolved = toCardsArr.map(toCard => {
       const toRect = toCard.getBoundingClientRect();
       const tx = toRect.left - innerRect.left;
       const ty = toRect.top - innerRect.top + toRect.height / 2;
@@ -2109,20 +2121,21 @@ function drawBracketLines(inner, rounds, roundNums) {
       // when src_game_id data isn't available at all.
       const srcId = toCard.dataset.srcGameId;
       const matched = srcId && fromById[srcId];
-      const { card: fromCard, sy, sx } = matched || fromMids.reduce((best, fm) =>
+      const from = matched || fromMids.reduce((best, fm) =>
         Math.abs(fm.sy - ty) < Math.abs(best.sy - ty) ? fm : best
       );
+      return { toCard, tx, ty, from };
+    });
 
-      // Fan out the vertical bend point per connector instead of sharing one
-      // gx for every line in this gap. Two CORRECT crossing paths (e.g. top
-      // source -> bottom target and bottom source -> top target) both bend
-      // through the exact same point otherwise, so they visually collapse
-      // into what looks like one merged trunk splitting in two -- correct
-      // data, unreadable as a diagram. Offsetting by target row index keeps
-      // each line's elbow visually distinct so a crossing reads as a
-      // crossing, not a merge. (Caught live 2026-07-15: the connector data
-      // was already correct at this point, but still looked wrong on screen.)
-      const gx = gxBase + (toIdx - (toCardsArr.length - 1) / 2) * 14;
+    const sourceOrder = [];
+    resolved.forEach(r => {
+      if (!sourceOrder.includes(r.from.card)) sourceOrder.push(r.from.card);
+    });
+
+    resolved.forEach(({ toCard, tx, ty, from }) => {
+      const { card: fromCard, sy, sx } = from;
+      const srcIdx = sourceOrder.indexOf(fromCard);
+      const gx = gxBase + (srcIdx - (sourceOrder.length - 1) / 2) * 14;
 
       let d;
       if (Math.abs(ty - sy) < R * 2) {
@@ -2138,6 +2151,7 @@ function drawBracketLines(inner, rounds, roundNums) {
       path.setAttribute('fill', 'none');
       path.setAttribute('stroke', 'rgba(255,255,255,0.5)');
       path.setAttribute('stroke-width', '2.5');
+      if (fromCard.dataset.gameId) path.dataset.srcGameId = fromCard.dataset.gameId;
       svg.appendChild(path);
 
       // Pill on each connector: path condition + time gap

@@ -4594,6 +4594,20 @@ def api_games(tournament_id, team):
             if team_matches(opp_name, team):
                 other_sl = node["white_team"] if opp_sl == node["dark_team"] else node["dark_team"]
                 opp_name = describe_slot(other_sl, dg, ref_date=latest_team_date)
+            # our_record/opp_record: same sheet_records lookup the flat list
+            # already uses (computed once, above, for the whole team) --
+            # this-tournament win/loss record for each side. Was never wired
+            # into the tree serializer at all (a missing feature, not a
+            # diverging duplicate -- found because Quiksilver, a flat-list
+            # tournament, always showed this, and Junior Olympics, a
+            # bracket-tree tournament, never did).
+            our_rec = opp_rec = None
+            if show_records and not node.get("tbd_stub"):
+                trec    = sheet_records.get(tree_sheet, {})
+                our_key = strip_prefix(node["white_team"] if color == "WHITE" else node["dark_team"]).upper()
+                opp_key = strip_prefix(opp_sl).upper()
+                our_rec = trec.get(our_key)
+                opp_rec = trec.get(opp_key)
             is_current = False
             if node.get("date") and node.get("time"):
                 game_dt = datetime.combine(node["date"], node["time"])
@@ -4619,6 +4633,8 @@ def api_games(tournament_id, team):
                 "lose_next_ids":  node["lose_next_ids"],
                 "sunday_pair_id": node["sunday_pair_id"],
                 "is_current":     is_current,
+                "our_record":     our_rec,
+                "opp_record":     opp_rec,
             }
             if node.get("played") and not node.get("placeholder"):
                 ws = node.get("white_score") or 0
@@ -4627,12 +4643,13 @@ def api_games(tournament_id, team):
                 d["our_score"] = ws if color == "WHITE" else ds
                 d["opp_score"] = ds if color == "WHITE" else ws
                 d["result"]    = _result_str(node, team)
-            if not node.get("played"):
-                # _opponent_history (not a direct _last_meeting call) -- see
-                # its docstring. This exact gap (using _all_historical_games()
-                # alone instead of the tournament's own live data combined
-                # in) shipped as a real bug twice at this call site before
-                # being routed through the one shared function.
+            if not node.get("tbd_stub"):
+                # _opponent_history (not a direct _last_meeting/_head_to_head
+                # call) -- see its docstring. This exact gap (using
+                # _all_historical_games() alone instead of the tournament's
+                # own live data combined in) shipped as a real bug twice at
+                # this call site before being routed through the one shared
+                # function.
                 #
                 # sheet=tree_sheet: found while wiring this up -- the ORIGINAL
                 # code here never passed a sheet at all, so this call was
@@ -4644,9 +4661,24 @@ def api_games(tournament_id, team):
                 # that the flat list correctly omitted). Same class of bug
                 # this function exists to prevent, just a second instance of
                 # it, found as a direct result of consolidating the call.
-                d["last_meeting"] = _opponent_history(
-                    team, opp_name, _h2h_games, before_date=node.get("date"),
-                    sheet=tree_sheet)["last_meeting"]
+                #
+                # h2h was never computed here at all until now (a missing
+                # feature, not a diverging duplicate -- Quiksilver, a
+                # flat-list tournament, always showed this; Junior Olympics,
+                # a bracket-tree tournament, never did). Same call already
+                # made for last_meeting returns both -- just wasn't reading
+                # the second half of it before.
+                _hist = _opponent_history(team, opp_name, _h2h_games,
+                                           before_date=node.get("date"), sheet=tree_sheet)
+                d["last_meeting"] = _hist["last_meeting"]
+                d["h2h"] = _hist["h2h"]
+                if not node.get("played"):
+                    # Same explicit-0-0-instead-of-hidden rule as the flat
+                    # list: omitting h2h on an upcoming game with a real,
+                    # resolved opponent reads as a missing feature rather
+                    # than a deliberate "first meeting" signal.
+                    if d["h2h"] is None and opp_name and not _SLOT_LIKE_RE.match(opp_name):
+                        d["h2h"] = {"wins": 0, "losses": 0, "ties": 0}
             if live:
                 d["live_score"] = live
             return d
