@@ -3108,6 +3108,18 @@ _SLOT_LIKE_RE = re.compile(
     r'^(?:\d+(?:st|nd|rd|th)\s*(?:in\s+)?[A-Z]|[A-Z]\d+[-\(]|[WL]\s*#|WIN\s+GM|LOS\s+GM)',
     re.IGNORECASE,
 )
+# describe_slot's own "Nth in Pool X (A or B or C)" preview for a pool-finish
+# slot that can't be decided yet (no pool games played, so every team in the
+# pool is still a live candidate -- see describe_slot's _FINISH_SLOT_RE/
+# _COMPOSITE_SLOT_RE branch) coincidentally starts with the same "<ordinal> in
+# <capital letter>" shape _SLOT_LIKE_RE looks for in a genuinely raw, undecoded
+# slot ("2ND G-...") -- "in Pool" begins "in P", an uppercase letter right
+# after "in ". Any caller treating a _SLOT_LIKE_RE match as "still broken" must
+# carve this one known-good format out first. Found live 2026-07-19: this false
+# positive held every team in Junior Olympics' 18U Invite division (including
+# Trojan Gold) at yellow confidence, and would have fired on every one of them
+# in the automated pre-game sweep notification 12-25h before the tournament.
+_POOL_PREVIEW_RE = re.compile(r'^\d+(?:st|nd|rd|th)\s+in\s+Pool\s+[A-Z]\s*\(', re.IGNORECASE)
 
 
 def _derive_expected_bracket(team: str, div_games: list, anchor_date) -> dict:
@@ -3696,10 +3708,11 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
                 )
 
     # ── Unresolved opponent slot strings (yellow — data quality only) ──────────
+    # See _POOL_PREVIEW_RE's own docstring for why this carve-out exists.
     if serialized_nodes:
         for sn in serialized_nodes:
             opp = sn.get("opponent", "")
-            if opp and _SLOT_LIKE_RE.match(opp):
+            if opp and _SLOT_LIKE_RE.match(opp) and not _POOL_PREVIEW_RE.match(opp):
                 yellow.append(
                     f"game {sn['game_id']}: opponent {opp!r} is an unresolved slot string"
                 )
@@ -5374,7 +5387,7 @@ def _run_pre_game_sweep(tournament_id: str) -> dict:
                 except Exception:
                     opp_slot = wt
                 opp = describe_slot(opp_slot, sheet_games, ref_date=anchor)
-                if _SLOT_LIKE_RE.match(opp):
+                if _SLOT_LIKE_RE.match(opp) and not _POOL_PREVIEW_RE.match(opp):
                     issues.append(f"unresolved slot in tree: {n['game_id']} opp={opp!r}")
                     break
 

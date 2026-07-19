@@ -29,7 +29,7 @@ from parsers.format_cca import parse_csv as cca_parse_csv
 from parsers.format_a import parse as format_a_parse
 from app import (
     _expand_bracket_games, _build_wpl_game_tree, _build_njo_game_tree,
-    team_matches, describe_slot, _SLOT_LIKE_RE, _tournament_meta,
+    team_matches, describe_slot, _SLOT_LIKE_RE, _POOL_PREVIEW_RE, _tournament_meta,
     _team_opp_slot, _result_str, _tournament_finish_probs,
 )
 
@@ -261,7 +261,7 @@ def _run_championship_team(sheet: str, team: str, anchor: date,
         wt, dt = n["white_team"], n["dark_team"]
         opp_slot = dt if team.split()[-1].upper() in wt.upper() else wt
         opp = describe_slot(opp_slot, div_games, ref_date=anchor)
-        if _SLOT_LIKE_RE.match(opp):
+        if _SLOT_LIKE_RE.match(opp) and not _POOL_PREVIEW_RE.match(opp):
             bad_opps.append(f"{n['game_id']}: {opp!r}")
     ok = _check("no unresolved slot strings in opponent labels",
                 not bad_opps, "; ".join(bad_opps[:3]))
