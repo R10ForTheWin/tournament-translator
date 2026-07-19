@@ -2295,21 +2295,29 @@ async function showPredictorSheet(tournamentId, team, sheet, friendlyName) {
     const standingEl = backdrop.querySelector('#pred-standing');
     const bodyEl     = backdrop.querySelector('#pred-body');
 
-    if (!data || !data.pool || !data.finish_probs.length) {
+    if (!data || !data.finish_probs.length) {
       standingEl.textContent = '';
       bodyEl.innerHTML = `<div class="pred-sheet-msg">Pool schedule not posted yet — check back once games are available.</div>`;
       return;
     }
 
+    // data.pool is null for a division with no round-robin pool stage at all
+    // (a straight seeded single-elimination bracket) -- finish_probs still
+    // works there (simulated off the bracket directly), there's just no
+    // "Pool X" standings box to show. Fall back to this team's own row in
+    // predicted_standings for a win/loss subtitle instead.
     const p = data.pool;
+    const mine = (data.predicted_standings || []).find(t => t.is_mine);
     const ordFn = n => { const s=['th','st','nd','rd']; const v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); };
     // Show season record in subtitle if available, otherwise weekend pool record
     const seasonRecStr = window._seasonRec && friendlyName
       ? (window._seasonRec[friendlyName.toUpperCase()] || null)
       : null;
     const poolSubtitle = seasonRecStr
-      ? `Pool ${p.group} · Season: ${seasonRecStr}`
-      : `Pool ${p.group} · ${p.wins}W–${p.losses}L`;
+      ? `${p ? `Pool ${p.group} · ` : ''}Season: ${seasonRecStr}`
+      : p
+        ? `Pool ${p.group} · ${p.wins}W–${p.losses}L`
+        : mine ? `${mine.wins}W–${mine.losses}L` : '';
     standingEl.textContent = poolSubtitle;
 
     const topProbs = [...data.finish_probs].sort((a, b) => b.pct - a.pct).slice(0, 3);

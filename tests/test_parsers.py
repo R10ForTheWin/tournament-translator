@@ -30,7 +30,7 @@ from parsers.format_a import parse as format_a_parse
 from app import (
     _expand_bracket_games, _build_wpl_game_tree, _build_njo_game_tree,
     team_matches, describe_slot, _SLOT_LIKE_RE, _tournament_meta,
-    _team_opp_slot, _result_str,
+    _team_opp_slot, _result_str, _tournament_finish_probs,
 )
 
 FIXTURES_DIR   = os.path.join(ROOT, "Tournaments Excels")
@@ -1197,6 +1197,86 @@ def test_jo_2026_teams_reachable() -> int:
     return failures
 
 
+def test_place_predictor_seeded_bracket() -> int:
+    """Place Predictor must still produce finish probabilities for a
+    division that skips round-robin pools entirely and seeds straight into a
+    single-elimination bracket (root slots like "1-ALPHA", no pool letter
+    anywhere in the sheet).
+
+    Real bug found live 2026-07-19 against the actual 2026 Junior Olympics
+    schedule: 4 of 5 Trojan teams (18U/16U Champ, 16U/14U Classic) use
+    exactly this format, and Place Predictor silently returned "pool
+    schedule not posted yet" for all of them even though the schedule (and a
+    genuine 48-team seeded bracket) was fully posted. Root cause:
+    _tournament_finish_probs only ever built its team roster from
+    pool-letter slots (_POOL_SLOT_RE) -- a division with none had nothing to
+    simulate from, even though strip_prefix's bare "\\d+-" alternative
+    already resolves these same root slots correctly for the (unaffected)
+    Schedule/Bracket view.
+    """
+    failures = 0
+
+    # Synthetic 4-team single-elimination bracket, no pool letters anywhere:
+    # ALPHA(seed1)/DELTA(seed4) and BRAVO(seed2)/CHARLIE(seed3) feed a final
+    # (comments "1st") and a 3rd-place game (comments "3rd") via W#/L# refs.
+    games = [
+        {"game_id": "G1", "white_team": "1-ALPHA", "dark_team": "4-DELTA",
+         "date": date(2026, 7, 23), "time": None, "played": False,
+         "white_score": None, "dark_score": None, "comments": None, "sheet": "TEST"},
+        {"game_id": "G2", "white_team": "2-BRAVO", "dark_team": "3-CHARLIE",
+         "date": date(2026, 7, 23), "time": None, "played": False,
+         "white_score": None, "dark_score": None, "comments": None, "sheet": "TEST"},
+        {"game_id": "G3", "white_team": "W#1", "dark_team": "W#2",
+         "date": date(2026, 7, 24), "time": None, "played": False,
+         "white_score": None, "dark_score": None, "comments": "1st", "sheet": "TEST"},
+        {"game_id": "G4", "white_team": "L#1", "dark_team": "L#2",
+         "date": date(2026, 7, 24), "time": None, "played": False,
+         "white_score": None, "dark_score": None, "comments": "3rd", "sheet": "TEST"},
+    ]
+    our_probs, all_probs = _tournament_finish_probs("ALPHA", games, n_trials=200)
+    ok = _check("seeded bracket with no pool letters still produces finish probabilities",
+                bool(our_probs), f"got {our_probs!r}")
+    if not ok:
+        failures += 1
+    ok = _check("all 4 seeded teams appear in the simulated roster",
+                len(all_probs) == 4, f"got {sorted(all_probs.keys())}")
+    if not ok:
+        failures += 1
+    ok = _check("top seed's placement probabilities sum to ~1.0 (every trial resolves to a placement)",
+                bool(our_probs) and abs(sum(our_probs.values()) - 1.0) < 0.01,
+                f"got sum={sum(our_probs.values()) if our_probs else 0}")
+    if not ok:
+        failures += 1
+
+    # Live confirmation against the real 2026 Junior Olympics sheet -- the
+    # 4 divisions actually found broken, via the real API route (not just
+    # the simulation function directly).
+    from app import app as _flask_app
+    import json as _json
+
+    live_checks = [
+        ("TROJAN CARDINAL", "18U_M_Champ"),
+        ("TROJAN CARDINAL", "16U_M_Champ"),
+        ("TROJAN GOLD",     "16U_M_Classic"),
+        ("TROJAN CARDINAL", "14U_M_Classic"),
+    ]
+    with _flask_app.test_client() as c:
+        for team, sheet in live_checks:
+            r = c.get(f"/api/place-predictor/junior-olympics/{team}?sheet={sheet}")
+            ok = _check(f"{team}/{sheet}: predictor request succeeds", r.status_code == 200,
+                        f"status {r.status_code}")
+            if not ok:
+                failures += 1
+                continue
+            data = _json.loads(r.data)
+            ok = _check(f"{team}/{sheet}: predictor returns finish probabilities (no pool letter in this division)",
+                        bool(data.get("finish_probs")),
+                        f"got pool={data.get('pool')!r}, finish_probs={data.get('finish_probs')!r}")
+            if not ok:
+                failures += 1
+    return failures
+
+
 def test_all_known_tournaments_teams_healthy() -> int:
     """New-tournament checklist item 4, automated generically instead of
     hand-copied per tournament.
@@ -1844,6 +1924,11 @@ def main():
     print("JO 2026 teams reachable (live schedule regression guard)")
     print("=" * 60)
     total_failures += test_jo_2026_teams_reachable()
+
+    print("\n" + "=" * 60)
+    print("Place Predictor: seeded single-elimination bracket (no pool letters)")
+    print("=" * 60)
+    total_failures += test_place_predictor_seeded_bracket()
 
     print("\n" + "=" * 60)
     print("All known tournaments, all Trojan teams (generic checklist item 4)")

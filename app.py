@@ -740,15 +740,41 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
         for slot in (g["white_team"], g["dark_team"])
         if (m := _POOL_SLOT_RE.match(slot.strip()))
     })
-    if not all_groups:
-        return {}
 
     all_pool_teams: dict = {}
-    for group in all_groups:
-        for t in _pool_teams_for_group(group, division_games):
-            all_pool_teams[t] = group
+    _seed_num_by_team: dict = {}
+    if all_groups:
+        for group in all_groups:
+            for t in _pool_teams_for_group(group, division_games):
+                all_pool_teams[t] = group
+    else:
+        # No lettered pools anywhere in this division -- some tournament
+        # formats (Kap7 Intl's single-division seeded brackets, 2026 Junior
+        # Olympics Champ/Classic divisions) skip round-robin pools entirely
+        # and seed straight into a single-elimination bracket. Root-round
+        # slots name the seed directly ("12-TROJAN CARDINAL"); strip_prefix's
+        # bare "\d+-" alternative already extracts the team name from these
+        # -- the same path that already makes the Schedule/Bracket view work
+        # correctly for these divisions (see _PREFIX_RE). Build the roster
+        # from those roots instead of a pool letter, keeping the actual seed
+        # number too so the pre-results strength prior below can still
+        # reflect real seeding instead of guessing everyone's even.
+        for g in division_games:
+            for slot in (g["white_team"], g["dark_team"]):
+                s = slot.strip()
+                if re.match(r'^[WL]#', s, re.IGNORECASE):
+                    continue  # a reference to another game, not a root entrant
+                sm = re.match(r'^(\d+)\s*-\s*(.+)$', s)
+                if not sm:
+                    continue
+                name = sm.group(2).strip()
+                if _SLOT_LIKE_RE.match(name):
+                    continue
+                all_pool_teams.setdefault(name, None)  # no pool letter
+                _seed_num_by_team.setdefault(name, int(sm.group(1)))
+
     if not all_pool_teams:
-        return {}
+        return {}, {}
 
     our_team = next((t for t in all_pool_teams if team_matches(t, team)), None)
     if not our_team:
@@ -788,7 +814,15 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
 
     def _slot_name(slot: str) -> str:
         m = _POOL_SLOT_RE.match(slot.strip())
-        return m.group(3).strip() if m else slot.strip()
+        if m:
+            return m.group(3).strip()
+        # Seeded-bracket root slots ("12-TROJAN CARDINAL") and other
+        # non-pool prefixed forms: same strip_prefix + slot-like guard
+        # already used as the fallback in the bracket-resolution loop below,
+        # so a played root-round game in a no-pool-letter division still
+        # feeds the strength model instead of being silently dropped.
+        stripped = strip_prefix(slot.strip())
+        return stripped if stripped and not _SLOT_LIKE_RE.match(stripped) else slot.strip()
 
     def _recency_wt(gdate) -> float:
         if not gdate:
@@ -796,24 +830,33 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
         weeks = max(0.0, (date.today() - gdate).days / 7.0)
         return math.exp(-weeks * math.log(2) / _HALF_LIFE_WK)
 
-    # Infer pre-tournament seed from pool slot assignment (standard snake draft).
-    # Pool A gets odd rounds (A1=seed1, A2=seed16 for 8 pools, A3=seed17, …),
-    # pool B gets the next, etc.  seed_perf replaces the uniform 0.5 prior so
-    # that before any games are played the model respects the tournament seeding.
-    _n_pools = len(all_groups)
-    _pool_seed_rank: dict = {}
-    for _grp in all_groups:
-        _pi = ord(_grp.upper()) - ord('A')
-        for _sp, _t in enumerate(_pool_teams_for_group(_grp, division_games), 1):
-            _ri = _sp - 1
-            if _ri % 2 == 0:
-                _pool_seed_rank[_t] = _ri * _n_pools + _pi + 1
-            else:
-                _pool_seed_rank[_t] = _ri * _n_pools + (_n_pools - 1 - _pi) + 1
+    # Infer pre-tournament seed so seed_perf can replace the uniform 0.5 prior,
+    # letting the model respect real tournament seeding before any games are
+    # played (the entire prediction, right when a bracket first posts).
+    if _seed_num_by_team:
+        # Seeded-bracket division: the sheet already states each team's real
+        # overall seed directly, no inference needed.
+        _n_seeded = max(_seed_num_by_team.values())
+        _seed_perf: dict = {t: (_n_seeded + 1 - s) / _n_seeded
+                            for t, s in _seed_num_by_team.items()}
+    else:
+        # Pool-letter division: infer seed from pool slot assignment (standard
+        # snake draft). Pool A gets odd rounds (A1=seed1, A2=seed16 for 8
+        # pools, A3=seed17, …), pool B gets the next, etc.
+        _n_pools = len(all_groups)
+        _pool_seed_rank: dict = {}
+        for _grp in all_groups:
+            _pi = ord(_grp.upper()) - ord('A')
+            for _sp, _t in enumerate(_pool_teams_for_group(_grp, division_games), 1):
+                _ri = _sp - 1
+                if _ri % 2 == 0:
+                    _pool_seed_rank[_t] = _ri * _n_pools + _pi + 1
+                else:
+                    _pool_seed_rank[_t] = _ri * _n_pools + (_n_pools - 1 - _pi) + 1
 
-    _n_seeded = max(_pool_seed_rank.values()) if _pool_seed_rank else 1
-    _seed_perf: dict = {t: (_n_seeded + 1 - r) / _n_seeded
-                        for t, r in _pool_seed_rank.items()}
+        _n_seeded = max(_pool_seed_rank.values()) if _pool_seed_rank else 1
+        _seed_perf: dict = {t: (_n_seeded + 1 - r) / _n_seeded
+                            for t, r in _pool_seed_rank.items()}
 
     # Collect game records: (white_key, dark_key, white_frac_win, recency_weight)
     _bt_records: list = []
@@ -1038,13 +1081,18 @@ def api_place_predictor(tournament_id, team):
     division_games = [g for g in games if sheet is None or g["sheet"] == sheet]
 
     group = _find_team_pool_group(team, division_games)
-    if not group:
+    finish_probs, all_team_probs = _tournament_finish_probs(team, division_games)
+    # group is None both for a genuinely-unposted schedule AND for a division
+    # that has no round-robin pool stage at all (a straight seeded
+    # single-elimination bracket -- see _tournament_finish_probs). Only the
+    # first case has nothing to show; the second still gets bracket-position
+    # predictions, just no pool-standings card (no group letter to show).
+    if not group and not finish_probs:
         return jsonify({"pool": None, "finish_probs": []})
 
-    standings    = _standings_for_group(group, division_games)
+    standings    = _standings_for_group(group, division_games) if group else []
     current_rank = next((i + 1 for i, s in enumerate(standings) if team_matches(s["team"], team)), None)
     team_stats   = next((s for s in standings if team_matches(s["team"], team)), {})
-    finish_probs, all_team_probs = _tournament_finish_probs(team, division_games)
 
     all_groups = {
         m.group(1).upper()
@@ -1052,7 +1100,8 @@ def api_place_predictor(tournament_id, team):
         for slot in (g["white_team"], g["dark_team"])
         if (m := _POOL_SLOT_RE.match(slot.strip()))
     }
-    total_div_teams = sum(len(_pool_teams_for_group(g, division_games)) for g in all_groups)
+    total_div_teams = (sum(len(_pool_teams_for_group(g, division_games)) for g in all_groups)
+                        if all_groups else len(all_team_probs))
 
     def _modal_placement(probs):
         return max(probs.items(), key=lambda x: x[1])[0] if probs else 999
@@ -1101,7 +1150,7 @@ def api_place_predictor(tournament_id, team):
             "total_teams":  len(standings),
             "wins":         team_stats.get("wins", 0),
             "losses":       team_stats.get("losses", 0),
-        },
+        } if group else None,
         "finish_probs": [
             {"rank": r, "label": _ordinal(r), "pct": round(p * 100)}
             for r, p in sorted(finish_probs.items())
