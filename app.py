@@ -1409,6 +1409,18 @@ def _team_won(team: str, game: dict):
     if yours < opp: return False
     return None
 
+def _resolved_belongs_to_other_team(slot: str, team: str) -> bool:
+    """True if a W#/L# (or WIN/LOS GM #N) slot has already been explicitly
+    resolved to a real team name -- the organizer typed it in directly, e.g.
+    "W#149-WEST SUBURBAN" -- and that name is not `team`. Such a slot
+    definitively belongs to whoever it names; it is never a genuine branch
+    for anyone else, regardless of whether the upstream game's result is
+    otherwise ambiguous (see _team_won's tie case)."""
+    resolved = strip_prefix(slot)
+    return bool(resolved and resolved != slot
+                and not _SLOT_LIKE_RE.match(resolved)
+                and not team_matches(resolved, team))
+
 def _expand_bracket_games(team: str, direct_games: list, division_games: list) -> list:
     """Return all bracket games the team can potentially reach, across all days.
 
@@ -1580,6 +1592,23 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                     else:
                         ref_num = str(int(wm_ext.group(1)))
                         is_win_slot = True   # "Winner 46" / "Winner G33" = winner
+
+                    # If this slot has already been explicitly resolved to a
+                    # real, different team's name (organizer typed it in
+                    # directly, e.g. "W#149-WEST SUBURBAN"), it definitively
+                    # belongs to that team, not ours -- skip outright,
+                    # regardless of whether the upstream game's win/loss is
+                    # otherwise ambiguous (_team_won returns None for a tie,
+                    # same as "not yet played", which previously let BOTH
+                    # downstream branches through as candidates for us). Found
+                    # live 2026-07-19 via a round-by-round replay of real 2025
+                    # Junior Olympics results: a tied upstream game let a
+                    # different team's real, already-played 9th-place game
+                    # get silently attributed to our own played history as a
+                    # loss against a team we never played.
+                    if _resolved_belongs_to_other_team(s, team):
+                        continue
+
                     if ref_num not in reachable:
                         continue
                     src_game, src_ph, src_depth = reachable[ref_num]
@@ -1600,6 +1629,8 @@ def _expand_bracket_games(team: str, direct_games: list, division_games: list) -
                 # e.g. "E2 (WIN GM #399) -" or "F1 (LOS GM #399) -"
                 wgm = re.search(r'\b(WIN|LOS)\s+GM\s+#(\d+)', s, re.IGNORECASE)
                 if wgm:
+                    if _resolved_belongs_to_other_team(s, team):
+                        continue
                     ref_num = str(int(wgm.group(2)))
                     if ref_num not in reachable:
                         continue
@@ -4484,6 +4515,18 @@ def api_games(tournament_id, team):
             "placeholder": g.get("placeholder", False),
             "our_record":  our_rec,
             "opp_record":  opp_rec,
+            # Never used by the frontend directly -- only carried through so
+            # _infer_placement/_estimate_placement (called below on played_out)
+            # can read the organizer's ordinal-rank comment on the last played
+            # game. Without it, both silently always returned None: found live
+            # 2026-07-19 via a round-by-round replay of real 2025 JO results,
+            # where the app's own "placement" never matched the real recorded
+            # final rank for any team, in any division, ever -- this had never
+            # been exercised by a test that checks the VALUE, only that
+            # something renders, so the "Finished Nth!" summary banner has
+            # been silently falling back to generic "Tournament Record" for
+            # every completed tournament.
+            "comments":    g.get("comments"),
         }
 
         winner_next, loser_next = find_next_games(g, dg)
