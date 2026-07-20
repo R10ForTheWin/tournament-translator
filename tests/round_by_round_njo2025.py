@@ -258,6 +258,22 @@ if __name__ == "__main__":
     # downstream logic are format-driven, not gender-driven).
     replay_sheet("10U_C_Classic 24", "Classic/Invite / pool-letter bracket")
 
+    # Broader sweep, 2026-07-19: additional fully-played real sheets across
+    # other tiers/genders to check for the same bug class (or a new one)
+    # elsewhere in the fixture -- not needed for 2026 Trojan-format coverage
+    # specifically, but the tied-game false-attribution bug found via the two
+    # sheets above was previously invisible to every other check in this
+    # codebase, so broader real-result coverage is cheap insurance before
+    # calling the app tournament-ready.
+    for sheet, label in [
+        ("16U_F_Champ",       "extra sweep: Champ tier, girls"),
+        ("18U_F_Classic 47",  "extra sweep: Classic tier, mixed seed+pool slots"),
+        ("10U_C_Champ 50",    "extra sweep: Champ tier, coed"),
+        ("14U_F_Classic_35",  "extra sweep: Classic tier, girls"),
+        ("12U_F_Classic 14",  "extra sweep: Classic tier, girls, smaller division"),
+    ]:
+        replay_sheet(sheet, label)
+
     # FAILURES (the check() global) is the single source of truth for pass/fail
     # -- not each replay_sheet()'s own returned count, which drifted out of
     # sync with it once before (see the final-placement check history in git

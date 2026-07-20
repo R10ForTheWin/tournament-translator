@@ -1145,6 +1145,52 @@ def test_njo_tree_multi_phase() -> int:
     return failures
 
 
+def test_njo_tree_tied_game_no_misattribution() -> int:
+    """A tied upstream game (_team_won returns None, same as "not yet
+    played") must never let the bracket tree follow into a downstream
+    branch whose own slot has already been explicitly resolved to a
+    different, named team.
+
+    Real bug found live 2026-07-19 via a round-by-round replay of real 2025
+    Junior Olympics results: a team's bracket tied 9-9 in a semifinal; the
+    downstream W#1 slot was already explicitly resolved to a different real
+    team's name ("W#1-OPP A"), but the tree followed into it anyway and
+    attributed that other team's own real, played result to our team as a
+    fabricated game. Same root cause, same fix
+    (_resolved_belongs_to_other_team), as the twin bug already fixed in
+    _expand_bracket_games for the flat schedule list -- this guards the
+    separate bracket-tree code path (_build_njo_game_tree's _follow).
+    """
+    failures = 0
+    games = [
+        {"game_id": "G1", "white_team": "OUR TEAM", "dark_team": "OPP A",
+         "date": date(2026, 7, 23), "time": None, "played": True,
+         "white_score": 9, "dark_score": 9, "comments": "semi",
+         "w_to": None, "l_to": None},
+        # Win-path, explicitly resolved to a DIFFERENT team -- must never
+        # appear as our own game, regardless of the tie above.
+        {"game_id": "G2", "white_team": "W#1-OPP A", "dark_team": "OPP B",
+         "date": date(2026, 7, 24), "time": None, "played": True,
+         "white_score": 11, "dark_score": 5, "comments": "9th",
+         "w_to": None, "l_to": None},
+        # Lose-path, explicitly resolved to OUR team -- this IS our real game.
+        {"game_id": "G3", "white_team": "L#1-OUR TEAM", "dark_team": "OPP C",
+         "date": date(2026, 7, 24), "time": None, "played": True,
+         "white_score": 6, "dark_score": 10, "comments": "11th",
+         "w_to": None, "l_to": None},
+    ]
+    tree = _build_njo_game_tree("OUR TEAM", games)
+    tree_ids = {n["game_id"] for n in tree}
+    ok = _check(
+        "tied-game bracket tree includes only our own real games",
+        tree_ids == {"G1", "G3"},
+        f"expected {{'G1', 'G3'}}, got {sorted(tree_ids)} -- G2 belongs to OPP A, not us",
+    )
+    if not ok:
+        failures += 1
+    return failures
+
+
 def test_jo_2026_teams_reachable() -> int:
     """Every known Trojan Junior Olympics 2026 team must still be found on
     the live schedule, return real games, and never show red bracket
@@ -1969,6 +2015,11 @@ def main():
     print("NJO tree multi-phase (Junior Olympics regression guard)")
     print("=" * 60)
     total_failures += test_njo_tree_multi_phase()
+
+    print("\n" + "=" * 60)
+    print("NJO tree tied-game no misattribution (Junior Olympics regression guard)")
+    print("=" * 60)
+    total_failures += test_njo_tree_tied_game_no_misattribution()
 
     print("\n" + "=" * 60)
     if total_failures == 0:

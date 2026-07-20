@@ -2252,8 +2252,23 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
             # Only follow if team appears or result unknown
             involved = (team_matches(win_next_g["white_team"], team)
                         or team_matches(win_next_g["dark_team"], team))
+            # If not involved by name, and this slot has already been
+            # explicitly resolved to a different, real team (not just
+            # unresolved), it definitively belongs to that team -- never
+            # follow into it, regardless of whether `won` is otherwise
+            # ambiguous. `won is None` covers BOTH "not yet played" (where
+            # speculative branching into a genuinely unresolved slot is the
+            # intended hypothetical preview) AND "tied in regulation" (where
+            # it previously let an already-named different team's real,
+            # played game get misattributed into our own tree). Found live
+            # 2026-07-19, same root cause as the twin fix in
+            # _expand_bracket_games -- see _resolved_belongs_to_other_team.
+            belongs_to_other = not involved and any(
+                _resolved_belongs_to_other_team(s, team)
+                for s in (win_next_g["white_team"], win_next_g["dark_team"])
+            )
             next_ph = is_ph or (won is False)  # placeholder if we lost
-            if involved or won is not False:
+            if not belongs_to_other and (involved or won is not False):
                 child = _follow(win_next_g, game["game_id"], "win", next_ph, depth + 1)
                 if child:
                     node["win_next_ids"].append(win_next_g["game_id"])
@@ -2262,8 +2277,12 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
         if lose_next_g and lose_next_g["game_id"] not in seen:
             involved = (team_matches(lose_next_g["white_team"], team)
                         or team_matches(lose_next_g["dark_team"], team))
+            belongs_to_other = not involved and any(
+                _resolved_belongs_to_other_team(s, team)
+                for s in (lose_next_g["white_team"], lose_next_g["dark_team"])
+            )
             next_ph = is_ph or (won is True)  # placeholder if we won
-            if involved or won is not True:
+            if not belongs_to_other and (involved or won is not True):
                 child = _follow(lose_next_g, game["game_id"], "lose", next_ph, depth + 1)
                 if child:
                     node["lose_next_ids"].append(lose_next_g["game_id"])
@@ -2322,6 +2341,13 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
                         s2 = slot.strip()
                         fm = _FINISH_SLOT_RE.match(s2) or _COMPOSITE_SLOT_RE.search(s2)
                         if fm and fm.group(1).upper() == _team_pool_group:
+                            # Same guard as the win/lose follow above: a
+                            # finish-slot candidate already explicitly
+                            # resolved to a different real team belongs to
+                            # that team, not ours, regardless of which rank
+                            # it represents.
+                            if _resolved_belongs_to_other_team(s2, team):
+                                break
                             rank_m = re.search(r'(\d+)', fm.group(0))
                             if not rank_m:
                                 break
