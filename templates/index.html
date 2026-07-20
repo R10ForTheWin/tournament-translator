@@ -121,6 +121,12 @@
       font-family: inherit; flex-shrink: 0;
     }
     .back-btn:active { opacity: 0.7; }
+    .subnav-logo {
+      height: 36px;
+      width: auto;
+      flex-shrink: 0;
+      margin: 0 2px;
+    }
     .subnav-predict-btn {
       background: rgba(218,165,32,0.14);
       border: 1px solid rgba(218,165,32,0.45);
@@ -703,6 +709,7 @@
 <div id="subnav-wrap" style="display:none">
   <div class="subnav-inner">
     <button class="back-btn" id="back-btn">‹ Back</button>
+    <img src="/static/logo.png" class="subnav-logo" alt="Tournament Translator">
     <div class="subnav-title" id="subnav-title"></div>
     <button class="subnav-predict-btn" id="subnav-predict-btn" style="display:none">Predict</button>
   </div>
@@ -1131,14 +1138,7 @@ async function loadTeams(tournament) {
             <rect x="11" y="0" width="4" height="13" rx="1"/>
           </svg>
           <span class="btn-label">Rankings</span>
-        </button>` : `<button class="team-action-btn predict-btn" title="Place Predictor">
-          <svg width="15" height="13" viewBox="0 0 15 13" fill="currentColor">
-            <rect x="0" y="7" width="4" height="6" rx="1"/>
-            <rect x="5.5" y="3.5" width="4" height="9.5" rx="1"/>
-            <rect x="11" y="0" width="4" height="13" rx="1"/>
-          </svg>
-          <span class="btn-label">Predict</span>
-        </button>`}
+        </button>` : ''}
         <button class="team-action-btn bracket-btn" title="View Schedule">
           <svg width="15" height="13" viewBox="0 0 15 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <rect x="0.8" y="0.8" width="5" height="4" rx="0.8"/>
@@ -1154,10 +1154,6 @@ async function loadTeams(tournament) {
       e.stopPropagation();
       state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
       loadGames(tournament.id, t.name, t.sheet, 'standings');
-    });
-    card.querySelector('.predict-btn')?.addEventListener('click', e => {
-      e.stopPropagation();
-      showPredictorSheet(tournament.id, t.name, t.sheet, t.friendly || mainLabel);
     });
     card.querySelector('.bracket-btn').addEventListener('click', e => {
       e.stopPropagation();
