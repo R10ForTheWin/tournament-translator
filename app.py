@@ -30,6 +30,19 @@ def load_and_parse(filepath) -> list[dict]:
                 target=_run_trojan_smoke_test, args=("jo-quals",), daemon=True
             ).start()
         return games
+    # Live-fetched data (BytesIO from a URL) has no filesystem mtime to key
+    # on. find_excel tags it with a cache key tied to the URL + fetch time,
+    # so repeated requests within the 5-min URL cache TTL reuse the parse
+    # instead of re-running the full parser on every request.
+    live_key = getattr(filepath, "_tt_cache_key", None)
+    if live_key is not None:
+        cached = _parse_cache.get(live_key)
+        if cached and cached[0] == live_key:
+            return list(cached[1])
+        filepath.seek(0)
+        games = _load_and_parse(filepath)
+        _parse_cache[live_key] = (live_key, games)
+        return list(games)
     key = str(filepath)
     try:
         mtime = os.path.getmtime(key)
@@ -197,6 +210,16 @@ def _fetch_url(url: str, *, onedrive=False) -> bytes | None:
         return cached[1] if cached else None
 
 
+def _bytesio_for_url(url: str, data: bytes) -> io.BytesIO:
+    """Wrap live-fetched bytes, tagging them with a cache key tied to the
+    URL cache's fetch timestamp so load_and_parse can reuse a prior parse
+    instead of re-parsing on every request."""
+    bio = io.BytesIO(data)
+    fetched_at = _URL_CACHE.get(url, (None,))[0]
+    bio._tt_cache_key = f"{url}@{fetched_at}"
+    return bio
+
+
 def find_excel(tournament_id: str):
     """Return an Excel file path, BytesIO from a live URL, or None.
     User-pasted URL (stored in user_urls.json) takes priority over all presets."""
@@ -206,12 +229,12 @@ def find_excel(tournament_id: str):
     if user_url:
         data = _fetch_url(user_url)
         if data:
-            return io.BytesIO(data)
+            return _bytesio_for_url(user_url, data)
     # WPL tournaments always fetch live from Google Sheets — never use a
     # local file, which would be a stale snapshot from a past weekend.
     if tournament_id in WPL_TOURNAMENTS:
         data = _fetch_url(FUTURES_SHEETS_URL)
-        return io.BytesIO(data) if data else None
+        return _bytesio_for_url(FUTURES_SHEETS_URL, data) if data else None
     keyword = FILE_MAP.get(tournament_id, "")
     if keyword:
         for f in os.listdir(EXCEL_DIR):
@@ -220,7 +243,7 @@ def find_excel(tournament_id: str):
     preset = TOURNAMENT_URLS.get(tournament_id, "")
     if preset:
         data = _fetch_url(preset)
-        return io.BytesIO(data) if data else None
+        return _bytesio_for_url(preset, data) if data else None
     return None
 
 

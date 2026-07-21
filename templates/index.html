@@ -108,12 +108,14 @@
       box-shadow: 0 2px 12px rgba(0,0,0,0.5);
     }
     .subnav-inner {
+      position: relative;
       display: flex;
       align-items: center;
       height: 52px;
       padding: 0 8px;
     }
     .back-btn {
+      position: relative; z-index: 2;
       background: none; border: none;
       color: var(--gold);
       font-size: 17px; font-weight: 600;
@@ -136,11 +138,13 @@
     .subnav-predict-btn:active { background: #e6c200; }
     .subnav-predict-btn svg { flex-shrink: 0; }
     .subnav-title {
-      flex: 1; text-align: center;
+      position: absolute; left: 44px; right: 44px;
+      text-align: center;
       font-size: 15px; font-weight: 700;
       color: var(--white);
       text-transform: uppercase; letter-spacing: 0.05em;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      pointer-events: none;
     }
     #subnav-tabs { display: none; background: var(--cardinal); border-top: 1px solid rgba(255,255,255,0.12); }
     .subnav-tab-bar { display: flex; }
@@ -230,24 +234,45 @@
     .list-card-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
     /* ── Team buttons (single-action tournament team list) ── */
-    .card-list-buttons { background: transparent; border: none; box-shadow: none; gap: 10px; }
+    .card-list-buttons { background: transparent; border: none; box-shadow: none; gap: 12px; }
     .list-card.team-btn {
       flex-direction: row; align-items: center; justify-content: space-between;
-      padding: 18px 20px; border-radius: 14px; border-bottom: none;
+      padding: 18px 20px; border-radius: 16px; border-bottom: none;
       background: rgba(255,255,255,0.06);
+      transition: transform 0.1s, box-shadow 0.1s, filter 0.1s;
     }
-    .list-card.team-btn:active { background: rgba(255,255,255,0.1); }
+    .list-card.team-btn:active { background: rgba(255,255,255,0.1); transform: scale(0.985); }
     .team-btn-label { font-size: 17px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--white); }
-    .team-btn-arrow { flex-shrink: 0; color: var(--white); opacity: 0.55; }
-    .list-card.team-btn-cardinal { background: var(--cardinal); }
-    .list-card.team-btn-cardinal:active { background: #b5293f; }
-    .list-card.team-btn-cardinal .team-btn-label, .list-card.team-btn-cardinal .team-btn-arrow { color: #fff; }
-    .list-card.team-btn-gold { background: var(--gold); }
-    .list-card.team-btn-gold:active { background: #e6c200; }
-    .list-card.team-btn-gold .team-btn-label, .list-card.team-btn-gold .team-btn-arrow { color: #241a00; opacity: 0.85; }
-    .list-card.team-btn-silver { background: #c8ccd0; }
-    .list-card.team-btn-silver:active { background: #b3b8bd; }
-    .list-card.team-btn-silver .team-btn-label, .list-card.team-btn-silver .team-btn-arrow { color: #23262a; opacity: 0.85; }
+    .team-btn-arrow {
+      flex-shrink: 0; color: var(--white);
+      display: flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; border-radius: 50%;
+      background: rgba(255,255,255,0.16);
+    }
+    .list-card.team-btn-cardinal {
+      background: linear-gradient(135deg, #b8324a 0%, #8a1c2c 100%);
+      box-shadow: 0 4px 14px rgba(157,34,53,0.4), inset 0 1px 0 rgba(255,255,255,0.14);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .list-card.team-btn-cardinal:active { filter: brightness(0.92); }
+    .list-card.team-btn-cardinal .team-btn-label { color: #fff; }
+    .list-card.team-btn-cardinal .team-btn-arrow { color: #fff; background: rgba(255,255,255,0.2); }
+    .list-card.team-btn-gold {
+      background: linear-gradient(135deg, #ffe14d 0%, #e0b400 100%);
+      box-shadow: 0 4px 14px rgba(255,215,0,0.3), inset 0 1px 0 rgba(255,255,255,0.4);
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+    .list-card.team-btn-gold:active { filter: brightness(0.94); }
+    .list-card.team-btn-gold .team-btn-label { color: #241a00; opacity: 0.88; }
+    .list-card.team-btn-gold .team-btn-arrow { color: #241a00; opacity: 0.75; background: rgba(36,26,0,0.14); }
+    .list-card.team-btn-silver {
+      background: linear-gradient(135deg, #dee2e6 0%, #aeb4ba 100%);
+      box-shadow: 0 4px 14px rgba(200,204,208,0.28), inset 0 1px 0 rgba(255,255,255,0.4);
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+    .list-card.team-btn-silver:active { filter: brightness(0.94); }
+    .list-card.team-btn-silver .team-btn-label { color: #23262a; opacity: 0.88; }
+    .list-card.team-btn-silver .team-btn-arrow { color: #23262a; opacity: 0.75; background: rgba(35,38,42,0.12); }
 
     .badge {
       font-size: 10px; font-weight: 700;
