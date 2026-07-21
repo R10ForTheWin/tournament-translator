@@ -128,14 +128,16 @@
       margin: 0 2px;
     }
     .subnav-predict-btn {
+      display: none;
+      width: 100%;
       background: rgba(218,165,32,0.14);
-      border: 1px solid rgba(218,165,32,0.45);
-      border-radius: 20px;
+      border: none;
+      border-top: 1px solid rgba(255,255,255,0.12);
       color: var(--gold);
-      font-size: 12px; font-weight: 800;
-      cursor: pointer; padding: 7px 13px;
-      font-family: inherit; flex-shrink: 0;
-      letter-spacing: 0.03em; text-transform: uppercase;
+      font-size: 13px; font-weight: 800;
+      cursor: pointer; padding: 11px 0;
+      font-family: inherit;
+      letter-spacing: 0.06em; text-transform: uppercase;
     }
     .subnav-predict-btn:active { background: rgba(218,165,32,0.26); }
     .subnav-title {
@@ -231,6 +233,23 @@
     .list-card-main { font-size: 16px; font-weight: 600; color: var(--white); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .list-card-sub  { font-size: 13px; color: var(--muted); margin-top: 1px; }
     .list-card-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+    /* ── Team buttons (single-action tournament team list) ── */
+    .card-list-buttons { background: transparent; border: none; box-shadow: none; gap: 10px; }
+    .list-card.team-btn {
+      flex-direction: row; align-items: center; justify-content: space-between;
+      padding: 18px 20px; border-radius: 14px; border-bottom: none;
+      background: rgba(255,255,255,0.06);
+    }
+    .list-card.team-btn:active { background: rgba(255,255,255,0.1); }
+    .team-btn-label { font-size: 17px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--white); }
+    .team-btn-arrow { flex-shrink: 0; color: var(--white); opacity: 0.55; }
+    .list-card.team-btn-cardinal { background: var(--cardinal); }
+    .list-card.team-btn-cardinal:active { background: #b5293f; }
+    .list-card.team-btn-cardinal .team-btn-label, .list-card.team-btn-cardinal .team-btn-arrow { color: #fff; }
+    .list-card.team-btn-gold { background: var(--gold); }
+    .list-card.team-btn-gold:active { background: #e6c200; }
+    .list-card.team-btn-gold .team-btn-label, .list-card.team-btn-gold .team-btn-arrow { color: #241a00; opacity: 0.85; }
 
     .badge {
       font-size: 10px; font-weight: 700;
@@ -711,8 +730,8 @@
     <button class="back-btn" id="back-btn">‹ Back</button>
     <img src="/static/logo.png" class="subnav-logo" alt="Tournament Translator">
     <div class="subnav-title" id="subnav-title"></div>
-    <button class="subnav-predict-btn" id="subnav-predict-btn" style="display:none">Predict</button>
   </div>
+  <button class="subnav-predict-btn" id="subnav-predict-btn">Place Predictor</button>
   <div id="subnav-tabs">
     <div class="subnav-tab-bar">
       <button class="subnav-tab" id="tab-schedule" onclick="switchPane('bracket')">Schedule</button>
@@ -900,6 +919,19 @@ function showView(id) {
   }
 }
 
+// Drops the redundant club name and reorders as "18U Cardinal" -- state.friendly
+// is server-built as "Trojan Cardinal · Boys 18U" (see friendly_team_name in
+// app.py); the subnav title only has room for a short label, and "Trojan" is
+// implied throughout this app.
+function _shortTeamLabel(friendly) {
+  if (!friendly) return '';
+  const [namePart, ageGenderPart] = friendly.split(' · ');
+  const shortName = (namePart || '').replace(/^Trojan\s+/i, '').trim();
+  const ageMatch = (ageGenderPart || '').match(/(\d+U)/i);
+  const age = ageMatch ? ageMatch[1].toUpperCase() : '';
+  return age ? `${age} ${shortName}` : (shortName || friendly);
+}
+
 function updateSubnav() {
   const view = document.querySelector('.view.active').id;
   const titleEl = document.getElementById('subnav-title');
@@ -910,14 +942,14 @@ function updateSubnav() {
     backBtn.onclick = goHome;
     predictBtn.style.display = 'none';
   } else if (view === 'view-games') {
-    titleEl.textContent = state.friendly || state.team || '';
+    titleEl.textContent = _shortTeamLabel(state.friendly) || state.friendly || state.team || '';
     backBtn.onclick = goTournament;
     // WPL Futures tournaments already have a dedicated Rankings tab for this;
     // everything else only ever gets the predictor via the team-list card,
     // which is skipped entirely for single-team tournaments (see loadTeams) --
     // this is the fallback entry point for that case.
     const showPredict = !!(state.tournament && state.team && !state.tournament.id.startsWith('futures'));
-    predictBtn.style.display = showPredict ? '' : 'none';
+    predictBtn.style.display = showPredict ? 'block' : 'none';
     if (showPredict) {
       predictBtn.onclick = () => showPredictorSheet(state.tournament.id, state.team, state.sheet, state.friendly || state.team);
     }
@@ -1113,53 +1145,62 @@ async function loadTeams(tournament) {
       sep.innerHTML = `<div class="age-group-sep-line"></div><div class="age-group-sep-label">${group.key}</div><div class="age-group-sep-line"></div>`;
       el.appendChild(sep);
     }
+    const isFutures = tournament.id.startsWith('futures');
     const list = document.createElement('div');
-    list.className = 'card-list';
+    list.className = isFutures ? 'card-list' : 'card-list card-list-buttons';
     group.items.forEach(t => {
     const teamName = t.name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-    const mainLabel = (!multiGroup && t.age_gender) ? `${t.age_gender}, ${teamName}` : teamName;
-    const subLabel  = t.wpl_div != null ? `Division ${t.wpl_div}` : (t.tier ? `${t.tier} Division` :
-                      (multiGroup ? '' : (t.friendly || '')));
+    const shortName = teamName.replace(/^Trojan\s+/i, '').trim() || teamName;
+    const colorKey = /cardinal/i.test(shortName) ? 'cardinal' : (/gold/i.test(shortName) ? 'gold' : '');
     const card = document.createElement('div');
-    card.className = 'list-card';
-    card.innerHTML = `
-      <div class="list-card-left">
-        <div class="list-card-dot dot-upcoming"></div>
-        <div class="list-card-info">
-          <div class="list-card-main">${mainLabel}</div>
-          ${subLabel ? `<div class="list-card-sub" style="font-size:12px;color:var(--muted);margin-top:2px">${subLabel}</div>` : ''}
+
+    if (isFutures) {
+      const mainLabel = (!multiGroup && t.age_gender) ? `${t.age_gender}, ${teamName}` : teamName;
+      const subLabel  = t.wpl_div != null ? `Division ${t.wpl_div}` : (t.tier ? `${t.tier} Division` :
+                        (multiGroup ? '' : (t.friendly || '')));
+      card.className = 'list-card';
+      card.innerHTML = `
+        <div class="list-card-left">
+          <div class="list-card-dot dot-upcoming"></div>
+          <div class="list-card-info">
+            <div class="list-card-main">${mainLabel}</div>
+            ${subLabel ? `<div class="list-card-sub" style="font-size:12px;color:var(--muted);margin-top:2px">${subLabel}</div>` : ''}
+          </div>
         </div>
-      </div>
-      <div class="list-card-actions">
-        ${tournament.id.startsWith('futures') ? `<button class="team-action-btn standings-btn" title="Season Standings">
-          <svg width="15" height="13" viewBox="0 0 15 13" fill="currentColor">
-            <rect x="0" y="7" width="4" height="6" rx="1"/>
-            <rect x="5.5" y="3.5" width="4" height="9.5" rx="1"/>
-            <rect x="11" y="0" width="4" height="13" rx="1"/>
-          </svg>
-          <span class="btn-label">Rankings</span>
-        </button>` : ''}
-        <button class="team-action-btn bracket-btn" title="View Schedule">
-          <svg width="15" height="13" viewBox="0 0 15 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="0.8" y="0.8" width="5" height="4" rx="0.8"/>
-            <rect x="0.8" y="7.8" width="5" height="4" rx="0.8"/>
-            <rect x="8.2" y="3.8" width="5" height="4" rx="0.8"/>
-            <line x1="5.8" y1="2.8" x2="8.2" y2="5.8"/>
-            <line x1="5.8" y1="9.8" x2="8.2" y2="7.8"/>
-          </svg>
-          <span class="btn-label">Schedule</span>
-        </button>
-      </div>`;
-    card.querySelector('.standings-btn')?.addEventListener('click', e => {
-      e.stopPropagation();
-      state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
-      loadGames(tournament.id, t.name, t.sheet, 'standings');
-    });
-    card.querySelector('.bracket-btn').addEventListener('click', e => {
-      e.stopPropagation();
-      state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
-      loadGames(tournament.id, t.name, t.sheet, 'bracket');
-    });
+        <div class="list-card-actions">
+          <button class="team-action-btn standings-btn" title="Season Standings">
+            <svg width="15" height="13" viewBox="0 0 15 13" fill="currentColor">
+              <rect x="0" y="7" width="4" height="6" rx="1"/>
+              <rect x="5.5" y="3.5" width="4" height="9.5" rx="1"/>
+              <rect x="11" y="0" width="4" height="13" rx="1"/>
+            </svg>
+            <span class="btn-label">Rankings</span>
+          </button>
+          <button class="team-action-btn bracket-btn" title="View Schedule">
+            <svg width="15" height="13" viewBox="0 0 15 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="0.8" y="0.8" width="5" height="4" rx="0.8"/>
+              <rect x="0.8" y="7.8" width="5" height="4" rx="0.8"/>
+              <rect x="8.2" y="3.8" width="5" height="4" rx="0.8"/>
+              <line x1="5.8" y1="2.8" x2="8.2" y2="5.8"/>
+              <line x1="5.8" y1="9.8" x2="8.2" y2="7.8"/>
+            </svg>
+            <span class="btn-label">Schedule</span>
+          </button>
+        </div>`;
+      card.querySelector('.standings-btn').addEventListener('click', e => {
+        e.stopPropagation();
+        state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
+        loadGames(tournament.id, t.name, t.sheet, 'standings');
+      });
+    } else {
+      const label = (!multiGroup && t.age_gender) ? `${t.age_gender} ${shortName}` : shortName;
+      card.className = 'list-card team-btn' + (colorKey ? ` team-btn-${colorKey}` : '');
+      card.innerHTML = `
+        <div class="team-btn-label">${_escHtml(label)}</div>
+        <svg class="team-btn-arrow" width="9" height="15" viewBox="0 0 9 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1.5 1.5L7.5 7.5L1.5 13.5"/>
+        </svg>`;
+    }
     card.onclick = () => {
       state.team = t.name; state.sheet = t.sheet; state.friendly = t.friendly || t.name;
       loadGames(tournament.id, t.name, t.sheet, 'bracket');
