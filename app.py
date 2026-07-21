@@ -3953,9 +3953,11 @@ def _tree_format_for(tournament_id: str) -> str | None:
 
 
 def _compute_tree_layout(nodes: list, team: str) -> dict:
-    """Assign column (BFS depth), path_condition, and eliminated flag to each node.
+    """Assign column (bracket-tree round depth), path_condition, and
+    eliminated flag to each node.
 
-    column:         pure BFS depth from root (1-indexed) — no secondary/neutral adjustments
+    column:         longest path from the node's own segment root (1-indexed)
+                    -- see below for why this is longest-path, not plain BFS.
     path_condition: "win" | "lose" | None (neutral/always shown) from parent edge
     eliminated:     True if a played result means the team went the other way
 
@@ -3969,28 +3971,118 @@ def _compute_tree_layout(nodes: list, team: str) -> dict:
     if not roots:
         return {}
 
-    # BFS: column = depth from root (1-indexed). NJO trees can have multiple
-    # disconnected segments (pool phase + a later placement/consolation phase
-    # with no advancement link between them) -- each is its own root, so BFS
-    # must start from all of them, not just the first found.
     from collections import deque as _dq
+
+    def _next_ids(n: dict) -> list:
+        return ((n.get("win_next_ids") or []) + (n.get("lose_next_ids") or [])
+                + list((n.get("pool_next") or {}).keys()))
+
+    # NJO trees can have multiple disconnected segments (a round-robin pool
+    # phase with no advancement links at all, plus a later placement/
+    # consolation phase that starts a fresh w_to/l_to numbering sequence) --
+    # each is its own root. Giving every root column 1 would make two
+    # genuinely unrelated segments visually overlap in the same columns,
+    # reading as one continuous lineage when they are not -- the exact class
+    # of bug this column redesign exists to fix in the first place. Lay
+    # segments out left to right in the order they actually happen (earliest
+    # real game in the segment first), each starting where the previous
+    # segment's deepest column left off.
+    def _segment_earliest(root_gid: str):
+        seen = {root_gid}
+        stack = [root_gid]
+        best = (date.max, datetime.max.time())
+        while stack:
+            gid = stack.pop()
+            n = node_map.get(gid)
+            if not n:
+                continue
+            key = (n.get("date") or date.max, n.get("time") or datetime.max.time())
+            if key < best:
+                best = key
+            for nid in _next_ids(n):
+                if nid not in seen:
+                    seen.add(nid)
+                    stack.append(nid)
+        return best
+
+    roots_sorted = sorted(roots, key=lambda r: _segment_earliest(r["game_id"]))
+
     column_map: dict[str, int] = {}
-    q = _dq([(r["game_id"], 1) for r in roots])
     visited: set = set()
-    while q:
-        gid, col = q.popleft()
-        if gid in visited:
+    col_offset = 0
+    for root in roots_sorted:
+        if root["game_id"] in visited:
             continue
-        visited.add(gid)
-        column_map[gid] = col
-        n = node_map.get(gid)
-        if not n:
-            continue
-        next_ids = ((n.get("win_next_ids") or []) + (n.get("lose_next_ids") or [])
-                    + list((n.get("pool_next") or {}).keys()))
-        for nid in next_ids:
-            if nid not in visited:
-                q.append((nid, col + 1))
+
+        # Collect this segment's nodes first (plain reachability), then
+        # assign columns via topological order using EVERY parent, not just
+        # whichever one a traversal happens to reach a node through first.
+        # A node can have more than one real incoming edge: _append_tbd_stub_chain
+        # attaches ONE shared "continues next day" stub to every dead-end
+        # branch at the tree's latest known date, and those branches can be
+        # at genuinely different depths (a 3-round-deep dead end and a
+        # 4-round-deep dead end can both legitimately land on the
+        # tournament's last known day). A node like that must sit at
+        # max(all parents' columns) + 1, not "one specific parent's column +
+        # 1" -- taking just the first-discovered parent (plain BFS) can
+        # place a shared node in the SAME column as one of its own other
+        # parents, an impossible-looking (same-column parent-child) edge.
+        segment_nodes: list = []
+        seen_seg = {root["game_id"]}
+        stack = [root["game_id"]]
+        while stack:
+            gid = stack.pop()
+            segment_nodes.append(gid)
+            n = node_map.get(gid)
+            if not n:
+                continue
+            for nid in _next_ids(n):
+                if nid not in seen_seg:
+                    seen_seg.add(nid)
+                    stack.append(nid)
+
+        parents_of: dict[str, list] = {gid: [] for gid in segment_nodes}
+        for gid in segment_nodes:
+            n = node_map.get(gid)
+            if not n:
+                continue
+            for nid in _next_ids(n):
+                if nid in parents_of:
+                    parents_of[nid].append(gid)
+
+        col_of: dict[str, int] = {}
+        remaining = {gid: len(parents_of[gid]) for gid in segment_nodes}
+        ready = _dq(gid for gid in segment_nodes if remaining[gid] == 0)
+        segment_max = col_offset
+        processed = 0
+        while ready:
+            gid = ready.popleft()
+            parent_cols = [col_of[p] for p in parents_of[gid] if p in col_of]
+            col = (max(parent_cols) + 1) if parent_cols else (col_offset + 1)
+            col_of[gid] = col
+            segment_max = max(segment_max, col)
+            processed += 1
+            n = node_map.get(gid)
+            if not n:
+                continue
+            for nid in _next_ids(n):
+                if nid in remaining:
+                    remaining[nid] -= 1
+                    if remaining[nid] == 0:
+                        ready.append(nid)
+        # Defensive: anything left unprocessed means a cycle slipped past
+        # _bracket_has_cycle's own check elsewhere -- place it rather than
+        # silently drop it, so a real data anomaly still renders (and gets
+        # caught by the confidence validator's own cycle check) instead of
+        # vanishing from the tree.
+        for gid in segment_nodes:
+            if gid not in col_of:
+                segment_max += 1
+                col_of[gid] = segment_max
+
+        column_map.update(col_of)
+        visited.update(segment_nodes)
+        col_offset = segment_max
 
     # path_condition from parent edge
     path_cond: dict = {}
@@ -4939,53 +5031,48 @@ def api_games(tournament_id, team):
             return d
         wpl_bracket = [_serialize_tree_node(n, div_games_for_tree) for n in tree]
 
-        # Annotate serialized nodes with tree layout (path_condition, eliminated).
-        # NOTE: column/game_num do NOT come from _compute_tree_layout's raw BFS
-        # depth. That BFS starts every root at column 1 -- correct for win/lose
-        # or pool-finish ALTERNATIVES (they share one decision point, so sharing
-        # a column is right), but wrong the moment a team has more than one
-        # real, independent root game (e.g. two separate pool-play games against
-        # different opponents, neither descending from the other) -- those all
-        # landed on column 1 / "GAME 1" together, silently merging two distinct
-        # real games in the UI. _game_num_map (computed above, same decision-key
-        # + cascading-merge pass used for the flat played/upcoming lists) already
-        # gets this right, so reuse it here instead of a second, divergent
-        # numbering system. Only synthetic TBD stub nodes (never part of
-        # my_games) fall back to counting up from their resolved predecessor.
+        # Annotate serialized nodes with tree layout: column (round number),
+        # path_condition, eliminated. This is the tree's OWN column number --
+        # pure BFS depth from root, scoped per disconnected segment so
+        # genuinely independent root games or bracket phases never collide
+        # in the same column (see _compute_tree_layout) -- deliberately
+        # decoupled from _game_num_map, the flat schedule's chronological
+        # "Game N" numbering used for played_out/upcoming_out above.
+        #
+        # Those two numbering schemes used to be unified (this code used to
+        # borrow _game_num_map here directly) because chronological order
+        # and tree depth agree for a shallow tree, and unifying them fixed a
+        # real past bug where the tree had its own separate, untested
+        # numbering system that silently merged two different real games
+        # under one label. But chronological order and tree depth are
+        # fundamentally different sorts once a bracket is wide enough for
+        # multiple real branches to be visible at once (this format's
+        # 48-team single-elimination-plus-full-placement-ladder shape is
+        # exactly that): the tournament schedules different branches'
+        # rounds interleaved across day/time slots to fit everyone in, so a
+        # game four rounds deep on one branch can easily get a LOWER
+        # chronological number than a game two rounds deep on another.
+        # Reusing that chronological number for the tree's column then
+        # silently violates the tree layout's core assumption that a card's
+        # real parent sits in the immediately preceding column -- confirmed
+        # live 2026-07-20: Trojan Cardinal 18U's real bracket tree drew a
+        # connector line between two completely unrelated branches that
+        # happened to land in adjacent chronologically-numbered columns,
+        # reading as one long chain of losses when neither game was actually
+        # connected to the other. The tree's own "Round N" label (see the
+        # frontend header) is intentionally a different number than the
+        # schedule's "Game N" for the same reason -- each card still shows
+        # its own real game-id badge, which is what actually cross-
+        # references between the two views.
         layout = _compute_tree_layout(tree, team)
-        # TBD stub numbers must continue from the team's overall highest real
-        # game number, not "this stub's specific frontier parent's number + 1"
-        # -- a dead-end branch's own parent can be numbered lower than other,
-        # unrelated real games that already claimed higher numbers elsewhere
-        # in the tree (e.g. parent=Game 1, but Games 2-3 already exist on
-        # other branches), which would otherwise collide with them.
-        _tbd_next = max(_game_num_map.values(), default=0)
-        _tree_num: dict[str, int] = {}
-        _by_gid = {n["game_id"]: n for n in tree}
-        _branch_stub_prefix = f"__tbd_branch_{tree_sheet}_"
-        for n in tree:
-            gid = n["game_id"]
-            gn = _game_num_map.get(gid)
-            if gn is None and gid.startswith(_branch_stub_prefix):
-                # A missing-branch stub (see _fill_missing_branch_stubs) is
-                # an alternative WITHIN its sibling's round, not a new later
-                # round -- share the sibling's real game_num instead of
-                # falling through to the next sequential number.
-                parent = _by_gid.get(n.get("src_game_id"))
-                sibling_ids = ((parent.get("win_next_ids") or [])
-                               + (parent.get("lose_next_ids") or [])) if parent else []
-                sibling_id = next((sid for sid in sibling_ids if sid != gid), None)
-                gn = _game_num_map.get(sibling_id) if sibling_id else None
-            if gn is None:
-                _tbd_next += 1
-                gn = _tbd_next
-            _tree_num[gid] = gn
         for sn in wpl_bracket:
             info = layout.get(sn["game_id"], {})
-            sn["column"]         = _tree_num.get(sn["game_id"], info.get("column", 1))
+            sn["column"]         = info.get("column", 1)
             sn["path_condition"] = info.get("path_condition")
             sn["eliminated"]     = info.get("eliminated", False)
             # Aliases kept for validate_tournament.py backwards compatibility
+            # (reads len(wpl_bracket) only, not these field values) and the
+            # frontend's date-less TBD-stub fallback label.
             sn["game_num"]       = sn["column"]
             sn["path"]           = sn["path_condition"]
             sn["is_alternative"] = False

@@ -30,7 +30,7 @@ from parsers.format_a import parse as format_a_parse
 from app import (
     _expand_bracket_games, _build_wpl_game_tree, _build_njo_game_tree,
     team_matches, describe_slot, _SLOT_LIKE_RE, _POOL_PREVIEW_RE, _tournament_meta,
-    _team_opp_slot, _result_str, _tournament_finish_probs,
+    _team_opp_slot, _result_str, _tournament_finish_probs, _compute_tree_layout,
 )
 
 FIXTURES_DIR   = os.path.join(ROOT, "Tournaments Excels")
@@ -1261,6 +1261,95 @@ def test_njo_tree_slot_code_advancement() -> int:
     return failures
 
 
+def test_tree_layout_column_monotonic_invariant() -> int:
+    """The bracket tree's column assignment must guarantee every real
+    child's column is strictly greater than its parent's -- and when a node
+    has more than one real parent (the "continues next tournament day" TBD
+    stub attaches to every dead-end branch regardless of depth, so it can
+    have parents at genuinely different depths), its column must be
+    max(all parents' columns) + 1, not just whichever parent a traversal
+    happens to reach it through first.
+
+    Real bug found live 2026-07-20 against the real 2026 Junior Olympics
+    18U Champ bracket: reusing the flat schedule's chronological game
+    numbering for the tree's column position let two completely unrelated
+    branches land in adjacent columns and get drawn as if one caused the
+    other -- a long chain of "Lose" connectors between games that had never
+    played each other. This test locks in the fix
+    (_compute_tree_layout's own depth-based column assignment) directly.
+    """
+    failures = 0
+    nodes = [
+        {"game_id": "R1", "src_game_id": None, "date": date(2026, 7, 23), "time": None,
+         "played": False, "white_team": "OUR TEAM", "dark_team": "OPP",
+         "win_next_ids": ["A"], "lose_next_ids": ["D"], "pool_next": {}},
+        {"game_id": "A", "src_game_id": "R1", "date": date(2026, 7, 24), "time": None,
+         "played": False, "white_team": "OUR TEAM", "dark_team": "OPP",
+         "win_next_ids": ["B"], "lose_next_ids": ["C"], "pool_next": {}},
+        {"game_id": "B", "src_game_id": "A", "date": date(2026, 7, 25), "time": None,
+         "played": False, "white_team": "OUR TEAM", "dark_team": "OPP",
+         "win_next_ids": [], "lose_next_ids": [], "pool_next": {"SHARED": 1}},
+        {"game_id": "C", "src_game_id": "A", "date": date(2026, 7, 25), "time": None,
+         "played": False, "white_team": "OUR TEAM", "dark_team": "OPP",
+         "win_next_ids": [], "lose_next_ids": [], "pool_next": {}},
+        {"game_id": "D", "src_game_id": "R1", "date": date(2026, 7, 24), "time": None,
+         "played": False, "white_team": "OUR TEAM", "dark_team": "OPP",
+         "win_next_ids": [], "lose_next_ids": [], "pool_next": {"SHARED": 1}},
+        {"game_id": "SHARED", "src_game_id": "D", "date": date(2026, 7, 26), "time": None,
+         "played": False, "white_team": "OUR TEAM", "dark_team": "OPP",
+         "win_next_ids": [], "lose_next_ids": [], "pool_next": {}},
+        # A second, independent segment -- a genuinely separate root game
+        # with no path to/from the first segment, scheduled later.
+        {"game_id": "R2", "src_game_id": None, "date": date(2026, 7, 27), "time": None,
+         "played": False, "white_team": "OUR TEAM", "dark_team": "OPP2",
+         "win_next_ids": [], "lose_next_ids": [], "pool_next": {}},
+    ]
+    layout = _compute_tree_layout(nodes, "OUR TEAM")
+
+    ok = _check("root starts at column 1", layout["R1"]["column"] == 1,
+                f"got {layout['R1']['column']}")
+    if not ok: failures += 1
+
+    ok = _check(
+        "simple chain: A and D are both column 2 (direct children of root), B and C are column 3",
+        layout["A"]["column"] == 2 and layout["D"]["column"] == 2
+        and layout["B"]["column"] == 3 and layout["C"]["column"] == 3,
+        f"got A={layout['A']['column']} D={layout['D']['column']} "
+        f"B={layout['B']['column']} C={layout['C']['column']}",
+    )
+    if not ok: failures += 1
+
+    ok = _check(
+        "shared multi-parent node uses max(parent columns) + 1, not whichever parent is reached first",
+        layout["SHARED"]["column"] == 4,
+        f"expected 4 (parents are B=3 and D=2, so max+1=4), got {layout['SHARED']['column']}",
+    )
+    if not ok: failures += 1
+
+    ok = _check(
+        "independent second segment starts after the first segment's deepest column, not overlapping at column 1",
+        layout["R2"]["column"] == 5,
+        f"expected 5 (first segment's deepest column is SHARED=4), got {layout['R2']['column']}",
+    )
+    if not ok: failures += 1
+
+    # General invariant, the actual bug this whole redesign fixes: every
+    # real edge (win/lose/pool_next) must have child column > parent column.
+    bad_edges = []
+    for n in nodes:
+        for nid in ((n.get("win_next_ids") or []) + (n.get("lose_next_ids") or [])
+                    + list((n.get("pool_next") or {}).keys())):
+            pcol = layout[n["game_id"]]["column"]
+            ccol = layout[nid]["column"]
+            if ccol <= pcol:
+                bad_edges.append((n["game_id"], nid, pcol, ccol))
+    ok = _check("every edge has child column > parent column",
+                not bad_edges, f"violations: {bad_edges}")
+    if not ok: failures += 1
+
+    return failures
+
+
 def test_njo_tree_pool_rank_tbd_stub() -> int:
     """When a team's pool has more possible finishing ranks than the sheet
     has literal finish-slot games for, the missing ranks must show as an
@@ -1914,12 +2003,17 @@ def test_bracket_tree_game_num_no_collision() -> int:
             # already known, so they must never collide with a real number.
             # Missing-branch stubs (__tbd_branch_<sheet>_<parent_gid>, added
             # by _fill_missing_branch_stubs when only one of a node's two
-            # outcomes has been published) are the OPPOSITE by design: they
-            # fill in the other half of an already-numbered round, so they
-            # MUST share their sibling's number, not avoid it.
+            # outcomes has been published) and pool-rank stubs
+            # (__tbd_pool_<parent_gid>_<rank>, added when a pool has more
+            # possible finish ranks than the sheet has real games for) are
+            # the OPPOSITE by design: both fill in another alternative
+            # WITHIN an already-numbered round, so they MUST share their
+            # sibling's number, not avoid it.
             real_nums = {n["game_num"] for n in nodes if not n.get("tbd_stub")}
             day_chain_nums = {n["game_num"] for n in nodes
-                               if n.get("tbd_stub") and not n["game_id"].startswith("__tbd_branch_")}
+                               if n.get("tbd_stub")
+                               and not n["game_id"].startswith("__tbd_branch_")
+                               and not n["game_id"].startswith("__tbd_pool_")}
             overlap = real_nums & day_chain_nums
             ok = _check(f"{team}/{sheet}: day-chain TBD stub numbers don't collide with real game numbers",
                         not overlap, f"overlap={overlap}")
@@ -2154,6 +2248,11 @@ def main():
     print("NJO tree pool-rank TBD stub (Junior Olympics regression guard)")
     print("=" * 60)
     total_failures += test_njo_tree_pool_rank_tbd_stub()
+
+    print("\n" + "=" * 60)
+    print("Bracket tree layout column-monotonic invariant (Junior Olympics regression guard)")
+    print("=" * 60)
+    total_failures += test_tree_layout_column_monotonic_invariant()
 
     print("\n" + "=" * 60)
     if total_failures == 0:
