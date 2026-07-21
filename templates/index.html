@@ -121,25 +121,20 @@
       font-family: inherit; flex-shrink: 0;
     }
     .back-btn:active { opacity: 0.7; }
-    .subnav-logo {
-      height: 36px;
-      width: auto;
-      flex-shrink: 0;
-      margin: 0 2px;
-    }
     .subnav-predict-btn {
       display: none;
       width: 100%;
-      background: rgba(218,165,32,0.14);
+      align-items: center; justify-content: center; gap: 7px;
+      background: var(--gold);
       border: none;
-      border-top: 1px solid rgba(255,255,255,0.12);
-      color: var(--gold);
+      color: #241a00;
       font-size: 13px; font-weight: 800;
       cursor: pointer; padding: 11px 0;
       font-family: inherit;
       letter-spacing: 0.06em; text-transform: uppercase;
     }
-    .subnav-predict-btn:active { background: rgba(218,165,32,0.26); }
+    .subnav-predict-btn:active { background: #e6c200; }
+    .subnav-predict-btn svg { flex-shrink: 0; }
     .subnav-title {
       flex: 1; text-align: center;
       font-size: 15px; font-weight: 700;
@@ -250,6 +245,9 @@
     .list-card.team-btn-gold { background: var(--gold); }
     .list-card.team-btn-gold:active { background: #e6c200; }
     .list-card.team-btn-gold .team-btn-label, .list-card.team-btn-gold .team-btn-arrow { color: #241a00; opacity: 0.85; }
+    .list-card.team-btn-silver { background: #c8ccd0; }
+    .list-card.team-btn-silver:active { background: #b3b8bd; }
+    .list-card.team-btn-silver .team-btn-label, .list-card.team-btn-silver .team-btn-arrow { color: #23262a; opacity: 0.85; }
 
     .badge {
       font-size: 10px; font-weight: 700;
@@ -728,10 +726,16 @@
 <div id="subnav-wrap" style="display:none">
   <div class="subnav-inner">
     <button class="back-btn" id="back-btn">‹ Back</button>
-    <img src="/static/logo.png" class="subnav-logo" alt="Tournament Translator">
     <div class="subnav-title" id="subnav-title"></div>
   </div>
-  <button class="subnav-predict-btn" id="subnav-predict-btn">Place Predictor</button>
+  <button class="subnav-predict-btn" id="subnav-predict-btn">
+    <svg width="15" height="13" viewBox="0 0 15 13" fill="currentColor">
+      <rect x="0" y="7" width="4" height="6" rx="1"/>
+      <rect x="5.5" y="3.5" width="4" height="9.5" rx="1"/>
+      <rect x="11" y="0" width="4" height="13" rx="1"/>
+    </svg>
+    <span>Place Predictor</span>
+  </button>
   <div id="subnav-tabs">
     <div class="subnav-tab-bar">
       <button class="subnav-tab" id="tab-schedule" onclick="switchPane('bracket')">Schedule</button>
@@ -949,7 +953,7 @@ function updateSubnav() {
     // which is skipped entirely for single-team tournaments (see loadTeams) --
     // this is the fallback entry point for that case.
     const showPredict = !!(state.tournament && state.team && !state.tournament.id.startsWith('futures'));
-    predictBtn.style.display = showPredict ? 'block' : 'none';
+    predictBtn.style.display = showPredict ? 'flex' : 'none';
     if (showPredict) {
       predictBtn.onclick = () => showPredictorSheet(state.tournament.id, state.team, state.sheet, state.friendly || state.team);
     }
@@ -1139,19 +1143,26 @@ async function loadTeams(tournament) {
   }
 
   groups.forEach((group, idx) => {
-    if (multiGroup && group.key) {
+    const isFutures = tournament.id.startsWith('futures');
+    // Colored team buttons already carry the age in their own label (see
+    // below) -- a red divider band on top of that just competes with the
+    // buttons' own cardinal-red for attention. Futures tournaments still use
+    // the neutral gray card style, where the band remains a useful grouping
+    // aid, so it's kept there.
+    if (isFutures && multiGroup && group.key) {
       const sep = document.createElement('div');
       sep.className = 'age-group-sep' + (idx === 0 ? ' first' : '');
       sep.innerHTML = `<div class="age-group-sep-line"></div><div class="age-group-sep-label">${group.key}</div><div class="age-group-sep-line"></div>`;
       el.appendChild(sep);
     }
-    const isFutures = tournament.id.startsWith('futures');
     const list = document.createElement('div');
     list.className = isFutures ? 'card-list' : 'card-list card-list-buttons';
     group.items.forEach(t => {
     const teamName = t.name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
     const shortName = teamName.replace(/^Trojan\s+/i, '').trim() || teamName;
-    const colorKey = /cardinal/i.test(shortName) ? 'cardinal' : (/gold/i.test(shortName) ? 'gold' : '');
+    const colorKey = /cardinal/i.test(shortName) ? 'cardinal'
+                    : /gold/i.test(shortName)     ? 'gold'
+                    : /silver/i.test(shortName)    ? 'silver' : '';
     const card = document.createElement('div');
 
     if (isFutures) {
@@ -1193,7 +1204,7 @@ async function loadTeams(tournament) {
         loadGames(tournament.id, t.name, t.sheet, 'standings');
       });
     } else {
-      const label = (!multiGroup && t.age_gender) ? `${t.age_gender} ${shortName}` : shortName;
+      const label = t.age_gender ? `${t.age_gender} ${shortName}` : shortName;
       card.className = 'list-card team-btn' + (colorKey ? ` team-btn-${colorKey}` : '');
       card.innerHTML = `
         <div class="team-btn-label">${_escHtml(label)}</div>
@@ -1917,10 +1928,14 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
 
     const colGames = columns[col];
 
-    // Game number header
+    // Round header -- this is the tree's own depth-based round number, not
+    // the flat schedule's chronological "Game N" (they're deliberately
+    // different numbers now, see the column-assignment comment in
+    // _compute_tree_layout/app.py). Each card still shows its own real
+    // game-id badge, which is what cross-references against the schedule.
     const numHdr = document.createElement('div');
     numHdr.className = 'bracket-game-num-header';
-    numHdr.textContent = `Game ${col}`;
+    numHdr.textContent = `Round ${col}`;
     step.appendChild(numHdr);
 
     const pc = g => g.path_condition ?? g.path;
@@ -2148,16 +2163,23 @@ function drawBracketLines(inner, rounds, roundNums) {
       const ty = toRect.top - innerRect.top + toRect.height / 2;
 
       // Connect to the card this one actually descends from (src_game_id),
-      // not whichever source card happens to be vertically nearest on screen.
-      // Those coincide in the common case (one parent → its own win/lose
-      // children render adjacent to it) but diverge once a column merges
-      // children of DIFFERENT parents that happen to share one game number
-      // (e.g. a win-then-lose path and a lose-then-win path both landing on
-      // "Game 3") -- nearest-neighbour then silently draws the wrong edge
-      // with the wrong Win/Lose label. Fall back to nearest-neighbour only
-      // when src_game_id data isn't available at all.
+      // not whichever source card happens to be vertically nearest on
+      // screen. Those coincide in the common case (one parent → its own
+      // win/lose children render adjacent to it) but diverge once a column
+      // merges children of DIFFERENT parents that happen to share one game
+      // number -- nearest-neighbour then silently draws the wrong edge with
+      // the wrong Win/Lose label. As of 2026-07-20 the backend guarantees
+      // every real child's column is exactly its parent's column + 1 (see
+      // _compute_tree_layout in app.py), so srcId should always resolve to
+      // a card in the immediately preceding column here -- this fallback is
+      // now a pure defensive safety net, not an expected code path. Warn
+      // loudly if it ever fires for real data, since a silent fallback here
+      // is exactly how this bug class went unnoticed for as long as it did.
       const srcId = toCard.dataset.srcGameId;
       const matched = srcId && fromById[srcId];
+      if (!matched && srcId) {
+        console.warn(`[bracket-lines] ${toCard.dataset.gameId}: srcGameId ${srcId} not found in the preceding column -- falling back to nearest-neighbour, which may draw a misleading connector. This should not happen; check _compute_tree_layout.`);
+      }
       const from = matched || fromMids.reduce((best, fm) =>
         Math.abs(fm.sy - ty) < Math.abs(best.sy - ty) ? fm : best
       );
