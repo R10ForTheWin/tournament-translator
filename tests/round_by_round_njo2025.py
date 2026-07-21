@@ -45,6 +45,7 @@ import re
 import sys
 from collections import Counter
 from datetime import date, datetime
+from urllib.parse import quote
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -167,7 +168,7 @@ def replay_sheet(sheet_name: str, label: str) -> int:
                 app_module.find_excel = lambda tid, _flat=flat: "dummy"
                 app_module.load_and_parse = lambda excel, _flat=flat: list(_flat)
 
-                r = c.get(f"/api/games/{FAKE_TID}/{team}?sheet={sheet_name}")
+                r = c.get(f"/api/games/{FAKE_TID}/{quote(team)}?sheet={quote(sheet_name)}")
                 if r.status_code != 200:
                     check(f"round {i+1}/{len(cps)} ({cp[0]}): request succeeds", False,
                           f"status {r.status_code}")
@@ -211,7 +212,7 @@ def replay_sheet(sheet_name: str, label: str) -> int:
                     failures += 1
 
             # Final check: computed placement vs. real recorded final rank.
-            final_r = c.get(f"/api/games/{FAKE_TID}/{team}?sheet={sheet_name}")
+            final_r = c.get(f"/api/games/{FAKE_TID}/{quote(team)}?sheet={quote(sheet_name)}")
             final_data = final_r.get_json()
             app_placement = final_data.get("placement")
 
@@ -271,6 +272,12 @@ if __name__ == "__main__":
         ("10U_C_Champ 50",    "extra sweep: Champ tier, coed"),
         ("14U_F_Classic_35",  "extra sweep: Classic tier, girls"),
         ("12U_F_Classic 14",  "extra sweep: Classic tier, girls, smaller division"),
+        # Full-coverage pass, 2026-07-21: the remaining fully-played real
+        # sheets in the fixture not yet swept above.
+        ("10U_F_Champ 14",          "full coverage: Champ tier, girls"),
+        ("12U_C_Championship NEW 42", "full coverage: Championship tier, coed, small division"),
+        ("12U_F_CHAMP-40 24+16 ",  "full coverage: Champ tier, girls (note trailing space in real sheet name)"),
+        ("16U_F_Classic",          "full coverage: Classic tier, girls"),
     ]:
         replay_sheet(sheet, label)
 
