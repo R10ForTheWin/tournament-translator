@@ -3138,21 +3138,13 @@ def index():
     return render_template("index.html")
 
 
+_PAST_TOURNAMENT_STATUS_CACHE: dict[str, tuple[bool, bool]] = {}  # {id: (has_file, has_excel)}
+
 @app.route("/api/tournaments")
 def api_tournaments():
     today = datetime.now(ZoneInfo('America/Los_Angeles')).date()
     out = []
     for t in KNOWN_TOURNAMENTS:
-        excel = find_excel(t["id"])
-        # has_file: Excel exists; has_excel: Excel has games in this tournament's date range
-        has_file  = excel is not None
-        has_excel = False
-        if excel:
-            try:
-                games = _filter_by_dates(load_and_parse(excel), t["id"])
-                has_excel = len(games) > 0
-            except Exception:
-                has_file = False
         year_match  = _RE_YEAR.search(t["dates"])
         month_match = _RE_MONTH.search(t["dates"])
         yr = int(year_match.group(1)) if year_match else today.year
@@ -3162,6 +3154,29 @@ def api_tournaments():
         end   = t.get("date_end")   or start
         is_past = end < today
         days_until = (start - today).days if not is_past else None
+
+        # A tournament that already ended has a fixed, final schedule — its
+        # live URL (if any) will never produce new data and, for old events,
+        # is often a since-expired OneDrive share link. Re-fetching it every
+        # 5 minutes forever just adds latency (or a hang) to every visitor's
+        # home-screen load for no benefit, so resolve it once per process
+        # lifetime and reuse that answer instead of hitting the network again.
+        if is_past and t["id"] in _PAST_TOURNAMENT_STATUS_CACHE:
+            has_file, has_excel = _PAST_TOURNAMENT_STATUS_CACHE[t["id"]]
+        else:
+            excel = find_excel(t["id"])
+            # has_file: Excel exists; has_excel: Excel has games in this tournament's date range
+            has_file  = excel is not None
+            has_excel = False
+            if excel:
+                try:
+                    games = _filter_by_dates(load_and_parse(excel), t["id"])
+                    has_excel = len(games) > 0
+                except Exception:
+                    has_file = False
+            if is_past:
+                _PAST_TOURNAMENT_STATUS_CACHE[t["id"]] = (has_file, has_excel)
+
         out.append({**t, "has_excel": has_excel, "has_file": has_file,
                     "has_preset_url": t["id"] in PRESET_URL_TOURNAMENTS,
                     "past": is_past, "days_until": days_until,
