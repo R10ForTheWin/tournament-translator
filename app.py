@@ -2,7 +2,7 @@
 Tournament Translator — Flask app
 """
 from __future__ import annotations
-import os, re, json, glob, io, time, base64, random, threading, math
+import os, re, json, glob, io, time, base64, random, threading, math, concurrent.futures
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from functools import lru_cache
@@ -103,6 +103,16 @@ USER_URLS_FILE = os.path.join(_DATA_DIR, "user_urls.json")
 _URL_CACHE: dict   = {}   # {url: (fetched_at, bytes)}
 URL_CACHE_TTL      = 300  # re-fetch at most every 5 minutes
 
+# A hung external host (seen in production: Google Sheets export occasionally
+# stalls past even a 30s requests-level read timeout) must never be able to
+# block a request past this ceiling. requests.get's own timeout parameter has
+# not reliably enforced this in practice, so the fetch runs on a worker thread
+# with a hard wall-clock deadline; if it blows past FETCH_HARD_TIMEOUT we give
+# up and fall back to cached data (the leaked thread just finishes on its own
+# later and its result is discarded).
+_FETCH_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="url-fetch")
+FETCH_HARD_TIMEOUT = 12
+
 _LIVE_SCORES: dict = {}   # {(tournament_id, game_id): {our_score, opp_score, quarter, updated_at}}
 def _load_feedback() -> list:
     try:
@@ -201,10 +211,13 @@ def _fetch_url(url: str, *, onedrive=False) -> bytes | None:
             fetch_url = url + sep + "download=1"
         else:
             fetch_url = url
-        resp = requests.get(fetch_url, allow_redirects=True, timeout=30)
-        resp.raise_for_status()
-        _URL_CACHE[url] = (now, resp.content)
-        return resp.content
+        def _do_get():
+            resp = requests.get(fetch_url, allow_redirects=True, timeout=30)
+            resp.raise_for_status()
+            return resp.content
+        content = _FETCH_EXECUTOR.submit(_do_get).result(timeout=FETCH_HARD_TIMEOUT)
+        _URL_CACHE[url] = (now, content)
+        return content
     except Exception as exc:
         app.logger.warning("Fetch failed (%s): %s", url, exc)
         return cached[1] if cached else None
