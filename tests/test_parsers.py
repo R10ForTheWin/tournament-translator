@@ -1191,6 +1191,130 @@ def test_njo_tree_tied_game_no_misattribution() -> int:
     return failures
 
 
+def test_njo_tree_slot_code_advancement() -> int:
+    """A w_to/l_to value that is a text slot code (e.g. "grp_D3", meaning
+    "seed 3 of sub-bracket grp_D") instead of a plain game number must
+    resolve to every game whose own slot matches that code -- not just the
+    first, since a round-robin sub-bracket plays the same seed against
+    every other seed in its group (multiple matching games), and must
+    resolve at all instead of being silently discarded, since some formats
+    seed a winner/loser directly into a later group-stage slot rather than
+    a single numbered game.
+
+    Real bug found live 2026-07-20 against the real 2026 Junior Olympics
+    18U Invite bracket: the parser discarded any non-numeric "W to #" / "L
+    to #" value as unparseable, so Trojan Gold's bracket dead-ended right
+    after its Day 1 cross game even though the sheet already stated exactly
+    where the winner and loser each go next.
+    """
+    failures = 0
+    games = [
+        {"game_id": "G1", "white_team": "OUR TEAM", "dark_team": "OPP A",
+         "date": date(2026, 7, 23), "time": None, "played": False,
+         "white_score": None, "dark_score": None, "comments": "Cross",
+         "w_to": "grp_D3", "l_to": "grp_C1"},
+        # Round-robin sub-bracket: seed 3 plays both seed 1 and seed 2.
+        {"game_id": "G2", "white_team": "GRP_D1-", "dark_team": "GRP_D3",
+         "date": date(2026, 7, 24), "time": None, "played": False,
+         "white_score": None, "dark_score": None, "comments": "Group",
+         "w_to": None, "l_to": None},
+        {"game_id": "G3", "white_team": "GRP_D2-", "dark_team": "GRP_D3",
+         "date": date(2026, 7, 24), "time": None, "played": False,
+         "white_score": None, "dark_score": None, "comments": "Group",
+         "w_to": None, "l_to": None},
+        # Does NOT reference seed 3 -- must never be pulled in.
+        {"game_id": "G4", "white_team": "GRP_D1-", "dark_team": "GRP_D2-",
+         "date": date(2026, 7, 24), "time": None, "played": False,
+         "white_score": None, "dark_score": None, "comments": "Group",
+         "w_to": None, "l_to": None},
+        # Loss path target, explicitly a different team's real game.
+        {"game_id": "G5", "white_team": "GRP_C1", "dark_team": "OPP B",
+         "date": date(2026, 7, 24), "time": None, "played": False,
+         "white_score": None, "dark_score": None, "comments": "Group",
+         "w_to": None, "l_to": None},
+    ]
+    tree = _build_njo_game_tree("OUR TEAM", games)
+    tree_ids = {n["game_id"] for n in tree}
+    ok = _check(
+        "slot-code advancement follows every matching game, not just the first, and no others",
+        tree_ids == {"G1", "G2", "G3", "G5"},
+        f"expected {{'G1','G2','G3','G5'}}, got {sorted(tree_ids)}",
+    )
+    if not ok:
+        failures += 1
+    g1 = next((n for n in tree if n["game_id"] == "G1"), None)
+    if g1:
+        ok = _check(
+            "win path reaches both round-robin games for our seed",
+            set(g1.get("win_next_ids") or []) == {"G2", "G3"},
+            f"got {g1.get('win_next_ids')}",
+        )
+        if not ok:
+            failures += 1
+        ok = _check(
+            "lose path reaches the loss-side slot code target",
+            set(g1.get("lose_next_ids") or []) == {"G5"},
+            f"got {g1.get('lose_next_ids')}",
+        )
+        if not ok:
+            failures += 1
+    return failures
+
+
+def test_njo_tree_pool_rank_tbd_stub() -> int:
+    """When a team's pool has more possible finishing ranks than the sheet
+    has literal finish-slot games for, the missing ranks must show as an
+    honest TBD placeholder card, not silently vanish -- a parent seeing only
+    one branch after a 3-team pool reads as "this bracket is broken", not
+    "the tournament hasn't published this part yet".
+
+    Real bug found live 2026-07-20 against the real 2026 Junior Olympics
+    18U Invite bracket: Trojan Gold's 3-team pool only had a literal
+    cross-game row for the 2nd-place finish; 1st and 3rd place had no
+    discoverable game/slot anywhere in the sheet, and the bracket simply
+    stopped showing them.
+    """
+    failures = 0
+    games = [
+        {"game_id": "P1", "white_team": "B1-OUR TEAM", "dark_team": "B3-OPP A",
+         "date": date(2026, 7, 23), "time": None, "played": False,
+         "white_score": None, "dark_score": None, "comments": "Group",
+         "w_to": None, "l_to": None},
+        {"game_id": "P2", "white_team": "B1-OUR TEAM", "dark_team": "B2-OPP B",
+         "date": date(2026, 7, 23), "time": None, "played": False,
+         "white_score": None, "dark_score": None, "comments": "Group",
+         "w_to": None, "l_to": None},
+        # Only the 2nd-place finish has a real downstream game.
+        {"game_id": "P3", "white_team": "2ndB-", "dark_team": "2ndG-",
+         "date": date(2026, 7, 23), "time": None, "played": False,
+         "white_score": None, "dark_score": None, "comments": "Cross",
+         "w_to": None, "l_to": None},
+    ]
+    tree = _build_njo_game_tree("OUR TEAM", games)
+    anchor = next((n for n in tree if n["game_id"] == "P2"), None)
+    ok = _check("pool-phase anchor game found in tree", anchor is not None)
+    if not ok:
+        failures += 1
+        return failures
+    ranks = set(anchor.get("pool_next", {}).values())
+    ok = _check(
+        "pool_next covers all 3 possible ranks (1 real, 2 TBD)",
+        ranks == {1, 2, 3},
+        f"got {ranks}",
+    )
+    if not ok:
+        failures += 1
+    tbd_stubs = [n for n in tree if n.get("tbd_stub") and n.get("src_game_id") == "P2"]
+    ok = _check(
+        "exactly 2 TBD stubs synthesized for the uncovered ranks (1st, 3rd)",
+        len(tbd_stubs) == 2,
+        f"got {len(tbd_stubs)}: {[n['game_id'] for n in tbd_stubs]}",
+    )
+    if not ok:
+        failures += 1
+    return failures
+
+
 def test_jo_2026_teams_reachable() -> int:
     """Every known Trojan Junior Olympics 2026 team must still be found on
     the live schedule, return real games, and never show red bracket
@@ -2020,6 +2144,16 @@ def main():
     print("NJO tree tied-game no misattribution (Junior Olympics regression guard)")
     print("=" * 60)
     total_failures += test_njo_tree_tied_game_no_misattribution()
+
+    print("\n" + "=" * 60)
+    print("NJO tree slot-code advancement (Junior Olympics regression guard)")
+    print("=" * 60)
+    total_failures += test_njo_tree_slot_code_advancement()
+
+    print("\n" + "=" * 60)
+    print("NJO tree pool-rank TBD stub (Junior Olympics regression guard)")
+    print("=" * 60)
+    total_failures += test_njo_tree_pool_rank_tbd_stub()
 
     print("\n" + "=" * 60)
     if total_failures == 0:

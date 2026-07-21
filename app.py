@@ -1421,6 +1421,28 @@ def _resolved_belongs_to_other_team(slot: str, team: str) -> bool:
                 and not _SLOT_LIKE_RE.match(resolved)
                 and not team_matches(resolved, team))
 
+def _resolve_slot_code_games(code: str, division_games: list) -> list:
+    """Every game whose white_team/dark_team slot matches a bracket
+    advancement code (e.g. "ni_D3" matches a slot starting with "NI_D3",
+    case-insensitive) -- used when a W to#/L to# column holds a text slot
+    code instead of a plain game number (some multi-stage formats seed the
+    winner/loser directly into a later group-stage slot rather than a single
+    numbered game). A code can legitimately match more than one game -- e.g.
+    a 3-team round-robin sub-bracket plays every team against every other,
+    so "NI_D3" appears in two separate games (vs NI_D1 and vs NI_D2) -- so
+    this returns every match, not just the first."""
+    code_norm = code.strip().upper()
+    if not code_norm:
+        return []
+    matches = []
+    for g in division_games:
+        for slot in (g["white_team"], g["dark_team"]):
+            s = slot.strip().upper()
+            if s == code_norm or s.startswith(code_norm + "-"):
+                matches.append(g)
+                break
+    return matches
+
 def _expand_bracket_games(team: str, direct_games: list, division_games: list) -> list:
     """Return all bracket games the team can potentially reach, across all days.
 
@@ -2287,6 +2309,41 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
                 if child:
                     node["lose_next_ids"].append(lose_next_g["game_id"])
 
+        # Slot-code advancement (w_to/l_to holding a bracket seed code like
+        # "ni_D3" instead of a plain game number): only reached when neither
+        # the w_to/l_to game-number lookup nor the W#/L#-text fallback above
+        # found anything. Unlike those, a slot code can resolve to MULTIPLE
+        # games at once (a round-robin sub-bracket plays every pairing), so
+        # every match is attached as its own reachable branch rather than
+        # picking just one. Found live 2026-07-19: Trojan Gold 18U's Invite
+        # bracket dead-ended after its Day 1 cross game because "w to #" /
+        # "l to #" held slot codes ("ni_D3", "cu_C1"), which the parser used
+        # to silently discard as unparseable instead of preserving them.
+        if win_next_g is None and isinstance(game.get("w_to"), str) and won is not False:
+            for g2 in _resolve_slot_code_games(game["w_to"], division_games):
+                if g2["game_id"] in seen:
+                    continue
+                involved2 = (team_matches(g2["white_team"], team)
+                             or team_matches(g2["dark_team"], team))
+                if not involved2 and any(_resolved_belongs_to_other_team(s, team)
+                                          for s in (g2["white_team"], g2["dark_team"])):
+                    continue
+                child = _follow(g2, game["game_id"], "win", is_ph or (won is False), depth + 1)
+                if child:
+                    node["win_next_ids"].append(g2["game_id"])
+        if lose_next_g is None and isinstance(game.get("l_to"), str) and won is not True:
+            for g2 in _resolve_slot_code_games(game["l_to"], division_games):
+                if g2["game_id"] in seen:
+                    continue
+                involved2 = (team_matches(g2["white_team"], team)
+                             or team_matches(g2["dark_team"], team))
+                if not involved2 and any(_resolved_belongs_to_other_team(s, team)
+                                          for s in (g2["white_team"], g2["dark_team"])):
+                    continue
+                child = _follow(g2, game["game_id"], "lose", is_ph or (won is True), depth + 1)
+                if child:
+                    node["lose_next_ids"].append(g2["game_id"])
+
         return node
 
     root = my_games[0]
@@ -2334,6 +2391,8 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
             anchor = pool_phase_games[-1]
             anchor_node = next((n for n in out if n["game_id"] == anchor["game_id"]), None)
             if anchor_node:
+                covered_ranks: set = set()
+                a_date = None
                 for g2 in division_games:
                     if g2["game_id"] in seen:
                         continue
@@ -2358,7 +2417,54 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
                                              not has_score, depth=1)
                             if child:
                                 anchor_node["pool_next"][g2["game_id"]] = rank
+                                covered_ranks.add(rank)
+                                a_date = a_date or g2.get("date")
                             break
+
+                # TBD stub for any pool-finish rank that's structurally
+                # possible (or, once the pool is fully decided, the team's
+                # own real rank) but has no discoverable game/slot in the
+                # sheet at all -- e.g. a 3-team pool where the organizer's
+                # bracket only publishes a cross-game for 2nd place, and
+                # 1st/3rd advance directly via a seeding rule that lives
+                # nowhere in the spreadsheet. Rather than silently show one
+                # branch and drop the other two, show an honest "TBD" card
+                # for each so the connector line has somewhere real to end.
+                # Found live 2026-07-19/20: Trojan Gold 18U's Pool B is
+                # exactly this shape.
+                pool_size = len(_pool_teams_for_group(_team_pool_group, division_games))
+                if pool_size > len(covered_ranks):
+                    standings = _standings_for_group(_team_pool_group, division_games)
+                    pool_decided = bool(standings) and all(
+                        s["wins"] + s["losses"] >= pool_size - 1 for s in standings
+                    )
+                    if pool_decided:
+                        our_rank = next((i + 1 for i, s in enumerate(standings)
+                                          if team_matches(s["team"], team)), None)
+                        missing_ranks = ({our_rank} - covered_ranks) if our_rank else set()
+                    else:
+                        missing_ranks = set(range(1, pool_size + 1)) - covered_ranks
+                    for rank in sorted(missing_ranks):
+                        stub_id = f"__tbd_pool_{anchor['game_id']}_{rank}"
+                        anchor_node["pool_next"][stub_id] = rank
+                        out.append({
+                            "game_id":        stub_id,
+                            "date":           a_date or anchor.get("date"),
+                            "time":           None,
+                            "location":       None,
+                            "white_team":     "TBD",
+                            "dark_team":      "TBD",
+                            "played":         False,
+                            "placeholder":    True,
+                            "tbd_stub":       True,
+                            "src_game_id":    anchor["game_id"],
+                            "src_path":       f"pool_{rank}",
+                            "win_next_ids":   [],
+                            "lose_next_ids":  [],
+                            "pool_next":      {},
+                            "sunday_pair_id": None,
+                            "tree_format":    "bracket",
+                        })
 
     return out
 
@@ -3692,6 +3798,7 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
     # (WPL/CCA/NJO's older convention -- e.g. the 2026 JO sheet, which leaves
     # the dedicated w_to/l_to columns blank and encodes advancement this way).
     tree_game_nums = {_game_num(n["game_id"]) for n in nodes} - {None}
+    _node_by_id = {n["game_id"]: n for n in nodes}
     def _slot_refs_tree_game(slot: str) -> bool:
         wgm = re.search(r'\b(?:WIN|LOS)\s+GM\s+#(\d+)', slot, re.IGNORECASE)
         if wgm and str(int(wgm.group(1))) in tree_game_nums:
@@ -3702,6 +3809,22 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
             ref_num = str(int(ref.group(1))) if ref else None
             if ref_num and ref_num in tree_game_nums:
                 return True
+        return False
+    def _slot_refs_parent_advancement_code(node: dict, slot: str) -> bool:
+        """True if this node's parent has a w_to/l_to slot code (e.g.
+        "ni_D3", see _resolve_slot_code_games) that this slot matches --
+        the third legitimate advancement mechanism alongside WIN/LOS GM #N
+        and plain W#/L#, for formats that seed a winner/loser directly into
+        a later group-stage slot rather than a single numbered game."""
+        parent = _node_by_id.get(node.get("src_game_id"))
+        if not parent:
+            return False
+        s = slot.strip().upper()
+        for code in (parent.get("w_to"), parent.get("l_to")):
+            if isinstance(code, str):
+                c = code.strip().upper()
+                if c and (s == c or s.startswith(c + "-")):
+                    return True
         return False
     for n in nodes:
         if not n.get("src_game_id"):
@@ -3715,6 +3838,7 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
                   or team_matches(n.get("dark_team", ""), team))
         if not direct:
             ref_found = any(_slot_refs_tree_game(slot)
+                             or _slot_refs_parent_advancement_code(n, slot)
                              for slot in (n.get("white_team", ""), n.get("dark_team", "")))
             if not ref_found:
                 red.append(

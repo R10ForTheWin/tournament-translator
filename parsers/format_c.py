@@ -273,14 +273,21 @@ def parse(wb) -> list[dict]:
                 time_val = _parse_time(row[ci_time] if ci_time is not None and ci_time < len(row) else None)
                 game_type = str(row[ci_type]).strip() if ci_type is not None and ci_type < len(row) and row[ci_type] else ""
 
-                # W to # / L to # advancement links — may be a plain number,
-                # a bracket code ("bracket", "pt_M2"), or absent.  Store only
-                # plain integers so the tree builder can resolve them to GMIDs.
+                # W to # / L to # advancement links — may be a plain game
+                # number, or a bracket slot code (e.g. "ni_D3", meaning "seed
+                # 3 of sub-bracket NI_D") when the destination isn't a single
+                # numbered game but a seeded slot in a later group stage.
+                # Plain integers resolve directly to a game number; slot
+                # codes are kept as-is and resolved separately by matching
+                # against another game's own slot text (see
+                # _resolve_slot_code_games in app.py).
                 def _adv(ci):
                     if ci is None or ci >= len(row) or row[ci] is None:
                         return None
                     v = str(row[ci]).strip()
-                    return int(v) if v.lstrip('-').isdigit() else None
+                    if not v:
+                        return None
+                    return int(v) if v.lstrip('-').isdigit() else v
 
                 games.append({
                     "date":        current_date,
