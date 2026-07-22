@@ -127,16 +127,16 @@ def _save_feedback(entries: list) -> None:
     with open(FEEDBACK_FILE, "w") as f:
         json.dump(entries, f)
 
-# Feedback notify: emailed via Resend's HTTPS API. Railway blocks outbound
-# SMTP and, separately, ntfy.sh's host specifically (both confirmed live via
-# /api/health/net-diag -- ENETUNREACH on both, while api.resend.com and every
-# other tested host were reachable), so plain SMTP and ntfy were dead ends.
-# Set RESEND_API_KEY as a Railway variable to enable; silently does nothing
-# if unset, so feedback submission itself never depends on it.
-FEEDBACK_NOTIFY_EMAIL = "djnurre@gmail.com"
-RESEND_API_KEY        = os.environ.get("RESEND_API_KEY", "")
+# Admin email notify (feedback, smoke-test/pre-game alerts): sent via
+# Resend's HTTPS API. Railway blocks outbound SMTP and, separately,
+# ntfy.sh's host specifically (both confirmed live via /api/health/net-diag
+# -- ENETUNREACH on both, while api.resend.com and every other tested host
+# were reachable), so plain SMTP and ntfy were dead ends. Set RESEND_API_KEY
+# as a Railway variable to enable; silently does nothing if unset.
+ADMIN_NOTIFY_EMAIL = "djnurre@gmail.com"
+RESEND_API_KEY      = os.environ.get("RESEND_API_KEY", "")
 
-def _notify_feedback_email(text: str) -> None:
+def _send_admin_email(subject: str, text: str) -> None:
     if not RESEND_API_KEY:
         return
     def _send():
@@ -146,15 +146,18 @@ def _notify_feedback_email(text: str) -> None:
                 headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
                 json={
                     "from": "Tournament Translator <onboarding@resend.dev>",
-                    "to": [FEEDBACK_NOTIFY_EMAIL],
-                    "subject": "Tournament Translator feedback",
+                    "to": [ADMIN_NOTIFY_EMAIL],
+                    "subject": subject,
                     "text": text,
                 },
                 timeout=10,
             )
         except Exception as exc:
-            app.logger.warning("Feedback email notify failed: %s", exc)
+            app.logger.warning("Admin email notify failed (%s): %s", subject, exc)
     threading.Thread(target=_send, daemon=True).start()
+
+def _notify_feedback_email(text: str) -> None:
+    _send_admin_email("Tournament Translator feedback", text)
 
 _FEEDBACK: list = _load_feedback()
 
@@ -619,20 +622,11 @@ def _title(s: str) -> str:
 
 
 def _send_ntfy(title: str, body: str) -> None:
-    """Push notification via ntfy.sh. Requires NTFY_TOPIC env var. Silent on failure."""
-    topic = os.environ.get("NTFY_TOPIC")
-    if not topic:
-        return
-    try:
-        import urllib.request as _ureq
-        req = _ureq.Request(
-            f"https://ntfy.sh/{topic}",
-            data=body.encode("utf-8"),
-            headers={"Title": title, "Priority": "high", "Tags": "warning"},
-        )
-        _ureq.urlopen(req, timeout=5)
-    except Exception:
-        pass
+    """Smoke-test / pre-game-check alert email. Kept the old name (many call
+    sites) but this now goes through Resend, same as feedback notify -- the
+    original ntfy.sh version required NTFY_TOPIC, which was never actually
+    set on Railway, so this path had never sent a real alert."""
+    _send_admin_email(title, body)
 
 def _pool_teams_for_group(group: str, division_games: list) -> list[str]:
     """All team names seeded in a pool group, ordered by seed number."""
