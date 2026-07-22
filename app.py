@@ -109,9 +109,11 @@ URL_CACHE_TTL      = 300  # re-fetch at most every 5 minutes
 # not reliably enforced this in practice, so the fetch runs on a worker thread
 # with a hard wall-clock deadline; if it blows past FETCH_HARD_TIMEOUT we give
 # up and fall back to cached data (the leaked thread just finishes on its own
-# later and its result is discarded).
+# later and its result is discarded). 12s was too tight in practice -- the JO
+# sheet alone has legitimately taken 30-35s under normal (non-hung) load, which
+# an earlier version of this cap treated as a failure on every cold start.
 _FETCH_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="url-fetch")
-FETCH_HARD_TIMEOUT = 12
+FETCH_HARD_TIMEOUT = 50
 
 _LIVE_SCORES: dict = {}   # {(tournament_id, game_id): {our_score, opp_score, quarter, updated_at}}
 def _load_feedback() -> list:
@@ -238,7 +240,7 @@ def _do_fetch(url: str, onedrive: bool) -> bytes:
         fetch_url = url
 
     def _do_get():
-        resp = requests.get(fetch_url, allow_redirects=True, timeout=30)
+        resp = requests.get(fetch_url, allow_redirects=True, timeout=45)
         resp.raise_for_status()
         return resp.content
     content = _FETCH_EXECUTOR.submit(_do_get).result(timeout=FETCH_HARD_TIMEOUT)
