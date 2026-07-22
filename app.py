@@ -5928,6 +5928,25 @@ def api_pre_game_check(tournament_id: str):
 threading.Thread(target=_pre_game_monitor, daemon=True).start()
 
 
+def _prewarm_url_caches():
+    """Fetch + parse every URL-backed tournament once as soon as the server
+    boots, instead of leaving the cold-start cost for whichever visitor
+    happens to arrive first. Seen live: the JO sheet alone can take 30+s to
+    fetch, which briefly showed zero teams for a real visitor before this
+    existed. Sequential and best-effort -- a failure here just means the
+    first real request pays the normal cold-start cost, same as before."""
+    for tid in sorted(PRESET_URL_TOURNAMENTS):
+        try:
+            excel = find_excel(tid)
+            if excel:
+                load_and_parse(excel)
+                print(f"[prewarm] {tid}: ready", flush=True)
+        except Exception as exc:
+            print(f"[prewarm] {tid} failed: {exc}", flush=True)
+
+threading.Thread(target=_prewarm_url_caches, daemon=True).start()
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
     app.run(host="0.0.0.0", port=port, debug=False)
