@@ -621,11 +621,31 @@ def _title(s: str) -> str:
     return ' '.join(out)
 
 
-def _send_ntfy(title: str, body: str) -> None:
+def _tournament_is_past(tournament_id: str) -> bool:
+    """Mirrors the is_past logic in api_tournaments -- used to suppress
+    smoke-test/pre-game-check alerts for a tournament that has already
+    concluded. Nobody wants an email about a division from a past event."""
+    t = next((x for x in KNOWN_TOURNAMENTS if x["id"] == tournament_id), None)
+    if not t:
+        return False
+    today = datetime.now(ZoneInfo('America/Los_Angeles')).date()
+    year_match  = _RE_YEAR.search(t["dates"])
+    month_match = _RE_MONTH.search(t["dates"])
+    yr = int(year_match.group(1)) if year_match else today.year
+    mo = _MONTH_MAP.get(month_match.group(1).lower(), 1) if month_match else 1
+    t_date = date(yr, mo, 1)
+    start = t.get("date_start") or t_date
+    end   = t.get("date_end")   or start
+    return end < today
+
+def _send_ntfy(tournament_id: str, title: str, body: str) -> None:
     """Smoke-test / pre-game-check alert email. Kept the old name (many call
     sites) but this now goes through Resend, same as feedback notify -- the
     original ntfy.sh version required NTFY_TOPIC, which was never actually
-    set on Railway, so this path had never sent a real alert."""
+    set on Railway, so this path had never sent a real alert. Suppressed
+    entirely for past tournaments -- nobody wants alerts about old data."""
+    if _tournament_is_past(tournament_id):
+        return
     _send_admin_email(title, body)
 
 def _pool_teams_for_group(group: str, division_games: list) -> list[str]:
@@ -5796,7 +5816,7 @@ def _run_pre_game_sweep(tournament_id: str) -> dict:
             f"{x['sheet']}/{x['team']}: {'; '.join(x['issues'][:2])}"
             for x in all_issues[:5]
         )
-        _send_ntfy(f"Pre-game check — {tournament_id} issues", body)
+        _send_ntfy(tournament_id, f"Pre-game check — {tournament_id} issues", body)
     else:
         print(f"[pre-game-check] {tournament_id}: all {n_ok} teams OK ✓")
 
@@ -5817,14 +5837,14 @@ def _run_trojan_smoke_test(tournament_id: str) -> dict:
     if not excel:
         msg = "No excel file found after URL save"
         print(f"[smoke-test] {tournament_id}: {msg}", flush=True)
-        _send_ntfy(f"Smoke test FAILED — {tournament_id}", msg)
+        _send_ntfy(tournament_id, f"Smoke test FAILED — {tournament_id}", msg)
         return {"error": msg}
     try:
         all_games = load_and_parse(excel)
     except Exception as e:
         msg = f"Parse error: {e}"
         print(f"[smoke-test] {tournament_id}: {msg}", flush=True)
-        _send_ntfy(f"Smoke test FAILED — {tournament_id}", msg)
+        _send_ntfy(tournament_id, f"Smoke test FAILED — {tournament_id}", msg)
         return {"error": msg}
 
     # Discover all Trojan teams across all sheets
@@ -5839,7 +5859,7 @@ def _run_trojan_smoke_test(tournament_id: str) -> dict:
     if not seen:
         msg = f"No Trojan teams found in {len(all_games)} games"
         print(f"[smoke-test] {tournament_id}: {msg}", flush=True)
-        _send_ntfy(f"Smoke test WARNING — {tournament_id}", msg)
+        _send_ntfy(tournament_id, f"Smoke test WARNING — {tournament_id}", msg)
         return {"error": msg}
 
     issues: list[str] = []
@@ -5866,13 +5886,14 @@ def _run_trojan_smoke_test(tournament_id: str) -> dict:
         for iss in issues:
             print(f"[smoke-test] ✗ {iss}", flush=True)
         _send_ntfy(
+            tournament_id,
             f"Smoke test — {tournament_id} has issues",
             "\n".join(issues[:5]),
         )
     else:
         summary = f"{len(ok_teams)} Trojan teams OK"
         print(f"[smoke-test] {tournament_id}: {summary} ✓", flush=True)
-        _send_ntfy(f"Smoke test — {tournament_id} ✓", "\n".join(ok_teams[:8]))
+        _send_ntfy(tournament_id, f"Smoke test — {tournament_id} ✓", "\n".join(ok_teams[:8]))
 
     return {"ok": len(ok_teams), "issues": issues}
 
