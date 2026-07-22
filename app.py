@@ -5910,6 +5910,10 @@ def api_net_diag():
         ("ntfy.sh", 443), ("smtp.gmail.com", 587),
         ("api.github.com", 443), ("httpbin.org", 443),
         ("1.1.1.1", 443), ("8.8.8.8", 443),
+        ("api.resend.com", 443), ("api.mailgun.net", 443),
+        ("api.sendgrid.com", 443), ("hooks.slack.com", 443),
+        ("discord.com", 443), ("api.pushover.net", 443),
+        ("ntfy.sh", 80),
     ]
     out = {}
     for host, port in targets:
