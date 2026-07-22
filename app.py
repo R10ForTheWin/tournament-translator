@@ -5899,6 +5899,29 @@ def _pre_game_monitor():
         _time.sleep(3600)  # re-check every hour
 
 
+@app.route("/api/health/net-diag")
+def api_net_diag():
+    """Temporary: characterize which outbound hosts this container can
+    actually reach, to debug the ntfy.sh/smtp.gmail.com ENETUNREACH errors.
+    Safe to remove once the feedback-notify path is sorted out."""
+    import socket as _socket
+    targets = [
+        ("docs.google.com", 443), ("onedrive.live.com", 443),
+        ("ntfy.sh", 443), ("smtp.gmail.com", 587),
+        ("api.github.com", 443), ("httpbin.org", 443),
+        ("1.1.1.1", 443), ("8.8.8.8", 443),
+    ]
+    out = {}
+    for host, port in targets:
+        try:
+            s = _socket.create_connection((host, port), timeout=5)
+            s.close()
+            out[f"{host}:{port}"] = "REACHABLE"
+        except Exception as exc:
+            out[f"{host}:{port}"] = f"FAILED: {exc}"
+    return jsonify(out)
+
+
 @app.route("/api/health/pre-game-check/<tournament_id>")
 def api_pre_game_check(tournament_id: str):
     """Manual trigger for pre-game validation sweep. Returns JSON results.
