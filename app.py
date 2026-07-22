@@ -2,8 +2,9 @@
 Tournament Translator — Flask app
 """
 from __future__ import annotations
-import os, re, json, glob, io, time, base64, random, threading, math, concurrent.futures
+import os, re, json, glob, io, time, base64, random, threading, math, concurrent.futures, smtplib
 from datetime import datetime, date, timedelta
+from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
 from functools import lru_cache
 import requests
@@ -124,6 +125,30 @@ def _load_feedback() -> list:
 def _save_feedback(entries: list) -> None:
     with open(FEEDBACK_FILE, "w") as f:
         json.dump(entries, f)
+
+# Feedback notify: sent via Gmail SMTP so DJ doesn't have to remember to
+# check /api/feedback. Set GMAIL_APP_PASSWORD (a Gmail "App Password", not
+# the account password) as a Railway variable to enable this -- silently
+# does nothing if unset, so feedback submission itself never depends on it.
+FEEDBACK_NOTIFY_EMAIL = "djnurre@gmail.com"
+GMAIL_APP_PASSWORD    = os.environ.get("GMAIL_APP_PASSWORD", "")
+
+def _notify_feedback_email(text: str) -> None:
+    if not GMAIL_APP_PASSWORD:
+        return
+    def _send():
+        try:
+            msg = MIMEText(text)
+            msg["Subject"] = "Tournament Translator feedback"
+            msg["From"] = FEEDBACK_NOTIFY_EMAIL
+            msg["To"] = FEEDBACK_NOTIFY_EMAIL
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as server:
+                server.starttls()
+                server.login(FEEDBACK_NOTIFY_EMAIL, GMAIL_APP_PASSWORD)
+                server.send_message(msg)
+        except Exception as exc:
+            app.logger.warning("Feedback email notify failed: %s", exc)
+    threading.Thread(target=_send, daemon=True).start()
 
 _FEEDBACK: list = _load_feedback()
 
@@ -5341,6 +5366,7 @@ def api_feedback_post():
     _FEEDBACK.append(entry)
     _save_feedback(_FEEDBACK)
     print(f"[feedback] {entry}", flush=True)
+    _notify_feedback_email(text)
     return jsonify({"ok": True})
 
 @app.route("/api/feedback", methods=["GET"])
