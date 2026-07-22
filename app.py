@@ -125,25 +125,33 @@ def _save_feedback(entries: list) -> None:
     with open(FEEDBACK_FILE, "w") as f:
         json.dump(entries, f)
 
-# Feedback notify: pushed via ntfy.sh (plain HTTPS POST, no account or API
-# key) so DJ doesn't have to remember to check /api/feedback. Railway blocks
-# outbound SMTP at the network level -- confirmed live (ENETUNREACH against
-# smtp.gmail.com), so this replaced an earlier Gmail-SMTP attempt that could
-# never have worked on this host. Topic name is a random slug, not a secret;
-# treat it as "unlisted," not access-controlled.
-FEEDBACK_NTFY_TOPIC = "tournament-translator-fb-b4efadfd6982"
+# Feedback notify: emailed via Resend's HTTPS API. Railway blocks outbound
+# SMTP and, separately, ntfy.sh's host specifically (both confirmed live via
+# /api/health/net-diag -- ENETUNREACH on both, while api.resend.com and every
+# other tested host were reachable), so plain SMTP and ntfy were dead ends.
+# Set RESEND_API_KEY as a Railway variable to enable; silently does nothing
+# if unset, so feedback submission itself never depends on it.
+FEEDBACK_NOTIFY_EMAIL = "djnurre@gmail.com"
+RESEND_API_KEY        = os.environ.get("RESEND_API_KEY", "")
 
-def _notify_feedback_ntfy(text: str) -> None:
+def _notify_feedback_email(text: str) -> None:
+    if not RESEND_API_KEY:
+        return
     def _send():
         try:
             requests.post(
-                f"https://ntfy.sh/{FEEDBACK_NTFY_TOPIC}",
-                data=text.encode("utf-8"),
-                headers={"Title": "Tournament Translator feedback"},
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+                json={
+                    "from": "Tournament Translator <onboarding@resend.dev>",
+                    "to": [FEEDBACK_NOTIFY_EMAIL],
+                    "subject": "Tournament Translator feedback",
+                    "text": text,
+                },
                 timeout=10,
             )
         except Exception as exc:
-            app.logger.warning("Feedback ntfy notify failed: %s", exc)
+            app.logger.warning("Feedback email notify failed: %s", exc)
     threading.Thread(target=_send, daemon=True).start()
 
 _FEEDBACK: list = _load_feedback()
@@ -5362,7 +5370,7 @@ def api_feedback_post():
     _FEEDBACK.append(entry)
     _save_feedback(_FEEDBACK)
     print(f"[feedback] {entry}", flush=True)
-    _notify_feedback_ntfy(text)
+    _notify_feedback_email(text)
     return jsonify({"ok": True})
 
 @app.route("/api/feedback", methods=["GET"])
@@ -5897,33 +5905,6 @@ def _pre_game_monitor():
         except Exception as e:
             print(f"[pre-game-monitor] error: {e}")
         _time.sleep(3600)  # re-check every hour
-
-
-@app.route("/api/health/net-diag")
-def api_net_diag():
-    """Temporary: characterize which outbound hosts this container can
-    actually reach, to debug the ntfy.sh/smtp.gmail.com ENETUNREACH errors.
-    Safe to remove once the feedback-notify path is sorted out."""
-    import socket as _socket
-    targets = [
-        ("docs.google.com", 443), ("onedrive.live.com", 443),
-        ("ntfy.sh", 443), ("smtp.gmail.com", 587),
-        ("api.github.com", 443), ("httpbin.org", 443),
-        ("1.1.1.1", 443), ("8.8.8.8", 443),
-        ("api.resend.com", 443), ("api.mailgun.net", 443),
-        ("api.sendgrid.com", 443), ("hooks.slack.com", 443),
-        ("discord.com", 443), ("api.pushover.net", 443),
-        ("ntfy.sh", 80),
-    ]
-    out = {}
-    for host, port in targets:
-        try:
-            s = _socket.create_connection((host, port), timeout=5)
-            s.close()
-            out[f"{host}:{port}"] = "REACHABLE"
-        except Exception as exc:
-            out[f"{host}:{port}"] = f"FAILED: {exc}"
-    return jsonify(out)
 
 
 @app.route("/api/health/pre-game-check/<tournament_id>")
