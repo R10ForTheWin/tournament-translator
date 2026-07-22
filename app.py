@@ -196,31 +196,62 @@ def _save_user_url(tournament_id: str, url: str):
         json.dump(urls, f, indent=2)
 
 
+_FETCH_INFLIGHT: set = set()  # urls currently being refreshed in the background
+
+def _do_fetch(url: str, onedrive: bool) -> bytes:
+    if onedrive:
+        token = base64.urlsafe_b64encode(url.encode()).rstrip(b"=").decode()
+        fetch_url = f"https://api.onedrive.com/v1.0/shares/u!{token}/root/content"
+    elif "onedrive.live.com" in url or "1drv.ms" in url:
+        sep = "&" if "?" in url else "?"
+        fetch_url = url + sep + "download=1"
+    else:
+        fetch_url = url
+
+    def _do_get():
+        resp = requests.get(fetch_url, allow_redirects=True, timeout=30)
+        resp.raise_for_status()
+        return resp.content
+    content = _FETCH_EXECUTOR.submit(_do_get).result(timeout=FETCH_HARD_TIMEOUT)
+    _URL_CACHE[url] = (time.time(), content)
+    return content
+
+def _refresh_url_background(url: str, onedrive: bool):
+    """Kick off a background re-fetch, deduped so only one runs per URL at a
+    time. Callers keep serving the stale-but-still-cached copy in the
+    meantime instead of blocking on the network."""
+    if url in _FETCH_INFLIGHT:
+        return
+    _FETCH_INFLIGHT.add(url)
+    def _run():
+        try:
+            _do_fetch(url, onedrive)
+        except Exception as exc:
+            app.logger.warning("Background refresh failed (%s): %s", url, exc)
+        finally:
+            _FETCH_INFLIGHT.discard(url)
+    threading.Thread(target=_run, daemon=True).start()
+
 def _fetch_url(url: str, *, onedrive=False) -> bytes | None:
-    """Fetch Excel bytes from a URL with 5-min cache. Returns None on failure."""
+    """Fetch Excel bytes from a URL with a 5-min cache.
+
+    Stale-while-revalidate: once data has been fetched at least once, an
+    expired cache entry is still served immediately while a background
+    thread refreshes it, so a visitor only ever blocks on the live network
+    on the very first fetch (e.g. right after a deploy). Returns None on
+    failure with nothing cached yet."""
     now = time.time()
     cached = _URL_CACHE.get(url)
     if cached and now - cached[0] < URL_CACHE_TTL:
         return cached[1]
+    if cached:
+        _refresh_url_background(url, onedrive)
+        return cached[1]
     try:
-        if onedrive:
-            token = base64.urlsafe_b64encode(url.encode()).rstrip(b"=").decode()
-            fetch_url = f"https://api.onedrive.com/v1.0/shares/u!{token}/root/content"
-        elif "onedrive.live.com" in url or "1drv.ms" in url:
-            sep = "&" if "?" in url else "?"
-            fetch_url = url + sep + "download=1"
-        else:
-            fetch_url = url
-        def _do_get():
-            resp = requests.get(fetch_url, allow_redirects=True, timeout=30)
-            resp.raise_for_status()
-            return resp.content
-        content = _FETCH_EXECUTOR.submit(_do_get).result(timeout=FETCH_HARD_TIMEOUT)
-        _URL_CACHE[url] = (now, content)
-        return content
+        return _do_fetch(url, onedrive)
     except Exception as exc:
         app.logger.warning("Fetch failed (%s): %s", url, exc)
-        return cached[1] if cached else None
+        return None
 
 
 def _bytesio_for_url(url: str, data: bytes) -> io.BytesIO:
