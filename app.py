@@ -1479,7 +1479,10 @@ _POOL_SLOT_RE    = re.compile(r'^([A-Z])(\d+)-(.+)', re.IGNORECASE)
 _COMPOSITE_POOL_SEED_RE = re.compile(
     r'^([A-Z])(\d+)\s*\([^)]*GM\s*#\d+[^)]*\)\s*-\s*(.+)$', re.IGNORECASE)
 _WL_SLOT_RE      = re.compile(r'^[WL]#([^-\s]+)', re.IGNORECASE)   # dash optional (bare W#2 before scores)
-_FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)(?:\s+in\s+)?([A-Z])\s*-', re.IGNORECASE)
+# Accepts "2ndJ-" (no space), "2nd in J-" (worded), and "2ND J-" (bare space,
+# no "in" -- seen live in JO's 10U/12U sheets, e.g. "2ND J- vs 2ND G-";
+# previously unmatched, silently dropping that team's crossover game).
+_FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)(?:\s+in\s+|\s+)?([A-Z])\s*-', re.IGNORECASE)
 # Composite bracket slots like K4(1stG)- or K4(1stG) — group letter is inside parens
 _COMPOSITE_SLOT_RE = re.compile(r'\(\d+(?:st|nd|rd|th)([A-Z])\)', re.IGNORECASE)
 # Placement games often state their exact final rank as a bare ordinal in the
