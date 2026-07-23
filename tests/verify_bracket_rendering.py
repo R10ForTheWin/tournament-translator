@@ -28,6 +28,8 @@ Usage:
 Requires: pip install playwright && playwright install chromium
 """
 import argparse
+import json
+import re
 import subprocess
 import sys
 import time
@@ -45,62 +47,119 @@ def check(label: str, condition: bool, detail: str = "") -> bool:
     return condition
 
 
-def wait_for_server(port: int, timeout: int = 20) -> bool:
+def wait_for_server(port: int, timeout: int = 150, tournament_id: str = "junior-olympics") -> bool:
+    """Polls /api/tournaments until (a) the tournament this script needs
+    reports has_excel=true AND (b) that same request comes back FAST
+    (< 2s) -- a bare 200, or even a has_excel=true match, isn't enough on
+    its own. Root cause, confirmed live 2026-07-23: this route builds its
+    response by looping over EVERY known tournament in ONE request, so
+    even once OUR tournament is warm, a request can still block for a long
+    time if a DIFFERENT tournament is simultaneously cold (its own
+    find_excel() racing the prewarm thread's first-ever fetch of the same
+    live URL -- no de-dup lock covers that first cold fetch, only
+    _refresh_url_background's _FETCH_INFLIGHT covers re-fetching an
+    already-cached URL). The frontend's own page-load-time fetch can lose
+    that race even when a prior probe request (like this one) already saw
+    has_excel=true for our tournament specifically -- a slow OTHER
+    tournament in the same response is invisible from here unless timed.
+    A fast response time is the actual proxy for "everything is warm now",
+    not just our one tournament. This produced a real, reproducible
+    "Schedule not posted yet" info sheet in place of the team list on a
+    just-started process -- a genuine (if narrow-window, self-correcting)
+    production gap right after any fresh deploy/restart, see
+    project_junior_olympics_prep memory, deferred as low-priority
+    post-tournament since it only affects the ~seconds after a restart and
+    production has been warm for hours."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            urllib.request.urlopen(f"http://localhost:{port}/", timeout=2)
-            return True
+            t0 = time.time()
+            resp = urllib.request.urlopen(f"http://localhost:{port}/api/tournaments", timeout=timeout)
+            data = json.loads(resp.read())
+            elapsed = time.time() - t0
+            t = next((x for x in data if x.get("id") == tournament_id), None)
+            if t and t.get("has_excel") and elapsed < 2.0:
+                return True
         except Exception:
-            time.sleep(1)
+            pass
+        time.sleep(2)
     return False
 
 
 def verify_bracket(page, tournament_label: str, team_label: str, sheet_hint: str):
-    """Navigate the real UI (tournament card -> team SCHEDULE button) and
-    return the rendered game-card + connector data. Navigates by visible
-    text/role, not hardcoded indices, so it survives menu-copy changes."""
+    """Navigate the real UI (tournament card -> team card) and return the
+    rendered game-card + connector data. Navigates by visible text, not
+    hardcoded indices, so it survives menu-copy changes.
+
+    Team cards for non-futures tournaments (which is everything this script
+    tests -- JO_TEAMS below) are a single directly-clickable ".team-btn"
+    div, not a separate "SCHEDULE" button -- the 2026-07-20 UI
+    simplification ("Team list / subnav UI simplified", commit 6b240ad)
+    merged the old Schedule/Rankings button pair into one click for every
+    non-futures tournament, and dropped the word "Trojan" from both the
+    card label and the destination header (every team in this app is a
+    Trojan team, so it was redundant). Confirmed live 2026-07-23: this
+    script pre-dates that commit and had never actually run for real since
+    (its CI job only fires on a live tournament day, and none occurred
+    between 2026-07-20 and today), so the mismatch went uncaught until
+    now -- not a live site bug, the real app works fine either way."""
     # NOT wait_until="networkidle" -- this app polls periodically in the
     # background (_startRefreshTimers), so the network is never truly idle
     # and that wait condition can hang indefinitely. "load" plus the
     # explicit wait_for_timeout calls below is what actually works here.
-    page.goto(f"http://localhost:{PORT}/", wait_until="load")
-    page.get_by_text(tournament_label, exact=False).first.click()
+    # Retried, not a single fixed-timeout attempt -- confirmed live
+    # 2026-07-23: back-to-back navigations in one long-lived process can
+    # occasionally hit a slow /api/tournaments response on just one reload
+    # (the live Google Sheets fetch this route depends on has its own real-
+    # network variance), even after the whole suite's initial cold-start
+    # settling. A second attempt after a fresh reload has always succeeded
+    # in practice; this is strictly more forgiving than before, never less.
+    for attempt in range(3):
+        page.goto(f"http://localhost:{PORT}/", wait_until="load")
+        try:
+            page.get_by_text(tournament_label, exact=False).first.click(timeout=30000)
+            break
+        except Exception:
+            if attempt == 2:
+                raise
     # Wait for the team list to actually render rather than a fixed sleep --
     # under back-to-back runs (many teams checked in one process) the
     # tournament card's fetch can occasionally take longer than a flat
     # timeout, and a fixed sleep that's usually enough becomes an
-    # intermittent "0 candidate buttons" flake under load, not a real bug.
+    # intermittent "0 candidate cards" flake under load, not a real bug.
     try:
-        page.wait_for_selector("button:has-text('SCHEDULE')", timeout=20000)
+        page.wait_for_selector(".team-btn", timeout=20000)
     except Exception:
-        pass  # fall through -- the empty-button-list check below will report it clearly
+        pass  # fall through -- the empty-candidate-list check below will report it clearly
     page.wait_for_timeout(1500)
 
-    # Team names repeat across age groups (e.g. "Trojan Gold" appears once
-    # per division), so don't trust DOM-proximity heuristics to guess the
-    # right button in advance -- self-verify instead: click each
-    # team_label match in turn and check the page's own header (which the
-    # app itself sets authoritatively) confirms both team AND sheet_hint
-    # before accepting it. Robust to DOM layout changes; not to renamed
-    # team/tournament labels, which would need updating here anyway.
-    btns = page.get_by_role("button", name="SCHEDULE").all()
+    # "Trojan " is stripped from both the card label and the destination
+    # header, so match/verify on the distinguishing part only.
+    short_label = re.sub(r'^Trojan\s+', '', team_label, flags=re.IGNORECASE)
+
+    # Team names repeat across age groups (e.g. "Gold" appears once per
+    # division), so don't trust DOM-proximity heuristics to guess the right
+    # card in advance -- self-verify instead: click each candidate in turn
+    # and check the page's own header (which the app itself sets
+    # authoritatively) confirms both team AND sheet_hint before accepting
+    # it. Robust to DOM layout changes; not to renamed team/tournament
+    # labels, which would need updating here anyway.
+    cards = page.locator(".team-btn").all()
     matching_idx = [
-        i for i, b in enumerate(btns)
-        if team_label in b.evaluate(
-            "el => el.closest('div')?.parentElement?.parentElement?.innerText || ''"
-        )
+        i for i, c in enumerate(cards)
+        if short_label.upper() in c.inner_text().upper()
+        and sheet_hint.upper() in c.inner_text().upper()
     ]
     landed = False
     for idx in matching_idx:
-        btns = page.get_by_role("button", name="SCHEDULE").all()  # re-query after any nav
-        btns[idx].click()
+        cards = page.locator(".team-btn").all()  # re-query after any nav
+        cards[idx].click()
         page.wait_for_timeout(15000)  # live sheet fetch can be slow on cold cache
         header = (page.locator("#subnav-title, .header-title, header").first.inner_text()
                   if page.locator("#subnav-title").count() else "")
         if not header:
             header = page.evaluate("() => document.getElementById('subnav-title')?.innerText || ''")
-        if team_label.upper() in header.upper() and sheet_hint.upper() in header.upper():
+        if short_label.upper() in header.upper() and sheet_hint.upper() in header.upper():
             landed = True
             break
         # This app is a client-side SPA (no real history entries) -- use
@@ -109,7 +168,7 @@ def verify_bracket(page, tournament_label: str, team_label: str, sheet_hint: str
         page.wait_for_timeout(2000)
     if not landed:
         check(f"landed on the {team_label!r}/{sheet_hint!r} page", False,
-              f"tried {len(matching_idx)} candidate button(s), header never matched")
+              f"tried {len(matching_idx)} candidate card(s), header never matched")
         return None, None
 
     console_errors = []

@@ -1912,6 +1912,16 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
   // Group by column (new field), falling back to game_num
   const columns = {};
   allGames.forEach(g => {
+    // A TBD placeholder that's also eliminated is a dead branch: the real
+    // result above it already ruled it out (e.g. "if we'd won" once we
+    // lost). It never had a real opponent/time/location to show in the
+    // first place, so once dead it's pure clutter -- drop it from the tree
+    // entirely rather than render a faded "still waiting on results" card
+    // for something that will now never happen. A concretely-named
+    // eliminated game (not a bare placeholder) still renders normally,
+    // just faded via .bracket-eliminated below -- that case still carries
+    // real information (an opponent name) worth keeping visible.
+    if (g.eliminated && g.tbd_stub) return;
     const col = g.column || g.game_num || 1;
     if (!columns[col]) columns[col] = [];
     columns[col].push(g);

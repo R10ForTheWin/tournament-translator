@@ -21,6 +21,7 @@ Requires: pip install playwright Pillow && playwright install chromium
 Baselines live in tests/visual_baselines/*.png (git-committed).
 """
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -52,14 +53,29 @@ def check(label: str, condition: bool, detail: str = "") -> bool:
     return condition
 
 
-def wait_for_server(port: int, timeout: int = 20) -> bool:
+def wait_for_server(port: int, timeout: int = 150, tournament_id: str = "futures-5") -> bool:
+    """Polls /api/tournaments until it both matches has_excel=true for this
+    script's tournament AND comes back fast (< 2s) -- see the identical,
+    fuller comment in tests/verify_bracket_rendering.py's wait_for_server
+    for the full 2026-07-23 investigation. A has_excel match alone isn't
+    enough: this route loops over EVERY known tournament in one request, so
+    a DIFFERENT tournament's own cold-start race can still stall the whole
+    response (and the frontend's page-load fetch) even once ours is warm.
+    Same root cause hit this script too (timed out clicking "Futures
+    Weekend 5" on an empty splash screen even after has_excel looked true)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            urllib.request.urlopen(f"http://localhost:{port}/", timeout=2)
-            return True
+            t0 = time.time()
+            resp = urllib.request.urlopen(f"http://localhost:{port}/api/tournaments", timeout=timeout)
+            data = json.loads(resp.read())
+            elapsed = time.time() - t0
+            t = next((x for x in data if x.get("id") == tournament_id), None)
+            if t and t.get("has_excel") and elapsed < 2.0:
+                return True
         except Exception:
-            time.sleep(1)
+            pass
+        time.sleep(2)
     return False
 
 
@@ -77,8 +93,22 @@ def capture(page, port: int, team: str, sheet: str):
     candidate via the in-app Back button if not. Also needs a real wait for
     the sheet fetch to complete (a short fixed sleep was caught live
     producing a screenshot of a still-spinning loading state)."""
-    page.goto(f"http://localhost:{port}/", wait_until="load")
-    page.get_by_text("Futures Weekend 5", exact=False).first.click()
+    # Retried, not a single fixed-timeout attempt -- confirmed live
+    # 2026-07-23: back-to-back capture() calls in one long-lived process
+    # occasionally hit a slow /api/tournaments response on just this one
+    # reload (the live Google Sheets fetch this route depends on has its
+    # own real-network variance), even after the whole suite's initial
+    # cold-start settling. A second attempt after a fresh reload has always
+    # succeeded in practice; this is strictly more forgiving than before,
+    # never less.
+    for attempt in range(3):
+        page.goto(f"http://localhost:{port}/", wait_until="load")
+        try:
+            page.get_by_text("Futures Weekend 5", exact=False).first.click(timeout=30000)
+            break
+        except Exception:
+            if attempt == 2:
+                raise
     try:
         page.wait_for_selector("button:has-text('SCHEDULE')", timeout=20000)
     except Exception:
@@ -92,13 +122,22 @@ def capture(page, port: int, team: str, sheet: str):
             "el => el.closest('div')?.parentElement?.parentElement?.innerText || ''"
         ).upper()
     ]
+    # "Trojan " was dropped from the destination header in the 2026-07-20 UI
+    # simplification (commit 6b240ad) -- e.g. "Trojan Gold" now shows as just
+    # "16U GOLD" there (every team in this app is a Trojan team, so it was
+    # redundant). The card list text captured above still says "Trojan
+    # Gold" in full (that markup wasn't touched), so only this header check
+    # needs the prefix stripped. Confirmed live 2026-07-23: this script
+    # pre-dates that commit and had never actually run for real since (its
+    # CI job only fires on a live tournament day) -- not a live site bug.
+    short_team = team[len("trojan "):] if team.lower().startswith("trojan ") else team
     landed = False
     for idx in matching:
         btns = page.get_by_role("button", name="SCHEDULE").all()
         btns[idx].click()
         page.wait_for_timeout(15000)  # live sheet fetch can be slow on cold cache
         header = page.evaluate("() => document.getElementById('subnav-title')?.innerText || ''")
-        if team.upper() in header.upper():
+        if short_team.upper() in header.upper():
             landed = True
             break
         page.click("#back-btn")

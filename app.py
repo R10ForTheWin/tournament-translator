@@ -4235,18 +4235,24 @@ def _compute_tree_layout(nodes: list, team: str) -> dict:
         for nid, rank in (n.get("pool_next") or {}).items():
             path_cond[nid] = f"pool_{rank}"
 
-    # eliminated: propagate from played results
+    # eliminated: propagate from played results. A node is only truly
+    # eliminated once EVERY parent that can reach it is itself eliminated --
+    # a node can have more than one real incoming edge (the same multi-
+    # parent-merge shape the column computation above already accounts for:
+    # _append_tbd_stub_chain attaches one shared "continues next day" stub
+    # to every dead-end branch, so a live path and a dead path can both
+    # feed the same downstream placeholder). The previous version just
+    # recursed "mark this node dead, then mark everything downstream of it
+    # dead too" the instant ANY ONE incoming branch died, with no check for
+    # a still-live sibling parent also feeding the same node. Confirmed
+    # live 2026-07-23: this made Trojan Gold 16U's real, still-upcoming
+    # Round 3+ games render as greyed-out "eliminated" placeholders right
+    # after their Round 2 loss, because the dead "if we'd won round 2"
+    # branch and the real, live next game both merge into the same shared
+    # downstream TBD stub -- the dead branch's propagation reached it first
+    # and killed it, even though the actual live game reaches it too.
     eliminated: set = set()
-
-    def _mark_elim(gid: str) -> None:
-        if gid in eliminated:
-            return
-        eliminated.add(gid)
-        nd = node_map.get(gid)
-        if nd:
-            for nid in (nd.get("win_next_ids") or []) + (nd.get("lose_next_ids") or []):
-                _mark_elim(nid)
-
+    seeded: set = set()
     for n in nodes:
         if not n.get("played"):
             continue
@@ -4256,10 +4262,39 @@ def _compute_tree_layout(nodes: list, team: str) -> dict:
         neutral  = win_ids & lose_ids
         if won is True:
             for nid in lose_ids - neutral:
-                _mark_elim(nid)
+                eliminated.add(nid)
+                seeded.add(nid)
         elif won is False:
             for nid in win_ids - neutral:
-                _mark_elim(nid)
+                eliminated.add(nid)
+                seeded.add(nid)
+
+    all_parents_of: dict[str, list] = {n["game_id"]: [] for n in nodes}
+    for n in nodes:
+        for nid in _next_ids(n):
+            if nid in all_parents_of:
+                all_parents_of[nid].append(n["game_id"])
+
+    # Forward propagation in topological order (Kahn's, over the WHOLE
+    # graph this time, not per-segment) -- a node's eliminated status can
+    # only be finalized once every one of its parents already has theirs.
+    in_deg = {gid: len(all_parents_of[gid]) for gid in all_parents_of}
+    topo_q = _dq(gid for gid in all_parents_of if in_deg[gid] == 0)
+    seen_topo = set(topo_q)
+    while topo_q:
+        gid = topo_q.popleft()
+        if gid not in seeded and all_parents_of[gid] and all(p in eliminated for p in all_parents_of[gid]):
+            eliminated.add(gid)
+        nd = node_map.get(gid)
+        if not nd:
+            continue
+        for nid in _next_ids(nd):
+            if nid not in in_deg:
+                continue
+            in_deg[nid] -= 1
+            if in_deg[nid] == 0 and nid not in seen_topo:
+                seen_topo.add(nid)
+                topo_q.append(nid)
 
     return {
         gid: {
@@ -5973,4 +6008,13 @@ threading.Thread(target=_prewarm_url_caches, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    # threaded=True matches production (railway.json runs gunicorn with
+    # --worker-class gthread --threads 8) -- without it, this dev server
+    # handles one request at a time, so a single slow /api/tournaments call
+    # (live, non-past tournaments re-check find_excel/load_and_parse on
+    # every request, no cache) serializes behind every other concurrent
+    # request instead of just delaying its own caller. Confirmed live
+    # 2026-07-23: this made the CI visual-check tests (tests/*.py, which
+    # launch this same "python3 app.py" dev server) intermittently hang on
+    # a later navigation even after the initial cold-start wait passed.
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

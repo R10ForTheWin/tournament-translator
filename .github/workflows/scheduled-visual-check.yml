@@ -1,10 +1,10 @@
 name: Scheduled visual/bracket health check
 
 # Runs the real-browser checks (verify_bracket_rendering.py,
-# visual_regression.py) 3x/day, ONLY on days that fall within a known
-# tournament's date range, and pushes an ntfy alert on failure -- the
-# automated replacement for a human periodically opening the app on their
-# phone and looking at it.
+# visual_regression.py) 2x/day (morning + early afternoon), ONLY on days
+# that fall within a known tournament's date range, and pushes an ntfy
+# alert on failure -- the automated replacement for a human periodically
+# opening the app on their phone and looking at it.
 #
 # Deliberately a SEPARATE scheduled job, not folded into the app's own
 # in-process pre-game monitor (_run_pre_game_sweep in app.py): Playwright +
@@ -22,26 +22,28 @@ name: Scheduled visual/bracket health check
 # Cost note: this repo is PRIVATE, so GitHub Actions minutes are not free.
 # The full check (install Playwright + a real Chromium browser, drive 7
 # teams through real page loads) is genuinely not cheap -- easily 5-10
-# minutes per run. Running it unconditionally every 3 hours, every day,
+# minutes per run. Running it unconditionally around the clock, every day,
 # forever would plausibly burn most of a free-tier monthly minutes
 # allowance on this one workflow. The "gate" job below is the fix: it runs
-# on the SAME 3x/day cron every day (cheap -- checkout + a lightweight pip
+# on the SAME 2x/day cron every day (cheap -- checkout + a lightweight pip
 # install + a date check, no Playwright), but only triggers the expensive
 # job on days that actually fall within a KNOWN_TOURNAMENTS date range.
+# Trimmed from 3x/day to 2x/day 2026-07-23 (was costing real Actions
+# minutes for marginal extra coverage once the checks themselves were
+# proven reliable against a live tournament day).
 #
 # Times are UTC-fixed for PDT (UTC-7) -- correct for Junior Olympics
 # (July) and any other spring/summer tournament. GitHub Actions cron has
 # no timezone/DST awareness, so a tournament during PST (roughly
 # Nov-early Mar) would fire these one hour later than intended in Pacific
-# wall-clock terms (e.g. the "5am" run would actually land at 4am PST).
+# wall-clock terms (e.g. the "8am" run would actually land at 7am PST).
 # None of this app's current tournaments fall in that window except
 # possibly late Feb (futures-2) -- revisit if that ever matters in practice.
 
 on:
   schedule:
-    - cron: "0 12 * * *"   # 5:00 AM PDT
-    - cron: "0 19 * * *"   # 12:00 PM PDT
-    - cron: "0 1 * * *"    # 6:00 PM PDT (previous Pacific calendar day)
+    - cron: "0 15 * * *"   # 8:00 AM PDT
+    - cron: "0 20 * * *"   # 1:00 PM PDT
   workflow_dispatch: {}
 
 jobs:

@@ -1350,6 +1350,83 @@ def test_tree_layout_column_monotonic_invariant() -> int:
     return failures
 
 
+def test_njo_tree_elimination_respects_live_parent() -> int:
+    """A shared downstream node with multiple parents must only be marked
+    eliminated once EVERY one of its parents is itself eliminated -- not the
+    moment any single one of them is.
+
+    Real bug found live 2026-07-23 against Trojan Gold 16U's actual, live
+    2026 Junior Olympics results: won game 1, lost game 2. The dead "if
+    we'd won game 2" branch and the real, still-live game 3 (loser's
+    continuation) both merge into the same shared downstream TBD-stub node
+    (the "continues next day" placeholder chain _append_tbd_stub_chain
+    attaches). The previous _compute_tree_layout recursively marked a node
+    eliminated the instant ANY parent died, with no check for a still-live
+    sibling parent also feeding it -- so the shared node (and everything
+    chained after it) rendered as a greyed-out "eliminated" placeholder
+    even though the team's real, live path reaches it too and those games
+    will genuinely still happen.
+    """
+    failures = 0
+    nodes = [
+        # Game 1: played, WON. Its lose-branch ("dead1") is now impossible.
+        {"game_id": "g1", "src_game_id": None, "date": date(2026, 7, 23), "time": None,
+         "played": True, "white_team": "TROJAN GOLD", "dark_team": "OPP1",
+         "white_score": 10, "dark_score": 5,
+         "win_next_ids": ["g2"], "lose_next_ids": ["dead1"], "pool_next": {}},
+        # Game 2: played, LOST. Its win-branch ("dead2") is now impossible.
+        {"game_id": "g2", "src_game_id": "g1", "date": date(2026, 7, 23), "time": None,
+         "played": True, "white_team": "OPP2", "dark_team": "TROJAN GOLD",
+         "white_score": 10, "dark_score": 9,
+         "win_next_ids": ["dead2"], "lose_next_ids": ["g3"], "pool_next": {}},
+        # Game 3: the team's REAL, still-live next game (loser's continuation).
+        {"game_id": "g3", "src_game_id": "g2", "date": date(2026, 7, 23), "time": None,
+         "played": False, "white_team": "TROJAN GOLD", "dark_team": "OPP3",
+         "win_next_ids": ["tbd0"], "lose_next_ids": ["tbd0"], "pool_next": {}},
+        # The two genuinely dead branches -- both also feed the same shared stub.
+        {"game_id": "dead1", "src_game_id": "g1", "date": date(2026, 7, 23), "time": None,
+         "played": False, "white_team": "TROJAN GOLD", "dark_team": "TBD",
+         "win_next_ids": ["tbd0"], "lose_next_ids": ["tbd0"], "pool_next": {}},
+        {"game_id": "dead2", "src_game_id": "g2", "date": date(2026, 7, 23), "time": None,
+         "played": False, "white_team": "TROJAN GOLD", "dark_team": "TBD",
+         "win_next_ids": ["tbd0"], "lose_next_ids": ["tbd0"], "pool_next": {}},
+        # Shared downstream "continues next day" placeholder chain -- fed by
+        # the real live game (g3) AND both dead branches.
+        {"game_id": "tbd0", "src_game_id": "g3", "date": date(2026, 7, 24), "time": None,
+         "played": False, "white_team": "TROJAN GOLD", "dark_team": "TBD",
+         "win_next_ids": ["tbd1"], "lose_next_ids": ["tbd1"], "pool_next": {}},
+        {"game_id": "tbd1", "src_game_id": "tbd0", "date": date(2026, 7, 25), "time": None,
+         "played": False, "white_team": "TROJAN GOLD", "dark_team": "TBD",
+         "win_next_ids": [], "lose_next_ids": [], "pool_next": {}},
+    ]
+    layout = _compute_tree_layout(nodes, "TROJAN GOLD")
+
+    ok = _check("dead1 (impossible lose-branch of a won game) is eliminated",
+                layout["dead1"]["eliminated"] is True, f"got {layout['dead1']}")
+    if not ok: failures += 1
+
+    ok = _check("dead2 (impossible win-branch of a lost game) is eliminated",
+                layout["dead2"]["eliminated"] is True, f"got {layout['dead2']}")
+    if not ok: failures += 1
+
+    ok = _check("g3 (the real, still-live next game) is NOT eliminated",
+                layout["g3"]["eliminated"] is False, f"got {layout['g3']}")
+    if not ok: failures += 1
+
+    ok = _check(
+        "shared downstream stub fed by both dead branches AND the live game "
+        "is NOT eliminated, since at least one live parent (g3) reaches it",
+        layout["tbd0"]["eliminated"] is False, f"got {layout['tbd0']}")
+    if not ok: failures += 1
+
+    ok = _check(
+        "further downstream stub (parent tbd0, itself not eliminated) is also NOT eliminated",
+        layout["tbd1"]["eliminated"] is False, f"got {layout['tbd1']}")
+    if not ok: failures += 1
+
+    return failures
+
+
 def test_njo_tree_pool_rank_tbd_stub() -> int:
     """When a team's pool has more possible finishing ranks than the sheet
     has literal finish-slot games for, the missing ranks must show as an
