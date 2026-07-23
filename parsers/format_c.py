@@ -171,11 +171,31 @@ def parse(wb) -> list[dict]:
     games: list[dict] = []
     seen_gmids: set[str] = set()
 
+    # A hidden sheet usually means the organizer reseeded/replaced that
+    # division and superseded it with a fresh (visible) sheet, kept around
+    # only for their own reference. Confirmed live 2026-07-22: hidden
+    # "18U_M_Invite 24" held a stale Trojan Gold bracket (wrong opponent/
+    # time/game_id) that api_trojan_teams' "most games wins" sheet-dedup
+    # was picking over the correct, current, visible "18U_M_INVITE_NEW_23".
+    # But NOT every hidden sheet is superseded — some workbooks (e.g. the
+    # 2025 NJO fixture) only ever had a boys division on a hidden tab, no
+    # visible duplicate at all, so a blanket "skip all hidden" would silently
+    # drop those divisions entirely. Only skip a hidden sheet when a visible
+    # sheet already covers the same normalized division (age+gender+event) --
+    # i.e. only when it's genuinely a superseded duplicate, not a sole source.
+    visible_divisions = {
+        _prettify_division(s) for s in wb.sheetnames
+        if s not in SKIP_SHEETS and wb[s].sheet_state == "visible"
+    }
+
     for sheet_name in wb.sheetnames:
         if sheet_name in SKIP_SHEETS:
             continue
 
         ws = wb[sheet_name]
+
+        if ws.sheet_state != "visible" and _prettify_division(sheet_name) in visible_divisions:
+            continue
         all_rows = list(ws.iter_rows(min_row=1, values_only=True))
 
         # Find all header rows — a sheet may have multiple venue blocks
