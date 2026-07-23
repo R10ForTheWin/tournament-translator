@@ -1501,8 +1501,14 @@ _COMPOSITE_POOL_SEED_RE = re.compile(
 _WL_SLOT_RE      = re.compile(r'^[WL]#([^-\s]+)', re.IGNORECASE)   # dash optional (bare W#2 before scores)
 # Accepts "2ndJ-" (no space), "2nd in J-" (worded), and "2ND J-" (bare space,
 # no "in" -- seen live in JO's 10U/12U sheets, e.g. "2ND J- vs 2ND G-";
-# previously unmatched, silently dropping that team's crossover game).
-_FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)(?:\s+in\s+|\s+)?([A-Z])\s*-', re.IGNORECASE)
+# previously unmatched, silently dropping that team's crossover game). Also
+# accepts no trailing hyphen at all -- confirmed live 2026-07-22 in the JO
+# 18U Invite sheet ("3rd A", "2nd A" with no team name and no dash yet, pool
+# A not finished): previously fell through to raw-text display and tripped
+# the bracket-confidence validator's unresolved-slot check (false yellow).
+# Safe because the letter must be the entire rest of the string in that case
+# -- a real team name would have more characters after it.
+_FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)(?:\s+in\s+|\s+)?([A-Z])(?:\s*-|\s*$)', re.IGNORECASE)
 # Composite bracket slots like K4(1stG)- or K4(1stG) — group letter is inside parens
 _COMPOSITE_SLOT_RE = re.compile(r'\(\d+(?:st|nd|rd|th)([A-Z])\)', re.IGNORECASE)
 # Placement games often state their exact final rank as a bare ordinal in the
