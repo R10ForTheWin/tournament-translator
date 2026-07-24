@@ -2,7 +2,7 @@
 Tournament Translator — Flask app
 """
 from __future__ import annotations
-import os, re, json, glob, io, time, base64, random, threading, math, concurrent.futures
+import os, re, json, glob, io, time, base64, random, threading, math, concurrent.futures, heapq
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from functools import lru_cache
@@ -4155,8 +4155,6 @@ def _compute_tree_layout(nodes: list, team: str) -> dict:
     if not roots:
         return {}
 
-    from collections import deque as _dq
-
     def _next_ids(n: dict) -> list:
         return ((n.get("win_next_ids") or []) + (n.get("lose_next_ids") or [])
                 + list((n.get("pool_next") or {}).keys()))
@@ -4234,17 +4232,38 @@ def _compute_tree_layout(nodes: list, team: str) -> dict:
                 if nid in parents_of:
                     parents_of[nid].append(gid)
 
+        # Every node gets its OWN column now -- never share one with any
+        # other node, even true siblings (multiple children of the same
+        # parent) or independent nodes that happen to reach the same
+        # topological depth. Product decision 2026-07-24: a bracket-tree
+        # column used to mean "round depth" (letting a round-robin pool's
+        # multiple simultaneous games, or independent branches at the same
+        # depth, share one column) -- found live to read as a confusing
+        # fork ("either this game or that one") even when both games were
+        # actually guaranteed to happen, back to back. Simpler now: a
+        # column is just "the Nth game scenario", strictly one per column,
+        # so scrolling right always means "the next game", never "the next
+        # round that might contain more than one card". A min-heap
+        # (ordered by date/time, earliest first) replaces the plain deque
+        # so that whenever more than one node is genuinely ready at once
+        # (e.g. two round-robin pool games sharing a parent), they still
+        # get assigned in a deterministic, chronological order instead of
+        # colliding on the same column.
         col_of: dict[str, int] = {}
         remaining = {gid: len(parents_of[gid]) for gid in segment_nodes}
-        ready = _dq(gid for gid in segment_nodes if remaining[gid] == 0)
+        def _ready_key(gid):
+            n = node_map[gid]
+            return (n.get("date") or date.max, n.get("time") or datetime.max.time(), gid)
+        ready: list = [(_ready_key(gid), gid) for gid in segment_nodes if remaining[gid] == 0]
+        heapq.heapify(ready)
         segment_max = col_offset
+        next_col = col_offset
         processed = 0
         while ready:
-            gid = ready.popleft()
-            parent_cols = [col_of[p] for p in parents_of[gid] if p in col_of]
-            col = (max(parent_cols) + 1) if parent_cols else (col_offset + 1)
-            col_of[gid] = col
-            segment_max = max(segment_max, col)
+            _, gid = heapq.heappop(ready)
+            next_col += 1
+            col_of[gid] = next_col
+            segment_max = max(segment_max, next_col)
             processed += 1
             n = node_map.get(gid)
             if not n:
@@ -4253,7 +4272,7 @@ def _compute_tree_layout(nodes: list, team: str) -> dict:
                 if nid in remaining:
                     remaining[nid] -= 1
                     if remaining[nid] == 0:
-                        ready.append(nid)
+                        heapq.heappush(ready, (_ready_key(nid), nid))
         # Defensive: anything left unprocessed means a cycle slipped past
         # _bracket_has_cycle's own check elsewhere -- place it rather than
         # silently drop it, so a real data anomaly still renders (and gets
@@ -4326,6 +4345,7 @@ def _compute_tree_layout(nodes: list, team: str) -> dict:
     # Forward propagation in topological order (Kahn's, over the WHOLE
     # graph this time, not per-segment) -- a node's eliminated status can
     # only be finalized once every one of its parents already has theirs.
+    from collections import deque as _dq
     in_deg = {gid: len(all_parents_of[gid]) for gid in all_parents_of}
     topo_q = _dq(gid for gid in all_parents_of if in_deg[gid] == 0)
     seen_topo = set(topo_q)

@@ -18,7 +18,7 @@ system — every entry encodes a lesson learned the hard way.
 from __future__ import annotations
 import os, sys, re
 from collections import Counter
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -1263,12 +1263,11 @@ def test_njo_tree_slot_code_advancement() -> int:
 
 def test_tree_layout_column_monotonic_invariant() -> int:
     """The bracket tree's column assignment must guarantee every real
-    child's column is strictly greater than its parent's -- and when a node
-    has more than one real parent (the "continues next tournament day" TBD
-    stub attaches to every dead-end branch regardless of depth, so it can
-    have parents at genuinely different depths), its column must be
-    max(all parents' columns) + 1, not just whichever parent a traversal
-    happens to reach it through first.
+    child's column is strictly greater than its parent's, AND that no two
+    nodes ever share a column -- every node gets its own, in chronological
+    (date/time) order among any ties, even a real sibling (multiple direct
+    children of the same parent) or an independent node that happens to
+    reach the same topological depth as another.
 
     Real bug found live 2026-07-20 against the real 2026 Junior Olympics
     18U Champ bracket: reusing the flat schedule's chronological game
@@ -1277,6 +1276,14 @@ def test_tree_layout_column_monotonic_invariant() -> int:
     other -- a long chain of "Lose" connectors between games that had never
     played each other. This test locks in the fix
     (_compute_tree_layout's own depth-based column assignment) directly.
+
+    Product decision 2026-07-24: columns used to be allowed to share a
+    round depth (e.g. two direct children of one parent could both land in
+    "the next column"), which is what this test originally locked in --
+    but a round-robin pool's two back-to-back, both-guaranteed games
+    sharing one column read live as a confusing either/or fork instead of
+    a clear sequence. Updated to require strict uniqueness: every node now
+    gets its own column, one scenario per column, always.
     """
     failures = 0
     nodes = [
@@ -1311,25 +1318,36 @@ def test_tree_layout_column_monotonic_invariant() -> int:
     if not ok: failures += 1
 
     ok = _check(
-        "simple chain: A and D are both column 2 (direct children of root), B and C are column 3",
-        layout["A"]["column"] == 2 and layout["D"]["column"] == 2
-        and layout["B"]["column"] == 3 and layout["C"]["column"] == 3,
-        f"got A={layout['A']['column']} D={layout['D']['column']} "
-        f"B={layout['B']['column']} C={layout['C']['column']}",
+        "direct children of the same parent (A, D) still each get their own column, not a shared one",
+        layout["A"]["column"] != layout["D"]["column"]
+        and layout["A"]["column"] > layout["R1"]["column"]
+        and layout["D"]["column"] > layout["R1"]["column"],
+        f"got A={layout['A']['column']} D={layout['D']['column']} (root={layout['R1']['column']})",
     )
     if not ok: failures += 1
 
     ok = _check(
-        "shared multi-parent node uses max(parent columns) + 1, not whichever parent is reached first",
-        layout["SHARED"]["column"] == 4,
-        f"expected 4 (parents are B=3 and D=2, so max+1=4), got {layout['SHARED']['column']}",
+        "every node across the whole layout has a column strictly greater than all its real parents",
+        layout["B"]["column"] > layout["A"]["column"]
+        and layout["C"]["column"] > layout["A"]["column"]
+        and layout["SHARED"]["column"] > layout["B"]["column"]
+        and layout["SHARED"]["column"] > layout["D"]["column"],
+        f"got A={layout['A']['column']} B={layout['B']['column']} C={layout['C']['column']} "
+        f"D={layout['D']['column']} SHARED={layout['SHARED']['column']}",
     )
     if not ok: failures += 1
 
     ok = _check(
         "independent second segment starts after the first segment's deepest column, not overlapping at column 1",
-        layout["R2"]["column"] == 5,
-        f"expected 5 (first segment's deepest column is SHARED=4), got {layout['R2']['column']}",
+        layout["R2"]["column"] > layout["SHARED"]["column"],
+        f"expected > {layout['SHARED']['column']} (first segment's deepest column), got {layout['R2']['column']}",
+    )
+    if not ok: failures += 1
+
+    ok = _check(
+        "no two nodes anywhere in the layout share a column",
+        len({v['column'] for v in layout.values()}) == len(layout),
+        f"columns: { {gid: v['column'] for gid, v in layout.items()} }",
     )
     if not ok: failures += 1
 
@@ -1345,6 +1363,59 @@ def test_tree_layout_column_monotonic_invariant() -> int:
                 bad_edges.append((n["game_id"], nid, pcol, ccol))
     ok = _check("every edge has child column > parent column",
                 not bad_edges, f"violations: {bad_edges}")
+    if not ok: failures += 1
+
+    return failures
+
+
+def test_tree_layout_round_robin_siblings_get_sequential_columns() -> int:
+    """Two direct children of the same parent that are BOTH guaranteed
+    real games (a round-robin pool's back-to-back pairings, not mutually
+    exclusive win/lose alternatives) must land in separate, chronologically
+    ordered columns -- never the same one.
+
+    Real bug found live 2026-07-24 against Trojan Gold 16U's actual 2026
+    Junior Olympics bracket: after losing Round 3, the team's two real
+    Friday pool games (both seeded directly off that same loss, via the
+    same composite slot code resolving to multiple games -- see
+    _resolve_slot_code_games) landed in the same tree column and drew as a
+    fork with two "Lose" branches from one card, reading as "you go one
+    way or the other" when really both games happen, in this order.
+    """
+    failures = 0
+    nodes = [
+        {"game_id": "g1", "src_game_id": None, "date": date(2026, 7, 23), "time": time(7, 50),
+         "played": True, "white_team": "TROJAN GOLD", "dark_team": "OPP1",
+         "white_score": 10, "dark_score": 5,
+         "win_next_ids": ["g2"], "lose_next_ids": [], "pool_next": {}},
+        {"game_id": "g2", "src_game_id": "g1", "date": date(2026, 7, 23), "time": time(12, 0),
+         "played": True, "white_team": "OPP2", "dark_team": "TROJAN GOLD",
+         "white_score": 10, "dark_score": 9,
+         "win_next_ids": [], "lose_next_ids": ["g3"], "pool_next": {}},
+        {"game_id": "g3", "src_game_id": "g2", "date": date(2026, 7, 23), "time": time(17, 50),
+         "played": False, "white_team": "TROJAN GOLD", "dark_team": "OPP3",
+         "win_next_ids": [], "lose_next_ids": ["fri_early", "fri_late"], "pool_next": {}},
+        {"game_id": "fri_early", "src_game_id": "g3", "date": date(2026, 7, 24), "time": time(8, 40),
+         "played": False, "white_team": "TROJAN GOLD", "dark_team": "CIU BLUE",
+         "win_next_ids": [], "lose_next_ids": [], "pool_next": {}},
+        {"game_id": "fri_late", "src_game_id": "g3", "date": date(2026, 7, 24), "time": time(12, 0),
+         "played": False, "white_team": "TROJAN GOLD", "dark_team": "ASPHALT GREEN",
+         "win_next_ids": [], "lose_next_ids": [], "pool_next": {}},
+    ]
+    layout = _compute_tree_layout(nodes, "TROJAN GOLD")
+
+    ok = _check(
+        "the two round-robin sibling games do not share a column",
+        layout["fri_early"]["column"] != layout["fri_late"]["column"],
+        f"both landed in column {layout['fri_early']['column']}",
+    )
+    if not ok: failures += 1
+
+    ok = _check(
+        "the earlier-time sibling (8:40 AM) gets the earlier column",
+        layout["fri_early"]["column"] < layout["fri_late"]["column"],
+        f"got fri_early={layout['fri_early']['column']} fri_late={layout['fri_late']['column']}",
+    )
     if not ok: failures += 1
 
     return failures

@@ -1963,14 +1963,20 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
 
     const colGames = columns[col];
 
-    // Round header -- this is the tree's own depth-based round number, not
-    // the flat schedule's chronological "Game N" (they're deliberately
-    // different numbers now, see the column-assignment comment in
-    // _compute_tree_layout/app.py). Each card still shows its own real
-    // game-id badge, which is what cross-references against the schedule.
+    // Column header -- this is the tree's own sequential column number
+    // (_compute_tree_layout in app.py assigns exactly one node per column,
+    // never more, as of 2026-07-24: what used to be grouped as one "round"
+    // could contain more than one simultaneous game -- e.g. a round-robin
+    // pool's back-to-back pairings -- which read as an ambiguous fork
+    // rather than a clear sequence). "Game N" here, not the flat
+    // schedule's own chronological "Game N" label (they're deliberately
+    // different numbers -- this one is this team's Nth bracket-tree
+    // scenario, that one is the tournament's own numbering). Each card
+    // still shows its own real game-id badge, which is what
+    // cross-references against the schedule.
     const numHdr = document.createElement('div');
     numHdr.className = 'bracket-game-num-header';
-    numHdr.textContent = `Round ${col}`;
+    numHdr.textContent = `Game ${col}`;
     step.appendChild(numHdr);
 
     const pc = g => g.path_condition ?? g.path;
@@ -2045,6 +2051,28 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
 
   requestAnimationFrame(() => {
     drawBracketLines(inner, columns, colNums);
+
+    // Auto-scroll to the current/next game's column instead of always
+    // starting at column 1 -- by mid-tournament a team can be many
+    // columns deep, and re-scrolling from the very start every time the
+    // view opens was real, repeated friction (2026-07-24). The first
+    // column (in ascending order) containing either a live game or one
+    // not yet played is the target; a fully-finished tournament (nothing
+    // left unplayed) simply leaves the view at its default start.
+    const targetColIdx = colNums.findIndex(col =>
+      columns[col].some(g => g.is_current || g.played === false)
+    );
+    if (targetColIdx !== -1) {
+      const steps = inner.querySelectorAll('.bracket-step');
+      const targetStep = steps[targetColIdx];
+      if (targetStep) {
+        const innerRect = inner.getBoundingClientRect();
+        const stepLeft  = targetStep.getBoundingClientRect().left - innerRect.left;
+        // Leave the previous column partly visible for context instead of
+        // snapping the target column flush to the left edge.
+        wrap.scrollLeft = Math.max(0, stepLeft - CARD_W * 0.35);
+      }
+    }
 
     // Stretch the swipeable region down toward the fixed Feedback button so a
     // horizontal drag that starts below the last card row still lands inside
