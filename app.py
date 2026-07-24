@@ -566,8 +566,18 @@ _PREFIX_RE = re.compile(
     # live in the real 2026 Junior Olympics sheet, unresolved as of
     # 2026-07-14 but due to resolve to a real team name (including one of
     # our own) as pool play concludes.
+    #
+    # The bracket-position branch (composite pool-slot + parenthetical game
+    # reference, e.g. "K1(2ndB)-TEAM") needed the identical (?:_[A-Z]+)?
+    # extension: found live 2026-07-23 as pool play actually started
+    # resolving these on the real sheet -- "NI_B1(W18)-TROJAN GOLD" and
+    # "PT_P3(W44)-TROJAN CARDINAL" (compound bracket-position code, letters
+    # + underscore + letter + digit, not just letters + digit) went
+    # un-stripped the same way and surfaced as two literal phantom "team"
+    # buttons on the home screen team list, right next to the real Trojan
+    # Gold/Cardinal buttons.
     r"^(?:\d+(?:st|nd|rd|th)\s*(?:in\s+)?[A-Z]+(?:_[A-Z]+)?\s*(?:\([^)]+\)\s*)?-\s*"
-    r"|[A-Z]+\d+\s*\([^)]+\)\s*-\s*|[WL]\s*#\s*\d+\s*-?\s*|[A-Z]+\d+\s*-\s*|\d+\s*-\s*)(.*)",
+    r"|[A-Z]+(?:_[A-Z]+)?\d+\s*\([^)]+\)\s*-\s*|[WL]\s*#\s*\d+\s*-?\s*|[A-Z]+\d+\s*-\s*|\d+\s*-\s*)(.*)",
     re.IGNORECASE,
 )
 
