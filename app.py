@@ -6054,6 +6054,53 @@ def _prewarm_url_caches():
 threading.Thread(target=_prewarm_url_caches, daemon=True).start()
 
 
+def _keep_live_tournaments_warm():
+    """Periodically re-fetch each CURRENTLY LIVE tournament's URL in the
+    background, so its cache never goes stale purely from a quiet traffic
+    lull. _fetch_url's stale-while-revalidate design only refreshes an
+    expired cache entry when a real request happens to land after it
+    expires -- during a low-traffic window (overnight, early morning) that
+    can simply not happen for hours, leaving whoever opens the app next
+    stuck looking at a very stale schedule until their own request
+    kicks off a refresh. Confirmed live 2026-07-24: Junior Olympics sat
+    9+ hours stale overnight (last successful fetch ~9:44 PM, nobody's
+    request touched it again until a parent opened the app at 6:39 AM),
+    which _prewarm_url_caches alone cannot fix since that only ever runs
+    once, at server boot.
+
+    Scoped to tournaments currently within their own date_start/date_end
+    window, not every preset tournament forever -- a finished
+    tournament's sheet will never change again, so refetching it on a
+    schedule would only add unnecessary load and rate-limit risk (the
+    same live Google Sheets endpoint got rate-limited earlier today from
+    unrelated heavy manual testing) for zero benefit."""
+    import time as _time
+    _time.sleep(120)  # let the one-time prewarm above finish first
+    while True:
+        try:
+            today = datetime.now(ZoneInfo('America/Los_Angeles')).date()
+            for tid in sorted(PRESET_URL_TOURNAMENTS):
+                meta = _tournament_meta(tid)
+                if not meta or "date_start" not in meta:
+                    continue
+                if not (meta["date_start"] <= today <= meta["date_end"]):
+                    continue
+                try:
+                    excel = find_excel(tid)
+                    if excel:
+                        load_and_parse(excel)
+                        print(f"[keep-warm] {tid}: refreshed", flush=True)
+                except Exception as exc:
+                    print(f"[keep-warm] {tid} failed: {exc}", flush=True)
+        except Exception as exc:
+            print(f"[keep-warm] loop error: {exc}", flush=True)
+        # Comfortably inside URL_CACHE_TTL (300s) so a tournament's cache
+        # never actually reaches "expired" in the first place.
+        _time.sleep(240)
+
+threading.Thread(target=_keep_live_tournaments_warm, daemon=True).start()
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
     # threaded=True matches production (railway.json runs gunicorn with
