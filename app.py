@@ -3990,7 +3990,16 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
         "ni_D3", see _resolve_slot_code_games) that this slot matches --
         the third legitimate advancement mechanism alongside WIN/LOS GM #N
         and plain W#/L#, for formats that seed a winner/loser directly into
-        a later group-stage slot rather than a single numbered game."""
+        a later group-stage slot rather than a single numbered game.
+
+        Mirrors _resolve_slot_code_games's own matching exactly -- must
+        also accept a code immediately followed by a parenthetical (e.g.
+        "AG_T1(W51)"), not just a hyphenated team name. Missing this here
+        (even after fixing _resolve_slot_code_games itself) meant the tree
+        builder successfully found these games, but this validator still
+        did not recognize the same match and downgraded the whole bracket
+        to red as a "foreign game" -- found live 2026-07-23, same
+        investigation, right after the tree-builder fix above."""
         parent = _node_by_id.get(node.get("src_game_id"))
         if not parent:
             return False
@@ -3998,7 +4007,7 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
         for code in (parent.get("w_to"), parent.get("l_to")):
             if isinstance(code, str):
                 c = code.strip().upper()
-                if c and (s == c or s.startswith(c + "-")):
+                if c and (s == c or s.startswith(c + "-") or s.startswith(c + "(")):
                     return True
         return False
     for n in nodes:
