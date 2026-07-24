@@ -1325,14 +1325,32 @@ def describe_slot(slot: str, division_games: list = None, ref_date=None) -> str:
         # Also handles WPL championship format: "WIN GM #N" / "LOS GM #N"
         wm = re.match(r'^([WL])#([^-\s]+)', slot, re.IGNORECASE)
         win_gm = re.search(r'\b(WIN|LOS)\s+GM\s+#(\d+)', slot, re.IGNORECASE) if not wm else None
-        if wm or win_gm:
+        # Composite bracket-position/tier-pool code whose ENTIRE remaining
+        # content is a game-reference parenthetical with no team name filled
+        # in yet, e.g. "AG_T2(W59)" -- the organizer already seeded next
+        # round's slot with a self-referential composite ("whoever becomes
+        # AG_T2, i.e. whoever wins game 59") before that game has been
+        # played, so there is genuinely no resolved name to show yet. Same
+        # shape describe_slot already handles for plain "W#59"/"L#59" text,
+        # just wrapped in a composite code instead -- found live 2026-07-23
+        # while tracing why Friday's hypothetical bracket did not render for
+        # Trojan Gold 16U even though the organizer had already published
+        # Friday's real game rows (_resolve_slot_code_games's own fix, same
+        # investigation, is what makes these rows reachable in the tree at
+        # all; this is what makes their opponent text readable once reached).
+        code_gm = (re.match(r'^[A-Z]+(?:_[A-Z]+)?\d*\s*\(([WL])(\d+)\)\s*$', slot, re.IGNORECASE)
+                   if not (wm or win_gm) else None)
+        if wm or win_gm or code_gm:
             if wm:
                 want_winner = wm.group(1).upper() == "W"
                 ref = re.search(r'(\d+)$', wm.group(2))
                 ref_num = str(int(ref.group(1))) if ref else None
-            else:
+            elif win_gm:
                 want_winner = win_gm.group(1).upper() == "WIN"
                 ref_num = str(int(win_gm.group(2)))
+            else:
+                want_winner = code_gm.group(1).upper() == "W"
+                ref_num = str(int(code_gm.group(2)))
             if ref_num:
                 ref_game = _game_by_num(ref_num, dg)
                 if ref_game:
@@ -1561,7 +1579,18 @@ def _resolve_slot_code_games(code: str, division_games: list) -> list:
     numbered game). A code can legitimately match more than one game -- e.g.
     a 3-team round-robin sub-bracket plays every team against every other,
     so "NI_D3" appears in two separate games (vs NI_D1 and vs NI_D2) -- so
-    this returns every match, not just the first."""
+    this returns every match, not just the first.
+
+    Also matches a code immediately followed by a parenthetical (e.g.
+    "AG_T1(W51)"), not just a hyphenated team name -- the organizer's sheet
+    can seed a future round's slot with only a self-referential composite
+    reference and no resolved opponent at all yet ("whoever becomes AG_T1,
+    which is whoever wins game 51"), with nothing between the code and the
+    parenthesis. Missing this meant the app fell back to a generic, empty
+    "TBD" placeholder for these games even when the real sheet already had
+    the actual game rows entered -- found live 2026-07-23 while checking
+    why Friday's hypothetical bracket wasn't showing for Trojan Gold 16U,
+    even though the organizer had already published Friday's structure."""
     code_norm = code.strip().upper()
     if not code_norm:
         return []
@@ -1569,7 +1598,7 @@ def _resolve_slot_code_games(code: str, division_games: list) -> list:
     for g in division_games:
         for slot in (g["white_team"], g["dark_team"]):
             s = slot.strip().upper()
-            if s == code_norm or s.startswith(code_norm + "-"):
+            if s == code_norm or s.startswith(code_norm + "-") or s.startswith(code_norm + "("):
                 matches.append(g)
                 break
     return matches
