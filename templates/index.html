@@ -2216,17 +2216,31 @@ function drawBracketLines(inner, rounds, roundNums) {
   // scoped to each pair's own immediately-preceding step, which is what
   // keeps every already-correct adjacent case pixel-identical to before.
   const globalById = {};
-  stepArr.forEach(step => {
+  // Bottom lane for the non-adjacent-column detour below -- the lowest
+  // point any real card reaches, plus a margin. Deliberately BELOW rather
+  // than above all content: the space below the last card row is already
+  // known-blank by construction (see the wrap min-height stretch comment
+  // elsewhere in this file, which exists specifically because that area is
+  // empty padding down to the Feedback button), so routing through it can
+  // never cross a "GAME N" header label or a card, unlike a lane placed
+  // above everything.
+  let maxCardBottom = 0;
+  stepArr.forEach((step, stepIdx) => {
     step.querySelectorAll('.game-card').forEach(c => {
       if (!c.dataset.gameId) return;
       const r = c.getBoundingClientRect();
+      const sy = r.top - innerRect.top + r.height / 2;
+      const bottom = r.top - innerRect.top + r.height;
+      if (bottom > maxCardBottom) maxCardBottom = bottom;
       globalById[c.dataset.gameId] = {
         card: c,
-        sy: r.top - innerRect.top + r.height / 2,
+        sy,
         sx: r.right - innerRect.left,
+        stepIdx,
       };
     });
   });
+  const detourLaneY = maxCardBottom + 28;
 
   for (let i = 0; i < stepArr.length - 1; i++) {
     const fromStep = stepArr[i];
@@ -2294,7 +2308,7 @@ function drawBracketLines(inner, rounds, roundNums) {
     });
 
     resolved.forEach(({ toCard, tx, ty, from }) => {
-      const { card: fromCard, sy, sx } = from;
+      const { card: fromCard, sy, sx, stepIdx: fromStepIdx } = from;
       const srcIdx = sourceOrder.indexOf(fromCard);
       // Bend point baseline is the ACTUAL matched source's own right edge
       // (+160, half the standard 320px column gap), not an iteration-wide
@@ -2311,8 +2325,31 @@ function drawBracketLines(inner, rounds, roundNums) {
       // fork point once they stopped being adjacent. Found live 2026-07-25.
       const gx = (sx + 160) + (srcIdx - (sourceOrder.length - 1) / 2) * 14;
 
+      // A source found via globalById (not this pair's own immediately-
+      // preceding step) can be more than one column back once dead
+      // branches are filtered from the DOM. The adjacent-column bend
+      // logic below has no notion of "columns in between" -- it only
+      // looks at sx/sy/tx/ty -- so when the skipped column(s) happen to
+      // sit at a similar height, the ordinary same-height or gentle-bend
+      // paths cut straight through whatever real cards occupy them.
+      // Route those specifically through a dedicated detour lane below
+      // every card in the tree instead: that space is already known-blank
+      // by construction (see the wrap min-height stretch comment above,
+      // which exists because that area is empty padding down to the
+      // Feedback button), so a path through it can never cross a card or
+      // a "GAME N" header regardless of how many columns are skipped.
+      // Confirmed live 2026-07-25: without this, a connector between
+      // Trojan Gold 16U's game 131 and game 188 (six columns apart after
+      // several branch fixes let the tree reach that far) rendered as one
+      // unbroken ~5000px line straight across the entire bracket.
+      const toStepIdxActual = i + 1;
+      const isAdjacent = (toStepIdxActual - fromStepIdx) <= 1;
+
       let d;
-      if (Math.abs(ty - sy) < R * 2) {
+      if (!isAdjacent) {
+        d = `M ${sx},${sy} V ${detourLaneY - R} Q ${sx},${detourLaneY} ${sx + R},${detourLaneY} `
+          + `H ${tx - R} Q ${tx},${detourLaneY} ${tx},${detourLaneY - R} V ${ty}`;
+      } else if (Math.abs(ty - sy) < R * 2) {
         d = `M ${sx},${sy} H ${tx}`;
       } else if (ty > sy) {
         d = `M ${sx},${sy} H ${gx - R} Q ${gx},${sy} ${gx},${sy + R} V ${ty - R} Q ${gx},${ty} ${gx + R},${ty} H ${tx}`;
@@ -2359,7 +2396,14 @@ function drawBracketLines(inner, rounds, roundNums) {
 
       const pillLabel = [condPart, timePart].filter(Boolean).join(' · ') || null;
       if (pillLabel) {
-        pendingPills.push({ mx: (gx + R + tx) / 2, my: ty, label: pillLabel });
+        // Detoured connectors run through the bottom lane, not near ty --
+        // anchor the pill to the lane itself so it sits on the visible
+        // line instead of floating near unrelated cards above it.
+        if (!isAdjacent) {
+          pendingPills.push({ mx: (sx + tx) / 2, my: detourLaneY, label: pillLabel });
+        } else {
+          pendingPills.push({ mx: (gx + R + tx) / 2, my: ty, label: pillLabel });
+        }
       }
     });
   }
