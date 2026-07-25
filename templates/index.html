@@ -2241,6 +2241,19 @@ function drawBracketLines(inner, rounds, roundNums) {
     });
   });
   const detourLaneY = maxCardBottom + 28;
+  // Every detoured connector sharing one fixed detourLaneY visually merges
+  // separate connectors into what reads as a single continuous line once
+  // more than one is active in the same region -- confirmed live
+  // 2026-07-25 (screenshot showed two genuinely distinct connectors,
+  // "Win 11h" and "Lose 19h", appearing to run along one shared trunk
+  // line with no visible separation). Stagger concurrent detours across a
+  // small set of lanes below the base line so nearby ones are visibly
+  // distinct, cycling rather than growing unbounded since exact overlap
+  // between any two specific detours is rare -- this only needs to break
+  // the common case of two or three being active near each other.
+  let _detourLaneCount = 0;
+  const DETOUR_LANE_STEP = 16;
+  const DETOUR_LANE_CYCLE = 5;
 
   for (let i = 0; i < stepArr.length - 1; i++) {
     const fromStep = stepArr[i];
@@ -2344,11 +2357,13 @@ function drawBracketLines(inner, rounds, roundNums) {
       // unbroken ~5000px line straight across the entire bracket.
       const toStepIdxActual = i + 1;
       const isAdjacent = (toStepIdxActual - fromStepIdx) <= 1;
+      const thisLaneY = detourLaneY + (_detourLaneCount % DETOUR_LANE_CYCLE) * DETOUR_LANE_STEP;
+      if (!isAdjacent) _detourLaneCount++;
 
       let d;
       if (!isAdjacent) {
-        d = `M ${sx},${sy} V ${detourLaneY - R} Q ${sx},${detourLaneY} ${sx + R},${detourLaneY} `
-          + `H ${tx - R} Q ${tx},${detourLaneY} ${tx},${detourLaneY - R} V ${ty}`;
+        d = `M ${sx},${sy} V ${thisLaneY - R} Q ${sx},${thisLaneY} ${sx + R},${thisLaneY} `
+          + `H ${tx - R} Q ${tx},${thisLaneY} ${tx},${thisLaneY - R} V ${ty}`;
       } else if (Math.abs(ty - sy) < R * 2) {
         d = `M ${sx},${sy} H ${tx}`;
       } else if (ty > sy) {
@@ -2400,7 +2415,7 @@ function drawBracketLines(inner, rounds, roundNums) {
         // anchor the pill to the lane itself so it sits on the visible
         // line instead of floating near unrelated cards above it.
         if (!isAdjacent) {
-          pendingPills.push({ mx: (sx + tx) / 2, my: detourLaneY, label: pillLabel });
+          pendingPills.push({ mx: (sx + tx) / 2, my: thisLaneY, label: pillLabel });
         } else {
           pendingPills.push({ mx: (gx + R + tx) / 2, my: ty, label: pillLabel });
         }
