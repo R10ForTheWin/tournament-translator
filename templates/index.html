@@ -1974,9 +1974,20 @@ function buildBracketView(allGames, tournamentId, team, ourName) {
     // scenario, that one is the tournament's own numbering). Each card
     // still shows its own real game-id badge, which is what
     // cross-references against the schedule.
+    //
+    // Labeled by POSITION within colNums (idx + 1), not the raw column
+    // number itself -- a dead (eliminated) branch is filtered out of
+    // `columns` entirely before this point (see the allGames.forEach
+    // filter above), so its column number is simply never used by any
+    // visible step, leaving a gap in the raw sequence (e.g. real games
+    // land on columns 1, 2, 3, 6, 7...). Using the raw column value
+    // directly showed those gaps as confusing skips in the visible
+    // numbering (Game 1, 2, 3, then suddenly Game 6) -- found live
+    // 2026-07-25. colNums only ever contains columns that survived
+    // filtering, so its own position is already the correct dense count.
     const numHdr = document.createElement('div');
     numHdr.className = 'bracket-game-num-header';
-    numHdr.textContent = `Game ${col}`;
+    numHdr.textContent = `Game ${idx + 1}`;
     step.appendChild(numHdr);
 
     const pc = g => g.path_condition ?? g.path;
@@ -2189,6 +2200,34 @@ function drawBracketLines(inner, rounds, roundNums) {
   const stepArr = Array.from(steps);
   const pendingPills = [];
 
+  // Registry of EVERY card in EVERY step, not just the immediately
+  // preceding one -- a card's real source (src_game_id) is no longer
+  // guaranteed to be exactly one step back now that a dead (eliminated)
+  // branch is filtered out of rendering entirely (see the allGames.forEach
+  // filter in buildBracketView): filtering removes whole columns from the
+  // DOM, so what used to be the adjacent column can now be several steps
+  // back. Found live 2026-07-25: Trojan Gold 16U's two round-robin Friday
+  // games (both real children of the same Thursday loss, not of each
+  // other) fell back to nearest-neighbour and drew a misleading connector
+  // -- with an accurate-sounding but misplaced "Lose" pill -- straight
+  // between themselves instead of each independently connecting back to
+  // their actual shared parent. Used only to widen the source SEARCH; the
+  // bend-point (gxBase) and fan-out grouping below are unchanged and still
+  // scoped to each pair's own immediately-preceding step, which is what
+  // keeps every already-correct adjacent case pixel-identical to before.
+  const globalById = {};
+  stepArr.forEach(step => {
+    step.querySelectorAll('.game-card').forEach(c => {
+      if (!c.dataset.gameId) return;
+      const r = c.getBoundingClientRect();
+      globalById[c.dataset.gameId] = {
+        card: c,
+        sy: r.top - innerRect.top + r.height / 2,
+        sx: r.right - innerRect.left,
+      };
+    });
+  });
+
   for (let i = 0; i < stepArr.length - 1; i++) {
     const fromStep = stepArr[i];
     const toStep   = stepArr[i + 1];
@@ -2203,8 +2242,6 @@ function drawBracketLines(inner, rounds, roundNums) {
     });
     const fromById = {};
     fromMids.forEach(fm => { if (fm.card.dataset.gameId) fromById[fm.card.dataset.gameId] = fm; });
-    // All cards in the same step share the same right edge, so gx is constant
-    const gxBase = fromMids[0].sx + 160; // midpoint of the 320px gap between columns
     const R = 7;
     const toCardsArr = Array.from(toCards);
 
@@ -2231,17 +2268,19 @@ function drawBracketLines(inner, rounds, roundNums) {
       // win/lose children render adjacent to it) but diverge once a column
       // merges children of DIFFERENT parents that happen to share one game
       // number -- nearest-neighbour then silently draws the wrong edge with
-      // the wrong Win/Lose label. As of 2026-07-20 the backend guarantees
-      // every real child's column is exactly its parent's column + 1 (see
-      // _compute_tree_layout in app.py), so srcId should always resolve to
-      // a card in the immediately preceding column here -- this fallback is
-      // now a pure defensive safety net, not an expected code path. Warn
-      // loudly if it ever fires for real data, since a silent fallback here
-      // is exactly how this bug class went unnoticed for as long as it did.
+      // the wrong Win/Lose label. Searched against globalById (every card
+      // in every step), not just this pair's own fromById -- a real parent
+      // can be more than one step back once a dead branch between them is
+      // filtered out of rendering entirely (see globalById's own comment
+      // above). The nearest-neighbour fallback below is now a pure
+      // defensive safety net for a genuinely unexpected data anomaly, not
+      // an expected code path. Warn loudly if it ever fires for real data,
+      // since a silent fallback here is exactly how this bug class went
+      // unnoticed for as long as it did.
       const srcId = toCard.dataset.srcGameId;
-      const matched = srcId && fromById[srcId];
+      const matched = srcId && globalById[srcId];
       if (!matched && srcId) {
-        console.warn(`[bracket-lines] ${toCard.dataset.gameId}: srcGameId ${srcId} not found in the preceding column -- falling back to nearest-neighbour, which may draw a misleading connector. This should not happen; check _compute_tree_layout.`);
+        console.warn(`[bracket-lines] ${toCard.dataset.gameId}: srcGameId ${srcId} not found anywhere in the rendered tree -- falling back to nearest-neighbour, which may draw a misleading connector. This should not happen; check _compute_tree_layout.`);
       }
       const from = matched || fromMids.reduce((best, fm) =>
         Math.abs(fm.sy - ty) < Math.abs(best.sy - ty) ? fm : best
@@ -2257,7 +2296,20 @@ function drawBracketLines(inner, rounds, roundNums) {
     resolved.forEach(({ toCard, tx, ty, from }) => {
       const { card: fromCard, sy, sx } = from;
       const srcIdx = sourceOrder.indexOf(fromCard);
-      const gx = gxBase + (srcIdx - (sourceOrder.length - 1) / 2) * 14;
+      // Bend point baseline is the ACTUAL matched source's own right edge
+      // (+160, half the standard 320px column gap), not an iteration-wide
+      // constant -- ties every connector's bend point to which card it
+      // truly comes from. In the ordinary adjacent case this is identical
+      // to before (every card in one step shares the same right edge, so
+      // this reduces to the same value for all of them). It also now
+      // correctly unifies the bend point for two children of the SAME
+      // source that land in different columns entirely (round-robin
+      // siblings, e.g. two pool games both seeded off one earlier result):
+      // previously each was computed from whichever arbitrary step
+      // happened to be "one column back" for its OWN iteration, so a
+      // shared parent's two real children no longer shared one clean
+      // fork point once they stopped being adjacent. Found live 2026-07-25.
+      const gx = (sx + 160) + (srcIdx - (sourceOrder.length - 1) / 2) * 14;
 
       let d;
       if (Math.abs(ty - sy) < R * 2) {

@@ -1519,7 +1519,19 @@ def _build_division_rounds(division_games: list) -> dict[str, int]:
 
     return rounds
 
-_POOL_SLOT_RE    = re.compile(r'^([A-Z])(\d+)-(.+)', re.IGNORECASE)
+# [A-Z]+(?:_[A-Z])? (not a bare [A-Z]) so this also matches a compound
+# tier_pool code, e.g. "BZ_M3(L51)-TROJAN GOLD" (tier "BZ" + pool "M"),
+# not just a plain single-letter pool like "M3-TROJAN GOLD". The optional
+# trailing (?:\([^)]*\))? covers the same code with its parenthetical
+# game-reference still attached. Both forms are a strict superset of the
+# old pattern -- every previously-matching input matches identically,
+# unchanged. Found live 2026-07-25: this shape went completely
+# unrecognized as a pool-membership slot, so the app never learned which
+# pool group Trojan Gold 16U was actually in, and silently never found
+# the real 3rd (placement) game that a completed 3-team round-robin pool
+# produces once both round-robin games are played -- a parent needed that
+# game before it happened, not after.
+_POOL_SLOT_RE    = re.compile(r'^([A-Z]+(?:_[A-Z])?)(\d+)(?:\([^)]*\))?-(.+)', re.IGNORECASE)
 # WPL championship-weekend crossover pool seed: "G2 (WIN GM #409) - SAN CLEMENTE" —
 # the seed's team comes from a previous round's result, not a fixed name. Same
 # capture-group layout as _POOL_SLOT_RE (letter, seed num, name) so callers can
@@ -1536,7 +1548,13 @@ _WL_SLOT_RE      = re.compile(r'^[WL]#([^-\s]+)', re.IGNORECASE)   # dash option
 # the bracket-confidence validator's unresolved-slot check (false yellow).
 # Safe because the letter must be the entire rest of the string in that case
 # -- a real team name would have more characters after it.
-_FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)(?:\s+in\s+|\s+)?([A-Z])(?:\s*-|\s*$)', re.IGNORECASE)
+#
+# [A-Z]+(?:_[A-Z])? (not a bare [A-Z]) for the same reason as _POOL_SLOT_RE
+# above: a compound tier_pool code needs its own finish-slot to match too,
+# e.g. "3RD BZ_M-" (the placement game for whoever finishes 3rd in pool
+# "BZ_M"), not just "3rd M-". Strict superset of the old pattern -- every
+# previously-matching single-letter input still matches identically.
+_FINISH_SLOT_RE  = re.compile(r'^\d+(?:st|nd|rd|th)(?:\s+in\s+|\s+)?([A-Z]+(?:_[A-Z])?)(?:\s*-|\s*$)', re.IGNORECASE)
 # Composite bracket slots like K4(1stG)- or K4(1stG) — group letter is inside parens
 _COMPOSITE_SLOT_RE = re.compile(r'\(\d+(?:st|nd|rd|th)([A-Z])\)', re.IGNORECASE)
 # Placement games often state their exact final rank as a bare ordinal in the
