@@ -1462,6 +1462,22 @@ def describe_slot(slot: str, division_games: list = None, ref_date=None) -> str:
     return slot
 
 def _game_num(game_id: str):
+    # Bare numeric game_id with no prefix (e.g. "111.0" instead of
+    # "16BX-111") -- confirmed live 2026-07-25, the JO GMID column
+    # occasionally comes through this way. The regex below is written for
+    # "PREFIX-NNN[-suffix]" shaped ids and treats "." as an arbitrary
+    # non-trailing character it cannot cross, so on "111.0" it matched only
+    # the trailing "0" -- silently breaking find_next_games' W#N/L#N lookup
+    # for the whole division (every reference resolved to nonexistent game
+    # "0"), stranding real, already-determined games as TBD. Checked first,
+    # ahead of the regex, since a real "PREFIX-NNN" id is never also valid
+    # float() input.
+    try:
+        f = float(game_id)
+        if f == int(f):
+            return str(int(f))
+    except (TypeError, ValueError):
+        pass
     # Allows alphabetic-only suffix after digits (e.g. "18UB 402-B" from ID-collision dedup)
     m = re.search(r"(\d+)[A-Za-z-]*$", game_id)
     return str(int(m.group(1))) if m else None
