@@ -4595,7 +4595,7 @@ def _fill_missing_branch_stubs(tree: list, tree_sheet: str) -> None:
     tree.extend(new_stubs)
 
 
-def _append_tbd_stub_chain(tree: list, division_games: list, tree_sheet: str) -> None:
+def _append_tbd_stub_chain(tree: list, division_games: list, tree_sheet: str, team: str) -> None:
     """When a bracket tree runs out of data before the tournament's own
     posted schedule does (an elimination format where the spreadsheet
     doesn't yet specify what happens beyond a certain round -- see
@@ -4639,7 +4639,22 @@ def _append_tbd_stub_chain(tree: list, division_games: list, tree_sheet: str) ->
         return
 
     by_id = {n["game_id"]: n for n in tree}
-    prev_ids = [n["game_id"] for n in frontier]
+    # Multiple frontier nodes can exist at the same latest-known date (e.g.
+    # one real dead-end plus one loss the team was eliminated by earlier
+    # that same day). Picking frontier[0] unconditionally, as this used to,
+    # attaches the "what happens next" stub to whichever node happened to
+    # land first in `tree`'s own build order -- which is not necessarily
+    # the team's actual live path. Confirmed live 2026-07-25: after fixing
+    # _game_num/_gnum_str (which changed how much of the tree gets
+    # discovered, and therefore this list's order), a Friday LOSS
+    # (game 71, eliminated) ended up first instead of the real WIN
+    # (game 111, still alive), stranding the correct Saturday continuation
+    # behind the wrong parent. Prefer a frontier node the team is still
+    # alive in (won it, or it has not been played yet) over one that
+    # eliminated them; only fall back to an eliminated node if that is all
+    # there is (team fully eliminated, no live path exists).
+    live_frontier = [n for n in frontier if _team_won(team, n) is not False]
+    prev_ids = [n["game_id"] for n in (live_frontier or frontier)]
     for i, d in enumerate(future_dates):
         stub_id = f"__tbd_{tree_sheet}_{i}"
         stub = {
@@ -5269,7 +5284,7 @@ def api_games(tournament_id, team):
 
     if tree:
         _fill_missing_branch_stubs(tree, tree_sheet)
-        _append_tbd_stub_chain(tree, div_games_for_tree, tree_sheet)
+        _append_tbd_stub_chain(tree, div_games_for_tree, tree_sheet, team)
         # Serialize tree nodes: format dates/times, add opponent label
         def _serialize_tree_node(node, dg):
             gid = node["game_id"]
