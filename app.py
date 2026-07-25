@@ -967,8 +967,17 @@ def _tournament_finish_probs(team: str, division_games: list, n_trials: int = 50
         # pools, A3=seed17, …), pool B gets the next, etc.
         _n_pools = len(all_groups)
         _pool_seed_rank: dict = {}
+        # _pi = position within all_groups (already sorted), not ord(letter)
+        # - ord('A'). A compound tier_pool group like "BZ_M" (see
+        # _POOL_SLOT_RE) is more than one character, so ord() on it crashed
+        # outright. Position-in-sorted-order is identical to the old
+        # ord()-based index for every plain single-letter group (A=0, B=1,
+        # ...), and is a reasonable, crash-free fallback for a compound one
+        # -- true snake-draft seed order cannot be reliably inferred from a
+        # compound code's alphabetic value either way, so this does not
+        # regress accuracy, only availability. Found live 2026-07-25.
         for _grp in all_groups:
-            _pi = ord(_grp.upper()) - ord('A')
+            _pi = all_groups.index(_grp)
             for _sp, _t in enumerate(_pool_teams_for_group(_grp, division_games), 1):
                 _ri = _sp - 1
                 if _ri % 2 == 0:
