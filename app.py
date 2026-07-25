@@ -231,6 +231,7 @@ def _save_user_url(tournament_id: str, url: str):
 
 
 _FETCH_INFLIGHT: set = set()  # urls currently being refreshed in the background
+_FETCH_INFLIGHT_LOCK = threading.Lock()
 
 def _do_fetch(url: str, onedrive: bool) -> bytes:
     if onedrive:
@@ -268,10 +269,21 @@ def _do_fetch(url: str, onedrive: bool) -> bytes:
 def _refresh_url_background(url: str, onedrive: bool):
     """Kick off a background re-fetch, deduped so only one runs per URL at a
     time. Callers keep serving the stale-but-still-cached copy in the
-    meantime instead of blocking on the network."""
-    if url in _FETCH_INFLIGHT:
-        return
-    _FETCH_INFLIGHT.add(url)
+    meantime instead of blocking on the network.
+
+    The check-and-add into _FETCH_INFLIGHT must be one atomic step under a
+    lock -- with 8 gthread request-handling threads, several near-simultaneous
+    requests for the same stale URL could each see "not in the set yet" and
+    all fire their own fetch before any of them got to the add. Confirmed
+    live 2026-07-25: a burst of 4 near-simultaneous fetches to the same
+    junior-olympics URL landed within 16 seconds during a live tournament
+    evening (many parents' phones hitting a stale cache at once), which was
+    actively adding to the request volume Google was already 429 rate-
+    limiting us for and prolonging the outage."""
+    with _FETCH_INFLIGHT_LOCK:
+        if url in _FETCH_INFLIGHT:
+            return
+        _FETCH_INFLIGHT.add(url)
     def _run():
         try:
             _do_fetch(url, onedrive)
