@@ -247,6 +247,21 @@ def _do_fetch(url: str, onedrive: bool) -> bytes:
         resp.raise_for_status()
         return resp.content
     content = _FETCH_EXECUTOR.submit(_do_get).result(timeout=FETCH_HARD_TIMEOUT)
+    # A 2xx status is not proof of a real spreadsheet -- Google/OneDrive can
+    # return an HTTP 200 interstitial/rate-limit HTML page instead of the
+    # actual file under heavy load, which resp.raise_for_status() has no way
+    # to catch (it only looks at the status code). Every real .xlsx is a ZIP
+    # archive, always starting with the "PK" magic bytes; an HTML error page
+    # never does. Skipping the cache write in that case means _fetch_url's
+    # existing stale-while-revalidate behavior keeps serving the last GOOD
+    # cached copy, and a later retry gets another chance -- instead of this
+    # one bad response silently overwriting good data with something that
+    # parses to zero games. Confirmed live 2026-07-25: Junior Olympics sat
+    # stuck at 0 games for many minutes this way during a run of Google
+    # rate-limit responses, self-inflicted by an unusually high deploy
+    # frequency that same evening.
+    if not content.startswith(b"PK"):
+        raise ValueError(f"fetched content is not a valid .xlsx (got {content[:80]!r})")
     _URL_CACHE[url] = (time.time(), content)
     return content
 
