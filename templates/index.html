@@ -2251,9 +2251,32 @@ function drawBracketLines(inner, rounds, roundNums) {
   // distinct, cycling rather than growing unbounded since exact overlap
   // between any two specific detours is rare -- this only needs to break
   // the common case of two or three being active near each other.
-  let _detourLaneCount = 0;
   const DETOUR_LANE_STEP = 16;
-  const DETOUR_LANE_CYCLE = 5;
+  // Collision-aware lane assignment: track the x-range each lane already
+  // has a detour running through, and only reuse a lane if the new
+  // connector's own x-range doesn't overlap anything already routed
+  // through it. The original fix here (2026-07-25, commit 7767958) cycled
+  // through a fixed set of lanes purely by count, with no notion of which
+  // columns a detour actually spans -- fine for a shallow tree where
+  // detours are all similar, short spans, but confirmed live against JO's
+  // deeper bracket to fail once a long detour (e.g. spanning 7+ columns)
+  // shares a lane with a short, unrelated detour nested entirely inside
+  // its span: they render on the same y and visually merge into one line,
+  // exactly the bug this was supposed to fix. Lanes now grow as needed
+  // (bounded only by how many detours truly overlap at once, which stays
+  // small in practice) instead of wrapping at a fixed count of 5.
+  const laneIntervals = [];
+  function claimDetourLane(xMin, xMax) {
+    for (let lane = 0; lane < laneIntervals.length; lane++) {
+      const overlaps = laneIntervals[lane].some(([a, b]) => xMin <= b && xMax >= a);
+      if (!overlaps) {
+        laneIntervals[lane].push([xMin, xMax]);
+        return lane;
+      }
+    }
+    laneIntervals.push([[xMin, xMax]]);
+    return laneIntervals.length - 1;
+  }
 
   for (let i = 0; i < stepArr.length - 1; i++) {
     const fromStep = stepArr[i];
@@ -2357,11 +2380,12 @@ function drawBracketLines(inner, rounds, roundNums) {
       // unbroken ~5000px line straight across the entire bracket.
       const toStepIdxActual = i + 1;
       const isAdjacent = (toStepIdxActual - fromStepIdx) <= 1;
-      const thisLaneY = detourLaneY + (_detourLaneCount % DETOUR_LANE_CYCLE) * DETOUR_LANE_STEP;
-      if (!isAdjacent) _detourLaneCount++;
 
       let d;
+      let thisLaneY;
       if (!isAdjacent) {
+        const lane = claimDetourLane(Math.min(sx, tx), Math.max(sx, tx));
+        thisLaneY = detourLaneY + lane * DETOUR_LANE_STEP;
         d = `M ${sx},${sy} V ${thisLaneY - R} Q ${sx},${thisLaneY} ${sx + R},${thisLaneY} `
           + `H ${tx - R} Q ${tx},${thisLaneY} ${tx},${thisLaneY - R} V ${ty}`;
       } else if (Math.abs(ty - sy) < R * 2) {
