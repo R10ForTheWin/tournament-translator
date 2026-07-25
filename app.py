@@ -2664,8 +2664,26 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
     _team_pool_group = None
     for g in my_games:
         for slot in (g["white_team"], g["dark_team"]):
-            if _POOL_SLOT_RE.match(slot.strip()) and team_matches(slot, team):
-                _team_pool_group = _POOL_SLOT_RE.match(slot.strip()).group(1).upper()
+            _pgm = _POOL_SLOT_RE.match(slot.strip())
+            # "W8-TROJAN GOLD" / "L28-TROJAN GOLD" (winner/loser of game N,
+            # this format's advancement-reference convention used
+            # everywhere else in the same sheet) has the exact same shape
+            # _POOL_SLOT_RE looks for (LETTERS + digits + hyphen + name),
+            # so it matches here too, with group(1) == "W"/"L" -- a bogus
+            # "pool group" that was never a real pool letter. Confirmed
+            # live 2026-07-25: this set _team_pool_group = "W" from
+            # Trojan Gold 16U's game 28 slot, and every downstream
+            # pool-finish lookup then searched for a nonexistent pool "W",
+            # found nothing, and permanently stubbed a TBD placeholder
+            # (__tbd_pool_87.0_3) for a branch that could never resolve --
+            # while the team's REAL pool-finish placement (3rd in their
+            # actual pool group, reached via game 111) was already
+            # correctly present in the tree through the normal win/lose
+            # follow above. "W"/"L" is exclusively an advancement-reference
+            # prefix in this format, never a genuine pool letter, so it is
+            # excluded here specifically.
+            if _pgm and _pgm.group(1).upper() not in ("W", "L") and team_matches(slot, team):
+                _team_pool_group = _pgm.group(1).upper()
                 break
         if _team_pool_group:
             break
@@ -2684,8 +2702,6 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
                 covered_ranks: set = set()
                 a_date = None
                 for g2 in division_games:
-                    if g2["game_id"] in seen:
-                        continue
                     for slot in (g2["white_team"], g2["dark_team"]):
                         s2 = slot.strip()
                         fm = _FINISH_SLOT_RE.match(s2) or _COMPOSITE_SLOT_RE.search(s2)
@@ -2701,6 +2717,21 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
                             if not rank_m:
                                 break
                             rank = int(rank_m.group(1))
+                            if g2["game_id"] in seen:
+                                # Already reachable via the normal win/lose
+                                # chain -- e.g. a play-in game whose own
+                                # slot text ALSO happens to describe a pool
+                                # finish (confirmed live 2026-07-25: Trojan
+                                # Gold 16U's real 3rd-place BZ_M finish is
+                                # game 111, already in the tree as a normal
+                                # win). The rank is genuinely resolved, just
+                                # not through this loop -- credit it so no
+                                # redundant, permanently-unresolvable TBD
+                                # stub gets created for a rank that already
+                                # has a real card elsewhere in the tree, but
+                                # do not re-follow or reattach it here.
+                                covered_ranks.add(rank)
+                                break
                             has_score = (g2.get("played") and g2.get("white_score") is not None
                                          and g2.get("dark_score") is not None)
                             child = _follow(g2, anchor["game_id"], f"pool_{rank}",
