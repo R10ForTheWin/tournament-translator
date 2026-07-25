@@ -2380,6 +2380,30 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
         m = re.search(r'-(\d+)$', gid)
         return str(int(m.group(1))) if m else None
 
+    def _norm_game_num(v):
+        """Normalize a w_to/l_to cell value to the same clean-integer string
+        _gnum_str uses, e.g. 131.0 or "131.0" -> "131" -- openpyxl can read
+        one particular numeric cell as a float even when every other
+        w_to/l_to cell in the same column reads as a clean int, depending
+        on that cell's own number format. A raw str(v) then never matches
+        gnum_map's clean-integer keys, and (since the result still looks
+        like a string) silently falls through to the non-numeric slot-code
+        fallback below instead, which finds nothing either -- confirmed
+        live 2026-07-25: this dead-ended Trojan Gold 16U's real placement
+        game (16BX-111, itself only reachable via a separate fix earlier
+        the same day) right where it should have continued into the next
+        two real games, instead of a synthetic "further TBD" stub. Returns
+        the value unchanged (as a string) for a genuinely non-numeric code
+        (e.g. "ag_T1"), so that fallback still works correctly for it."""
+        if v is None:
+            return None
+        s = str(v)
+        try:
+            f = float(s)
+        except (TypeError, ValueError):
+            return s
+        return str(int(f)) if f == int(f) else s
+
     gnum_map: dict[str, dict] = {}
     for g in division_games:
         n = _gnum_str(g["game_id"])
@@ -2436,8 +2460,8 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
         # isn't silently truncated to a single node when the columns are
         # empty. Confirmed live: the 2026 JO sheet leaves w_to/l_to blank
         # for every game and relies entirely on the text-slot convention.
-        w_num = str(game.get("w_to")) if game.get("w_to") is not None else None
-        l_num = str(game.get("l_to")) if game.get("l_to") is not None else None
+        w_num = _norm_game_num(game.get("w_to"))
+        l_num = _norm_game_num(game.get("l_to"))
         win_next_g  = gnum_map.get(w_num) if w_num else None
         lose_next_g = gnum_map.get(l_num) if l_num else None
         if win_next_g is None or lose_next_g is None:
