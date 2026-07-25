@@ -2414,7 +2414,23 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
     # (GMIDs like "16B-003" encode a prefix + 3-digit number).
     def _gnum_str(gid: str):
         m = re.search(r'-(\d+)$', gid)
-        return str(int(m.group(1))) if m else None
+        if m:
+            return str(int(m.group(1)))
+        # Bare numeric GMID with no prefix (e.g. "111.0" instead of
+        # "16BX-111") -- confirmed live 2026-07-25, the JO GMID column
+        # occasionally comes through this way, and the hyphen-only regex
+        # above then matches nothing for the entire sheet, leaving
+        # gnum_map empty and silently breaking every w_to/l_to advancement
+        # in the division (fell back to a weaker text-slot matcher that
+        # does not cover pool/placement branches, stranding Trojan Gold's
+        # real Saturday/Sunday games as TBD stubs even though the sheet
+        # already had them filled in). Same fallback shape as
+        # _norm_game_num below, applied to the game_id side too.
+        try:
+            f = float(gid)
+        except (TypeError, ValueError):
+            return None
+        return str(int(f)) if f == int(f) else None
 
     def _norm_game_num(v):
         """Normalize a w_to/l_to cell value to the same clean-integer string
