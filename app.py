@@ -2555,7 +2555,21 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
             # played game get misattributed into our own tree). Found live
             # 2026-07-19, same root cause as the twin fix in
             # _expand_bracket_games -- see _resolved_belongs_to_other_team.
-            belongs_to_other = not involved and any(
+            #
+            # Checked with all(), not any(), across both slots -- a real,
+            # already-named OPPONENT on one side is normal for basically
+            # every matchup (that is just who we are playing) and must
+            # never disqualify the branch on its own; only refuse to follow
+            # when NEITHER slot leaves room for us, i.e. both sides are
+            # explicitly someone else. any() incorrectly fired on ordinary
+            # matchups where the other side was a real name and our own
+            # side was still an unresolved "W#N"/"L#N" reference back to
+            # this exact game -- confirmed live 2026-07-25: this silently
+            # blocked Trojan Gold 16U's own real, already-determined
+            # Saturday game (win over Punahou advancing into "2ND BZ_N-
+            # SHAQ BLUE" vs "W#111") the moment the game-number lookup that
+            # feeds win_next_g/lose_next_g was fixed to reach it at all.
+            belongs_to_other = not involved and all(
                 _resolved_belongs_to_other_team(s, team)
                 for s in (win_next_g["white_team"], win_next_g["dark_team"])
             )
@@ -2569,7 +2583,9 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
         if lose_next_g and lose_next_g["game_id"] not in seen:
             involved = (team_matches(lose_next_g["white_team"], team)
                         or team_matches(lose_next_g["dark_team"], team))
-            belongs_to_other = not involved and any(
+            # See the win-path belongs_to_other comment above -- same all()
+            # fix, same reason.
+            belongs_to_other = not involved and all(
                 _resolved_belongs_to_other_team(s, team)
                 for s in (lose_next_g["white_team"], lose_next_g["dark_team"])
             )
@@ -2595,7 +2611,9 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
                     continue
                 involved2 = (team_matches(g2["white_team"], team)
                              or team_matches(g2["dark_team"], team))
-                if not involved2 and any(_resolved_belongs_to_other_team(s, team)
+                # all(), not any() -- see the win/lose-path belongs_to_other
+                # comment above, same reason.
+                if not involved2 and all(_resolved_belongs_to_other_team(s, team)
                                           for s in (g2["white_team"], g2["dark_team"])):
                     continue
                 child = _follow(g2, game["game_id"], "win", is_ph or (won is False), depth + 1)
@@ -2607,7 +2625,9 @@ def _build_njo_game_tree(team: str, division_games: list, anchor_date=None) -> l
                     continue
                 involved2 = (team_matches(g2["white_team"], team)
                              or team_matches(g2["dark_team"], team))
-                if not involved2 and any(_resolved_belongs_to_other_team(s, team)
+                # all(), not any() -- see the win/lose-path belongs_to_other
+                # comment above, same reason.
+                if not involved2 and all(_resolved_belongs_to_other_team(s, team)
                                           for s in (g2["white_team"], g2["dark_team"])):
                     continue
                 child = _follow(g2, game["game_id"], "lose", is_ph or (won is True), depth + 1)
