@@ -3949,10 +3949,15 @@ def _validate_wpl_bracket(team: str, nodes: list, upcoming: list = None,
     # placement phase, sometimes a third consolation phase), each with its own
     # speculative win/lose branching -- confirmed against real 2025 NJO data,
     # a genuine, single-lineage bracket routinely lands at 9-10 nodes with
-    # nothing wrong. Use the same generous cap _expand_bracket_games already
-    # uses elsewhere as a true runaway-expansion safety net, not a tight
-    # structural bound that doesn't apply to this format.
-    node_ceiling = 20 if is_njo else 7
+    # nothing wrong. Raised from 20 to 50 2026-07-25: a real 3-team pool's 3rd-
+    # place finisher legitimately enters a deep, fully speculative consolation
+    # ladder (every remaining round still branches both win and lose, since
+    # none of it is resolved yet) -- confirmed live against Trojan Gold 16U's
+    # actual data, 36 real nodes, every one independently verified against the
+    # flat schedule as a real scheduled game, not a data error. The node-count
+    # ceiling is a blunt safety net; the per-edge foreign-game check just above
+    # it in this function is the precise one and is unaffected by this change.
+    node_ceiling = 50 if is_njo else 7
     if len(nodes) > node_ceiling:
         red.append(
             f"bracket has {len(nodes)} nodes — expected ≤{node_ceiling}; "
